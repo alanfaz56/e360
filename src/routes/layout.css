@@ -1,0 +1,91 @@
+@import 'tailwindcss';
+
+/*
+ * Estación 360 — design tokens.
+ * Colors lifted from estacion360.com (Shopify Horizon theme CSS vars).
+ * Real site values are marked; the rest are interpolated ramp steps.
+ */
+@theme {
+	/* Brand red — the shop's primary */
+	--color-brand-50: #fff1f1;
+	--color-brand-100: #ffdede;
+	--color-brand-200: #ffc2c2;
+	--color-brand-300: #ff9797;
+	--color-brand-400: #fa5c5c;
+	--color-brand-500: #ed1515; /* site: bright button */
+	--color-brand-600: #e01b1b; /* site: primary */
+	--color-brand-700: #cc1b1b; /* site: hover / deep */
+	--color-brand-800: #b32828; /* site: dark button */
+	--color-brand-900: #8b0000; /* site: error */
+	--color-brand-950: #5c0a0a;
+
+	/* Sand / ink — site backgrounds, borders and text */
+	--color-sand-50: #faf9f1; /* site: cream background */
+	--color-sand-100: #f1ede7; /* site: warm background */
+	--color-sand-200: #e6e6e6; /* site: border */
+	--color-sand-300: #c8c8c8; /* site: out-of-stock grey */
+	--color-sand-400: #acacac; /* site: muted border */
+	--color-sand-500: #666666; /* site: strong border */
+	--color-sand-600: #484848;
+	--color-sand-700: #303030;
+	--color-sand-800: #202020;
+	--color-sand-900: #181818;
+	--color-sand-950: #0a0a0a; /* site: near-black */
+
+	/* Accent — site secondary button */
+	--color-accent-300: #fee3ab;
+	--color-accent-400: #fed98a;
+	--color-accent-500: #fdc656;
+	--color-accent-600: #f0b03a;
+
+	/* Semantic status — reused verbatim from the site's stock indicators.
+	   Handy for work-order states: listo / en espera / inactivo / falla. */
+	--color-ok: #3ed660;
+	--color-warn: #ee9441;
+	--color-idle: #c8c8c8;
+	--color-danger: #8b0000;
+	--color-whatsapp: #25d366;
+
+	/* Type — Anton for display, DM Sans for everything else */
+	--font-display: 'Anton', 'Arial Narrow', 'Haettenschweiler', system-ui, sans-serif;
+	--font-sans:
+		'DM Sans', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+@layer base {
+	html {
+		scroll-behavior: smooth;
+		-webkit-text-size-adjust: 100%;
+	}
+
+	body {
+		font-family: var(--font-sans);
+		background-color: var(--color-sand-50);
+		color: var(--color-sand-950);
+		-webkit-font-smoothing: antialiased;
+	}
+
+	/* Anton has no weight axis and sits low; normalize it once here. */
+	.font-display {
+		font-weight: 400;
+		letter-spacing: 0.01em;
+		text-transform: uppercase;
+	}
+
+	:focus-visible {
+		outline: 2px solid var(--color-brand-600);
+		outline-offset: 2px;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	html {
+		scroll-behavior: auto;
+	}
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		transition-duration: 0.01ms !important;
+	}
+}
