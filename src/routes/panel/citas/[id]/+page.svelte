@@ -11,7 +11,7 @@
 	import Badge from "$lib/components/Badge.svelte";
 	import Button from "$lib/components/Button.svelte";
 	import Drawer from "$lib/components/Drawer.svelte";
-	import EntitySearch from "$lib/components/EntitySearch.svelte";
+	import ClienteUnidadPicker from "$lib/components/ClienteUnidadPicker.svelte";
 	import Field from "$lib/components/Field.svelte";
 	import PageHeader from "$lib/components/PageHeader.svelte";
 	import { CITA_TIPOS, CITA_TIPO_KEYS, citaEstadoLabel, citaEstadoTone, franjaLabel } from "$lib/citas";
@@ -39,63 +39,6 @@
 			.map((p) => p[0] ?? "")
 			.join("")
 			.toUpperCase();
-
-	// Quick-create toggles in the vincular drawer. Default to creating when the appointment has
-	// nothing linked yet — the common case for a request off the public form.
-	let crearCliente = $state<boolean | null>(null);
-	let crearUnidad = $state<boolean | null>(null);
-	const creandoCliente = $derived(crearCliente ?? data.clientes.length === 0);
-	const creandoUnidad = $derived(crearUnidad ?? true);
-
-	// Without JavaScript the radios cannot hide anything, so BOTH halves are rendered and the
-	// server decides from `crearCliente` / `crearUnidad` in the payload. Hiding is a JS-only
-	// courtesy — otherwise a no-JS user could never reach the "choose an existing one" branch.
-	let hydrated = $state(false);
-	$effect(() => {
-		hydrated = true;
-	});
-	const mostrarElegirCliente = $derived(!hydrated || !creandoCliente);
-	const mostrarCrearCliente = $derived(!hydrated || creandoCliente);
-	const mostrarElegirUnidad = $derived(!hydrated || !creandoUnidad);
-	const mostrarCrearUnidad = $derived(!hydrated || creandoUnidad);
-
-	// Which customer the unit search is scoped to. Starts at whatever the cita already points at
-	// and follows the picker, so searching units never crosses into another customer's fleet.
-	let clienteElegido = $state<string | null>(null);
-	const clienteSeleccionado = $derived(clienteElegido ?? c.clienteId ?? "");
-
-	function alElegirCliente(id: string) {
-		if (id === clienteSeleccionado) return;
-		clienteElegido = id;
-		// The previously picked unit belongs to the old customer. Force a re-pick rather than
-		// posting a pair the server would reject.
-		unidadKey += 1;
-	}
-	// Bumping this remounts the unit search, clearing whatever was selected.
-	let unidadKey = $state(0);
-
-	const buscarClientes = async (q: string, signal: AbortSignal) => {
-		const res = await fetch(`/api/clientes?q=${encodeURIComponent(q)}&perPage=8`, { signal });
-		const body = await res.json();
-		return (body.clientes ?? []).map((cl: { id: string; nombreCompleto: string; tipoLabel: string; telefono: string | null }) => ({
-			id: cl.id,
-			label: cl.nombreCompleto,
-			hint: [cl.tipoLabel, cl.telefono].filter(Boolean).join(" · "),
-		}));
-	};
-
-	const buscarUnidades = async (q: string, signal: AbortSignal) => {
-		// Scoped to the chosen customer: `listUnidades` searches placas, VIN, número económico,
-		// marca and modelo, so the counter can type whichever one is painted on the door.
-		const scope = clienteSeleccionado ? `&clienteId=${clienteSeleccionado}` : "";
-		const res = await fetch(`/api/unidades?q=${encodeURIComponent(q)}${scope}&perPage=8`, { signal });
-		const body = await res.json();
-		return (body.unidades ?? []).map((u: { id: string; etiqueta: string; numeroEconomico: string | null; clienteNombre: string | null }) => ({
-			id: u.id,
-			label: u.etiqueta,
-			hint: [u.numeroEconomico && `Econ. ${u.numeroEconomico}`, u.clienteNombre].filter(Boolean).join(" · "),
-		}));
-	};
 
 	/** `datetime-local` wants shop wall-clock time, not the browser's or UTC. */
 	const paraInput = (iso: string | null) => {
@@ -389,177 +332,27 @@
 		closeHref={closeDrawer}
 	>
 		<form method="POST" action="?/vincular" class="space-y-5">
-			<!-- Cliente -->
-			<fieldset class="rounded border border-sand-200 p-3">
-				<legend class="px-1 text-sm font-medium text-sand-700">Cliente</legend>
-
-				{#if data.clientes.length > 0}
-					<label class="flex items-center gap-2 text-sm text-sand-700">
-						<input
-							type="radio"
-							name="crearCliente"
-							value=""
-							checked={!creandoCliente}
-							onchange={() => (crearCliente = false)}
-							class="size-4 accent-brand-600"
-						/>
-						Usar un cliente existente
-					</label>
-					{#if mostrarElegirCliente}
-						<div class="mt-2">
-							<EntitySearch
-								label="Buscar cliente"
-								name="clienteId"
-								placeholder="Nombre, teléfono, RFC…"
-								value={c.clienteId ?? ""}
-								valueLabel={c.clienteNombre ?? ""}
-								opciones={data.clientes.map((cl) => ({
-									id: cl.id,
-									label: cl.nombreCompleto,
-									hint: cl.tipoLabel,
-								}))}
-								buscar={buscarClientes}
-								onselect={alElegirCliente}
-							/>
-							<p class="mt-1 text-xs text-sand-500">
-								¿No aparece? <a class="underline" href="/panel/clientes">Búscalo en Clientes</a>.
-							</p>
-						</div>
-					{/if}
-
-					<label class="mt-3 flex items-center gap-2 text-sm text-sand-700">
-						<input
-							type="radio"
-							name="crearCliente"
-							value="1"
-							checked={creandoCliente}
-							onchange={() => (crearCliente = true)}
-							class="size-4 accent-brand-600"
-						/>
-						Crear uno nuevo
-					</label>
-				{:else}
-					<input type="hidden" name="crearCliente" value="1" />
-					<p class="text-sm text-sand-600">Todavía no hay clientes. Se creará uno con estos datos.</p>
-				{/if}
-
-				{#if mostrarCrearCliente}
-					<div class="mt-3 space-y-3">
-						<Field label="Tipo" name="tipoCliente">
-							{#snippet children(id)}
-								<select {id} name="tipoCliente" class={INPUT}>
-									<option value="persona">Persona</option>
-									<option value="organizacion">Organización</option>
-								</select>
-							{/snippet}
-						</Field>
-						<!-- `required` only once JS is hiding the other branch: with both rendered, a
-						     required field in the branch you are NOT using would block the submit. -->
-						<Field
-							label="Nombre / Razón social"
-							name="nombre"
-							required={hydrated && creandoCliente}
-							value={c.nombre}
-						/>
-						<Field label="Apellidos" name="apellidos" hint="Solo si es persona." />
-						<Field label="Teléfono" name="telefono" type="tel" value={c.telefono} />
-						<Field label="Correo" name="email" type="email" value={c.email ?? ""} />
-					</div>
-				{/if}
-			</fieldset>
-
-			<!-- Unidad -->
-			<fieldset class="rounded border border-sand-200 p-3">
-				<legend class="px-1 text-sm font-medium text-sand-700">Unidad</legend>
-
-				{#if data.unidades.length > 0}
-					<label class="flex items-center gap-2 text-sm text-sand-700">
-						<input
-							type="radio"
-							name="crearUnidad"
-							value=""
-							checked={!creandoUnidad}
-							onchange={() => (crearUnidad = false)}
-							class="size-4 accent-brand-600"
-						/>
-						Usar una unidad ya registrada
-					</label>
-					{#if mostrarElegirUnidad}
-						<div class="mt-2">
-							{#key unidadKey}
-							<EntitySearch
-								label="Buscar unidad"
-								name="unidadId"
-								placeholder="Número económico, placas, VIN, marca…"
-								value={c.unidadId ?? ""}
-								valueLabel={c.unidadEtiqueta ?? ""}
-								opciones={data.unidades
-									.filter((u) => !u.archivado)
-									.map((u) => ({
-										id: u.id,
-										label: u.etiqueta,
-										hint: u.numeroEconomico ? `Econ. ${u.numeroEconomico}` : null,
-									}))}
-								buscar={buscarUnidades}
-							/>
-							{/key}
-							{#if !clienteSeleccionado}
-								<p class="mt-1 text-xs text-sand-500">
-									Elige primero el cliente: la búsqueda se limita a sus unidades.
-								</p>
-							{/if}
-						</div>
-					{/if}
-					<label class="mt-3 flex items-center gap-2 text-sm text-sand-700">
-						<input
-							type="radio"
-							name="crearUnidad"
-							value="1"
-							checked={creandoUnidad}
-							onchange={() => (crearUnidad = true)}
-							class="size-4 accent-brand-600"
-						/>
-						Registrar una nueva
-					</label>
-				{:else}
-					<input type="hidden" name="crearUnidad" value="1" />
-					<p class="text-sm text-sand-600">Se registrará con estos datos, a nombre del cliente.</p>
-				{/if}
-
-				{#if mostrarCrearUnidad}
-					<div class="mt-3 space-y-3">
-						<div class="grid grid-cols-2 gap-3">
-							<Field label="Marca" name="marca" required={hydrated && creandoUnidad} value={c.marca ?? ""} />
-							<Field label="Modelo" name="modelo" required={hydrated && creandoUnidad} value={c.modelo ?? ""} />
-							<Field label="Placas" name="placas" value={c.placas ?? ""} />
-							<Field label="Año" name="anio" type="number" value={c.anio ? String(c.anio) : ""} />
-						</div>
-						<Field label="VIN" name="vin" hint="Opcional, pero único cuando se captura." />
-					</div>
-				{/if}
-			</fieldset>
-
-			<!-- Entregador -->
-			{#if data.entregadores.length > 0}
-				<Field label="¿Quién entrega la unidad?" name="entregadorId" hint="Solo contactos con rol de Entregador.">
-					{#snippet children(id)}
-						<select {id} name="entregadorId" class={INPUT}>
-							<option value="">El cliente mismo</option>
-							{#each data.entregadores as e (e.id)}
-								<option value={e.id} selected={c.entregadorId === e.id}>
-									{e.nombre}{e.telefono ? ` · ${e.telefono}` : ""}
-								</option>
-							{/each}
-						</select>
-					{/snippet}
-				</Field>
-			{:else if c.clienteId}
-				<p class="text-xs text-sand-500">
-					Este cliente no tiene contactos con rol de Entregador.
-					<a class="underline" href="/panel/clientes/{c.clienteId}">Agrégalos en su ficha</a> si alguien
-					más va a entregar la unidad.
-				</p>
-			{/if}
+			<ClienteUnidadPicker
+				clientes={data.clientes}
+				unidades={data.unidades}
+				sugeridas={data.sugeridas}
+				entregadores={data.entregadores}
+				clienteId={c.clienteId ?? ""}
+				clienteNombre={c.clienteNombre ?? ""}
+				unidadId={c.unidadId ?? ""}
+				unidadEtiqueta={c.unidadEtiqueta ?? ""}
+				entregadorId={c.entregadorId ?? ""}
+				prefill={{
+					nombre: c.nombre,
+					telefono: c.telefono,
+					email: c.email ?? "",
+					marca: c.marca ?? "",
+					modelo: c.modelo ?? "",
+					anio: c.anio,
+					placas: c.placas ?? "",
+				}}
+				fichaClienteHref="/panel/clientes"
+			/>
 
 			<Button full>Guardar vínculos</Button>
 		</form>

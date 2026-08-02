@@ -15,7 +15,17 @@
 	import LoaderCircle from "@lucide/svelte/icons/loader-circle";
 	import Field from "./Field.svelte";
 
-	export type Opcion = { id: string; label: string; hint?: string | null };
+	/**
+	 * `hint` is the one-line subtitle. `detalles` are short facts rendered as chips — for a
+	 * vehicle that means the número económico, the plates and the VIN, which is what actually
+	 * tells two identical trucks apart.
+	 */
+	export type Opcion = {
+		id: string;
+		label: string;
+		hint?: string | null;
+		detalles?: (string | null | undefined)[];
+	};
 
 	let {
 		label,
@@ -221,12 +231,22 @@
 										aria-selected={i === activo}
 										onmousedown={(e) => e.preventDefault()}
 										onclick={() => elegir(op)}
-										class="block w-full px-3 py-2 text-left text-sm hover:bg-sand-100 {i === activo
+										class="block w-full border-b border-sand-100 px-3 py-2 text-left text-sm last:border-0 hover:bg-sand-100 {i ===
+										activo
 											? 'bg-sand-100'
 											: ''}"
 									>
-										<span class="block text-sand-950">{op.label}</span>
+										<span class="block font-medium text-sand-950">{op.label}</span>
 										{#if op.hint}<span class="block text-xs text-sand-500">{op.hint}</span>{/if}
+										{#if op.detalles?.some(Boolean)}
+											<span class="mt-1 flex flex-wrap gap-1">
+												{#each op.detalles.filter(Boolean) as dato (dato)}
+													<span class="rounded bg-sand-100 px-1.5 py-0.5 font-mono text-[11px] text-sand-700">
+														{dato}
+													</span>
+												{/each}
+											</span>
+										{/if}
 									</button>
 								</li>
 							{/each}
@@ -244,8 +264,9 @@
 			>
 				<option value="">Elige…</option>
 				{#each opciones as op (op.id)}
+					<!-- No JS: everything the card would show has to fit on one line. -->
 					<option value={op.id} selected={op.id === value}>
-						{op.label}{op.hint ? ` · ${op.hint}` : ""}
+						{[op.label, op.hint, ...(op.detalles ?? [])].filter(Boolean).join(" · ")}
 					</option>
 				{/each}
 			</select>

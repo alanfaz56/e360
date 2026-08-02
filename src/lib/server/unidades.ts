@@ -144,6 +144,73 @@ export async function listUnidades(query: UnidadQuery) {
 	return { unidades: rows.map(publicUnidad), ...pageMeta(total, paging) };
 }
 
+/**
+ * Vehicles that plausibly match what a customer typed on the public form, best match first.
+ *
+ * Ranked rather than filtered, because the strength of the signal differs enormously: a VIN or a
+ * plate identifies ONE vehicle, while a marca just narrows it to "a Nissan". Returning them in
+ * one flat list would bury the exact hit under twenty same-brand trucks.
+ *
+ * `clienteId` scopes it to one customer's fleet. Left out, it searches every customer — which is
+ * how a returning customer is recognised from their plates alone, owner and all.
+ */
+export async function sugerirUnidades(input: {
+	placas?: string | null;
+	vin?: string | null;
+	marca?: string | null;
+	modelo?: string | null;
+	clienteId?: string | null;
+	limite?: number;
+}) {
+	const placas = input.placas?.trim() || null;
+	const vin = input.vin?.trim() || null;
+	const marca = input.marca?.trim() || null;
+	if (!placas && !vin && !marca) return [];
+
+	const rows = await prisma.unidad.findMany({
+		where: {
+			archivedAt: null,
+			...(input.clienteId ? { clienteId: input.clienteId } : {}),
+			OR: [
+				...(placas ? [{ placas: { contains: placas, mode: "insensitive" as const } }] : []),
+				...(vin ? [{ vin: { contains: vin, mode: "insensitive" as const } }] : []),
+				...(marca ? [{ marca: { contains: marca, mode: "insensitive" as const } }] : []),
+			],
+		},
+		orderBy: [{ marca: "asc" }, { modelo: "asc" }],
+		take: 50,
+		include: { cliente: { select: { nombreCompleto: true } } },
+	});
+
+	const igual = (a: string | null, b: string | null) =>
+		Boolean(a && b) && a!.toLowerCase() === b!.toLowerCase();
+
+	const puntuar = (u: (typeof rows)[number]) => {
+		if (igual(u.vin, vin)) return 0; // the VIN is the vehicle's identity
+		if (igual(u.placas, placas)) return 1;
+		if (placas && u.placas?.toLowerCase().includes(placas.toLowerCase())) return 2;
+		if (igual(u.modelo, input.modelo ?? null) && igual(u.marca, marca)) return 3;
+		return 4; // same brand only
+	};
+
+	return rows
+		.map((u) => ({ ...publicUnidad(u), coincidencia: puntuar(u) }))
+		.sort((a, b) => a.coincidencia - b.coincidencia)
+		.slice(0, input.limite ?? 6)
+		.map((u) => ({
+			...u,
+			// Why this one is being suggested, said in the UI so a wrong pick is obvious.
+			motivo:
+				u.coincidencia === 0
+					? "Mismo VIN"
+					: u.coincidencia <= 2
+						? "Placas coinciden"
+						: u.coincidencia === 3
+							? "Misma marca y modelo"
+							: "Misma marca",
+		}));
+}
+
 export async function getUnidad(id: string) {
 	const unidad = await prisma.unidad.findUnique({
 		where: { id },

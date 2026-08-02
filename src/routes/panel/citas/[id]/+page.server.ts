@@ -14,7 +14,7 @@ import {
 } from "$lib/server/citas";
 import { listClientes } from "$lib/server/clientes";
 import { listContactos } from "$lib/server/contactos";
-import { listUnidades } from "$lib/server/unidades";
+import { listUnidades, sugerirUnidades } from "$lib/server/unidades";
 import { requirePermission, requireUser } from "$lib/server/guard";
 import { listUsers } from "$lib/server/users";
 
@@ -49,9 +49,24 @@ export const load: ServerLoad = async ({ locals, params, url }) => {
 					// `etiqueta` prefers placas, so a fleet's número económico would otherwise never
 					// appear in the no-JS list — the one identifier they actually use.
 					numeroEconomico: u.numeroEconomico,
+					vin: u.vin,
+					anio: u.anio,
+					color: u.color,
 					archivado: u.archivado,
 				}))
 			: [];
+
+	// Vehicles already on file that match what this customer typed. Scoped to their fleet once a
+	// customer is known; otherwise searched across every customer, which is how a returning
+	// customer gets recognised from their plates — the owner comes with the vehicle.
+	const sugeridas = puedeVincular
+		? await sugerirUnidades({
+				placas: cita.placas,
+				marca: cita.marca,
+				modelo: cita.modelo,
+				clienteId: clienteElegido,
+			})
+		: [];
 	const entregadores =
 		puedeVincular && clienteElegido
 			? (await listContactos(clienteElegido))
@@ -69,6 +84,7 @@ export const load: ServerLoad = async ({ locals, params, url }) => {
 		asignables,
 		clientes,
 		unidades,
+		sugeridas,
 		entregadores,
 		clienteElegido,
 		// Cancelling has its own permission and its own reason field, so it never shows up as

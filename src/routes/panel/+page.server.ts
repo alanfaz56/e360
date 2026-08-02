@@ -3,6 +3,8 @@ import { hoy, isVista, parseFecha, sumarDias } from "$lib/agenda";
 import { NAV } from "$lib/nav";
 import { can } from "$lib/roles";
 import { CitaError, agenda, crearCita, resumenAgenda } from "$lib/server/citas";
+import { listClientes } from "$lib/server/clientes";
+import { listUnidades } from "$lib/server/unidades";
 import { requireUser } from "$lib/server/guard";
 import { listUsers } from "$lib/server/users";
 
@@ -40,6 +42,30 @@ export const load: ServerLoad = async ({ locals, url }) => {
 				.map((u) => ({ id: u.id, name: u.name, roleLabel: u.roleLabel }))
 		: [];
 
+	// For the "Nueva cita" drawer. A counter booking is born confirmada, so it needs a real
+	// customer and vehicle — the picker defaults to searching the registry rather than typing a
+	// duplicate. Both lists are the no-JS fallback; with JS the pickers search the API instead.
+	const puedeCrear = can(actor.role, "cita:create");
+	const clientes = puedeCrear
+		? (await listClientes({ perPage: 100 })).clientes.map((c) => ({
+				id: c.id,
+				nombreCompleto: c.nombreCompleto,
+				tipoLabel: c.tipoLabel,
+			}))
+		: [];
+	const unidades = puedeCrear
+		? (await listUnidades({ perPage: 100 })).unidades.map((u) => ({
+				id: u.id,
+				etiqueta: u.etiqueta,
+				numeroEconomico: u.numeroEconomico,
+				vin: u.vin,
+				anio: u.anio,
+				color: u.color,
+				clienteNombre: u.clienteNombre,
+				archivado: u.archivado,
+			}))
+		: [];
+
 	return {
 		...datos,
 		resumen,
@@ -50,8 +76,10 @@ export const load: ServerLoad = async ({ locals, url }) => {
 		siguiente: sumarDias(fecha, vista === "dia" ? 1 : 7),
 		hoy: hoy(),
 		mias,
+		clientes,
+		unidades,
 		puede: {
-			crear: can(actor.role, "cita:create"),
+			crear: puedeCrear,
 			asignar: can(actor.role, "cita:assign"),
 		},
 	};

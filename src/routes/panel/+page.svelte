@@ -6,6 +6,7 @@
 	import UserCheck from "@lucide/svelte/icons/user-check";
 	import Button from "$lib/components/Button.svelte";
 	import Calendar from "$lib/components/Calendar.svelte";
+	import ClienteUnidadPicker from "$lib/components/ClienteUnidadPicker.svelte";
 	import Drawer from "$lib/components/Drawer.svelte";
 	import Field from "$lib/components/Field.svelte";
 	import PageHeader from "$lib/components/PageHeader.svelte";
@@ -128,16 +129,25 @@
 		description="Se agenda confirmada, con hora. Las solicitudes del formulario público llegan sin hora."
 		closeHref={searchHref(page.url, { drawer: null })}
 	>
-		<form method="POST" action="?/crear" class="space-y-4">
-			<Field label="Nombre del cliente" name="nombre" required value={v("nombre")} />
-			<Field label="Teléfono" name="telefono" type="tel" required value={v("telefono")} />
-
-			<div class="grid grid-cols-2 gap-3">
-				<Field label="Marca" name="marca" value={v("marca")} />
-				<Field label="Modelo" name="modelo" value={v("modelo")} />
-				<Field label="Placas" name="placas" value={v("placas")} />
-				<Field label="Año" name="anio" type="number" value={v("anio")} />
-			</div>
+		<form method="POST" action="?/crear" class="space-y-5">
+			<!--
+				A counter booking is born `confirmada`, so it needs a real customer and vehicle from
+				the start — same rule confirming a public request follows. Searching the registry is
+				the default; creating either side is one radio away.
+			-->
+			<ClienteUnidadPicker
+				clientes={data.clientes}
+				unidades={data.unidades}
+				prefill={{
+					nombre: v("nombre"),
+					telefono: v("telefono"),
+					email: v("email"),
+					marca: v("marca"),
+					modelo: v("modelo"),
+					placas: v("placas"),
+				}}
+				fichaClienteHref="/panel/clientes"
+			/>
 
 			<Field label="¿Qué necesita?" name="motivo">
 				{#snippet children(id)}

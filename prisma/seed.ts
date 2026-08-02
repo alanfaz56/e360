@@ -49,6 +49,7 @@ const ID = {
 	unidad: "5eed0000-0000-4000-8000-000000000021",
 	propietario: "5eed0000-0000-4000-8000-000000000031",
 	cita: "5eed0000-0000-4000-8000-000000000041",
+	citaConocida: "5eed0000-0000-4000-8000-000000000042",
 };
 
 const prisma = createPrisma(process.env.DATABASE_URL);
@@ -258,6 +259,56 @@ async function seedCita() {
 	console.log(`  creada: cita #${cita.folio} sin confirmar (${fecha}, mañana, recolección)`);
 }
 
+/**
+ * The other half of the vincular story: a request for a vehicle the shop ALREADY has on file,
+ * still unlinked.
+ *
+ * Everything about the truck is free text repeating what the fleet's own person would say on the
+ * phone — same placas, same VIN, same marca as the seeded unit — but `clienteId` and `unidadId`
+ * stay null. Opening the vincular drawer on this one is what shows `sugerirUnidades` working: the
+ * exact plate match comes back ranked first, carrying its owner with it, so the whole link is one
+ * click instead of retyping a truck that already exists.
+ *
+ * Deliberately NOT linked. Seeding it already resolved would hide exactly the step this demo is
+ * for, and would also make a second copy of the truck the likely outcome the first time somebody
+ * uses the drawer for real.
+ */
+async function seedCitaDeUnidadConocida() {
+	if (await prisma.cita.findUnique({ where: { id: ID.citaConocida }, select: { id: true } })) {
+		console.log("  ya existe: la cita de la unidad registrada");
+		return;
+	}
+
+	const fecha = sumarDias(hoy(), 3);
+	const cita = await prisma.cita.create({
+		data: {
+			id: ID.citaConocida,
+			origen: "publico",
+			estado: "solicitada",
+			tipo: "en_sitio",
+			fecha: enZona(fecha),
+			franja: "tarde",
+			// The fleet's maintenance lead, as he would type it himself — not as a linked record.
+			nombre: "Jorge Villalobos",
+			telefono: "6621002032",
+			email: "jvillalobos@transportesdeldesierto.test",
+			marca: "Freightliner",
+			modelo: "M2 106",
+			anio: 2021,
+			placas: "SN-4471-A",
+			motivo: "Servicio de 150 mil km y revisión de frenos traseros. Ya truena al frenar cargado.",
+		},
+	});
+
+	await audit(
+		"cita.solicitud",
+		cita.id,
+		`#${cita.folio} · ${cita.nombre} · Freightliner M2 106`,
+		`Cita de demostración de una unidad YA registrada (ECO-114), sin vincular, para el ${fecha} por la tarde`,
+	);
+	console.log(`  creada: cita #${cita.folio} de una unidad ya registrada, sin vincular (${fecha}, tarde)`);
+}
+
 async function main() {
 	await seedAdmin();
 
@@ -279,8 +330,12 @@ async function main() {
 	console.log("\nUnidad de demostración:");
 	await seedUnidad();
 
-	console.log("\nCita de demostración:");
+	// Two unlinked requests on purpose: one for a vehicle nobody has seen before (register it),
+	// and one for a vehicle already on file (pick the suggestion). They are the two halves of
+	// what the vincular drawer is for.
+	console.log("\nCitas de demostración (ninguna vinculada todavía):");
 	await seedCita();
+	await seedCitaDeUnidadConocida();
 }
 
 main()

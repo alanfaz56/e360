@@ -191,10 +191,38 @@ should never have to leave the appointment, open Clientes, retype the same name,
 search for it. It creates through `createCliente` / `createUnidad`, never by writing those tables
 directly, so their own rules and audit entries still apply.
 
+**A counter booking is born `confirmada`, so `crearCita` requires the same pair.** Both drawers
+render [ClienteUnidadPicker.svelte](src/lib/components/ClienteUnidadPicker.svelte) and both resolve
+through `resolverClienteYUnidad` — one component, one server function, so the "new appointment" and
+"link this request" paths cannot drift on who a vehicle may belong to.
+
+`crearCita` resolves the links **before** reading the contact snapshot: picking a registered
+customer means the form never posts a name or a phone, so those come off the records instead.
+Requiring them first would make choosing an existing customer impossible.
+
 The two pickers use [EntitySearch.svelte](src/lib/components/EntitySearch.svelte) — debounced
 type-to-search over `/api/clientes?q=` and `/api/unidades?q=` (name, teléfono, RFC / número
-económico, placas, VIN, marca). The unit search is **scoped to the chosen customer**, and picking a
-different customer clears the unit, so a pair from two different owners can never be posted.
+económico, placas, VIN, marca). Options render as cards: `hint` is the subtitle, `detalles` are the
+chips that actually tell two identical trucks apart (económico, placas, VIN).
+
+`sugerirUnidades` puts vehicles already on file at the top of the unit picker, **ranked** — VIN,
+then exact placas, then partial placas, then marca+modelo, then marca. Ranked rather than filtered
+because the signals differ enormously in strength: a plate identifies one vehicle, a marca only
+says "a Nissan". Each card says *why* it matched, so a wrong pick is obvious.
+
+Scoping: with a customer chosen, the search and the suggestions stay inside their fleet. With
+none, both search the whole registry — **picking a vehicle then fills the customer**, because a
+vehicle already knows who owns it. That is how a returning customer is recognised from plates
+alone, and it is why `vincularCita` derives `clienteId` from `unidadId` when only the latter is
+given.
+
+Two traps in that drawer, both hit in practice:
+
+- **The suggestion radios post `sugeridaId`, not `unidadId`.** With JavaScript off the search
+  `<select>` is in the same form; two inputs sharing a name means the last in the DOM silently
+  wins. The server prefers `sugeridaId` explicitly instead of relying on DOM order.
+- **Radios cannot be unpicked**, so the suggestion list needs an explicit "Ninguna de estas"
+  option or a no-JS user is stuck with their first click.
 
 Two rules that fall out of Rule 7 and are easy to break here:
 
@@ -362,6 +390,7 @@ Current shared components:
 | `StatCard`     | Dashboard counter. Renders a link when given `href`          |
 | `Calendar`     | Agenda grid. Week and day share one component via `vista`    |
 | `EntitySearch` | Debounced type-to-search picker. Falls back to a `<select>`  |
+| `ClienteUnidadPicker` | Pick or create cliente + unidad + entregador. Both cita drawers |
 
 Rules of thumb:
 

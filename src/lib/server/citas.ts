@@ -450,13 +450,45 @@ export async function solicitarCita(input: {
 export async function crearCita(input: { actor: Actor; body: Record<string, unknown> }) {
 	if (!can(input.actor.role, "cita:create")) throw new ClienteError(403, "Sin permiso: cita:create");
 
-	const contacto = leerDatosContacto(input.body);
 	const { tipo, direccionRecoleccion } = leerTipo(input.body);
 	const inicio = leerInstante(input.body.inicio, "La hora de inicio");
 	const fin = input.body.fin ? leerInstante(input.body.fin, "La hora de fin") : finPorDefecto(inicio);
 	if (fin <= inicio) throw new ClienteError(400, "La hora de fin debe ser posterior al inicio");
 
-	const { clienteId, unidadId } = await resolverVinculos(input.body);
+	// A counter booking is born `confirmada`, and a confirmed appointment means a specific car
+	// for a specific person — the same rule `confirmarCita` enforces. The drawer defaults to
+	// searching the registry, with creating either side one radio away.
+	//
+	// Resolved BEFORE the contact snapshot, because picking an existing customer means the form
+	// never posts a name or a phone: they come off the records instead. Requiring them here would
+	// make choosing a registered customer impossible.
+	const { clienteId, unidadId, entregadorId, cliente, unidad } = await resolverClienteYUnidad(
+		input.actor,
+		input.body,
+		{
+			nombre: trim(input.body.nombre) ?? "",
+			telefono: trim(input.body.telefono) ?? "",
+			email: trim(input.body.email),
+			marca: trim(input.body.marca),
+			modelo: trim(input.body.modelo),
+			anio: int(input.body.anio),
+			placas: trim(input.body.placas),
+		},
+	);
+
+	// The free-text snapshot mirrors what was linked, so the row still reads correctly even if
+	// the customer is renamed or the vehicle is transferred later.
+	const contacto = leerDatosContacto({
+		...input.body,
+		nombre: trim(input.body.nombre) ?? cliente.nombreCompleto,
+		telefono: trim(input.body.telefono) ?? cliente.telefono,
+		email: trim(input.body.email) ?? cliente.email,
+		marca: trim(input.body.marca) ?? unidad.marca,
+		modelo: trim(input.body.modelo) ?? unidad.modelo,
+		anio: input.body.anio ?? unidad.anio,
+		placas: trim(input.body.placas) ?? unidad.placas,
+	});
+
 	const asignadoId = await resolverAsignado(input.actor, input.body.asignadoId, { alCrear: true });
 
 	const cita = await prisma.cita.create({
@@ -474,6 +506,7 @@ export async function crearCita(input: { actor: Actor; body: Record<string, unkn
 			notas: trim(input.body.notas),
 			clienteId,
 			unidadId,
+			entregadorId,
 			asignadoId,
 		},
 		include: INCLUDE,
@@ -484,8 +517,8 @@ export async function crearCita(input: { actor: Actor; body: Record<string, unkn
 		actor: input.actor,
 		entityId: cita.id,
 		entityLabel: citaLabel(cita),
-		summary: `Cita creada para ${cita.nombre} el ${cita.fecha.toISOString().slice(0, 10)}`,
-		after: { inicio: inicio.toISOString(), fin: fin.toISOString(), tipo, asignadoId },
+		summary: `Cita creada para ${cita.cliente?.nombreCompleto ?? cita.nombre} el ${cita.fecha.toISOString().slice(0, 10)}`,
+		after: { inicio: inicio.toISOString(), fin: fin.toISOString(), tipo, clienteId, unidadId, asignadoId },
 	});
 
 	return cita;
@@ -633,61 +666,15 @@ export async function vincularCita(input: { actor: Actor; id: string; body: Reco
 	const current = await getCita(input.id);
 	if (current.estado === "cancelada") throw new ClienteError(409, "Una cita cancelada ya no se edita.");
 
-	let clienteId = trim(input.body.clienteId);
-
-	if (input.body.crearCliente === "1" || input.body.crearCliente === "on") {
-		const tipo = trim(input.body.tipoCliente) === "organizacion" ? "organizacion" : "persona";
-		// Prefilled from the appointment, so the counter only corrects what is wrong.
-		// The drawer offers ONE field for both cases ("Nombre / Razón social"), so an organización
-		// accepts `nombre` as its razón social — otherwise typing a company name there would be
-		// silently dropped and the record created under the caller's personal name instead.
-		const cliente = await createCliente({
-			actor: input.actor,
-			body: {
-				tipo,
-				...(tipo === "persona"
-					? { nombre: trim(input.body.nombre) ?? current.nombre, apellidos: trim(input.body.apellidos) }
-					: { razonSocial: trim(input.body.razonSocial) ?? trim(input.body.nombre) ?? current.nombre }),
-				telefono: trim(input.body.telefono) ?? current.telefono,
-				email: trim(input.body.email) ?? current.email,
-			},
-		});
-		clienteId = cliente.id;
-	}
-
-	if (!clienteId) throw new ClienteError(400, "Elige un cliente o crea uno nuevo");
-	const cliente = await getCliente(clienteId);
-	if (cliente.archivedAt) throw new ClienteError(409, "Ese cliente está archivado.");
-
-	let unidadId = trim(input.body.unidadId);
-
-	if (input.body.crearUnidad === "1" || input.body.crearUnidad === "on") {
-		const unidad = await createUnidad({
-			actor: input.actor,
-			clienteId,
-			body: {
-				marca: trim(input.body.marca) ?? current.marca,
-				modelo: trim(input.body.modelo) ?? current.modelo,
-				anio: input.body.anio ?? current.anio,
-				placas: trim(input.body.placas) ?? current.placas,
-				vin: trim(input.body.vin),
-			},
-		});
-		unidadId = unidad.id;
-	}
-
-	if (!unidadId) throw new ClienteError(400, "Elige una unidad o crea una nueva");
-	const unidad = await prisma.unidad.findUnique({
-		where: { id: unidadId },
-		select: { clienteId: true, archivedAt: true },
+	const { clienteId, unidadId, entregadorId, cliente } = await resolverClienteYUnidad(input.actor, input.body, {
+		nombre: current.nombre,
+		telefono: current.telefono,
+		email: current.email,
+		marca: current.marca,
+		modelo: current.modelo,
+		anio: current.anio,
+		placas: current.placas,
 	});
-	if (!unidad) throw new ClienteError(404, "Unidad no encontrada");
-	if (unidad.clienteId !== clienteId) {
-		throw new ClienteError(400, "Esa unidad no pertenece al cliente seleccionado");
-	}
-	if (unidad.archivedAt) throw new ClienteError(409, "Esa unidad está archivada.");
-
-	const entregadorId = await resolverEntregador(clienteId, input.body.entregadorId);
 
 	const cita = await prisma.cita.update({
 		where: { id: current.id },
@@ -706,6 +693,100 @@ export async function vincularCita(input: { actor: Actor; id: string; body: Reco
 	});
 
 	return cita;
+}
+
+/** What the caller already knows about the vehicle and its owner, used to prefill a create. */
+type Prefill = {
+	nombre: string;
+	telefono: string;
+	email: string | null;
+	marca: string | null;
+	modelo: string | null;
+	anio: number | null;
+	placas: string | null;
+};
+
+/**
+ * Resolve a customer, a vehicle and an optional handover person out of a request body — picking
+ * existing records or creating them from `prefill`.
+ *
+ * Shared by `vincularCita` and `crearCita` so the counter's "new appointment" form and the
+ * "link this request" drawer cannot drift on who a vehicle may belong to (Rule 5).
+ */
+async function resolverClienteYUnidad(actor: Actor, body: Record<string, unknown>, prefill: Prefill) {
+	let clienteId = trim(body.clienteId);
+
+	if (body.crearCliente === "1" || body.crearCliente === "on") {
+		const tipo = trim(body.tipoCliente) === "organizacion" ? "organizacion" : "persona";
+		// Prefilled from what is already known, so the counter only corrects what is wrong.
+		// The drawer offers ONE field for both cases ("Nombre / Razón social"), so an organización
+		// accepts `nombre` as its razón social — otherwise typing a company name there would be
+		// silently dropped and the record created under the caller's personal name instead.
+		const cliente = await createCliente({
+			actor,
+			body: {
+				tipo,
+				...(tipo === "persona"
+					? { nombre: trim(body.nombre) ?? prefill.nombre, apellidos: trim(body.apellidos) }
+					: { razonSocial: trim(body.razonSocial) ?? trim(body.nombre) ?? prefill.nombre }),
+				telefono: trim(body.telefono) ?? prefill.telefono,
+				email: trim(body.email) ?? prefill.email,
+			},
+		});
+		clienteId = cliente.id;
+	}
+
+	// A suggestion wins over the search box: it is the more deliberate pick, and with JavaScript
+	// off both controls are in the form at once.
+	let unidadId = trim(body.sugeridaId) ?? trim(body.unidadId);
+	const creandoUnidad = body.crearUnidad === "1" || body.crearUnidad === "on";
+
+	// A vehicle already knows who owns it, so picking one is enough to identify the customer.
+	// That is what lets a suggestion be a single radio — with JavaScript off, one input cannot
+	// post two fields — and it is how a returning customer is recognised from their plates.
+	if (!clienteId && unidadId && !creandoUnidad) {
+		const dueño = await prisma.unidad.findUnique({ where: { id: unidadId }, select: { clienteId: true } });
+		if (!dueño) throw new ClienteError(404, "Unidad no encontrada");
+		clienteId = dueño.clienteId;
+	}
+
+	if (!clienteId) throw new ClienteError(400, "Elige un cliente o crea uno nuevo");
+	const cliente = await getCliente(clienteId);
+	if (cliente.archivedAt) throw new ClienteError(409, "Ese cliente está archivado.");
+
+	if (creandoUnidad) {
+		const unidad = await createUnidad({
+			actor,
+			clienteId,
+			body: {
+				marca: trim(body.marca) ?? prefill.marca,
+				modelo: trim(body.modelo) ?? prefill.modelo,
+				anio: body.anio ?? prefill.anio,
+				placas: trim(body.placas) ?? prefill.placas,
+				vin: trim(body.vin),
+			},
+		});
+		unidadId = unidad.id;
+	}
+
+	if (!unidadId) throw new ClienteError(400, "Elige una unidad o crea una nueva");
+	const unidad = await prisma.unidad.findUnique({
+		where: { id: unidadId },
+		select: { clienteId: true, archivedAt: true, marca: true, modelo: true, anio: true, placas: true },
+	});
+	if (!unidad) throw new ClienteError(404, "Unidad no encontrada");
+	if (unidad.clienteId !== clienteId) {
+		throw new ClienteError(400, "Esa unidad no pertenece al cliente seleccionado");
+	}
+	if (unidad.archivedAt) throw new ClienteError(409, "Esa unidad está archivada.");
+
+	return {
+		clienteId,
+		unidadId,
+		cliente,
+		unidad,
+		entregadorId: await resolverEntregador(clienteId, body.entregadorId),
+	};
 }
 
 /**
