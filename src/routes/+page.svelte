@@ -50,12 +50,13 @@
 			<li><a class="hover:text-brand-600" href="#modulos">Módulos</a></li>
 			<li><a class="hover:text-brand-600" href="#flujo">Cómo funciona</a></li>
 			<li><a class="hover:text-brand-600" href="#contacto">Contacto</a></li>
+			<li><a class="hover:text-brand-600" href="/login">Entrar</a></li>
 		</ul>
 		<a
-			href="/login"
+			href="/citas"
 			class="ml-auto rounded-md bg-brand-600 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-brand-700 md:ml-0"
 		>
-			Entrar
+			Agendar cita
 		</a>
 	</nav>
 </header>
@@ -77,8 +78,8 @@
 				sistema para todo lo que entra y sale del taller.
 			</p>
 			<div class="mt-8 flex flex-wrap gap-3">
-				<Button href="/login" size="lg">Entrar al sistema</Button>
-				<Button href="#modulos" size="lg" variant="outline">Ver módulos</Button>
+				<Button href="/citas" size="lg">Agendar una cita</Button>
+				<Button href="/login" size="lg" variant="outline">Entrar al sistema</Button>
 			</div>
 		</div>
 	</section>
@@ -158,11 +159,11 @@
 			<div>
 				<h2 class="font-display text-4xl text-white md:text-5xl">¿Listo para arrancar?</h2>
 				<p class="mt-3 max-w-lg text-brand-100">
-					Entra con tu cuenta o escríbenos por WhatsApp para dar de alta tu taller.
+					Agenda tu servicio en línea o escríbenos por WhatsApp.
 				</p>
 			</div>
 			<div class="flex flex-wrap gap-3 md:ml-auto">
-				<Button href="/login" size="lg" variant="invert">Entrar</Button>
+				<Button href="/citas" size="lg" variant="invert">Agendar cita</Button>
 				<a
 					href="https://wa.me/"
 					class="inline-flex items-center justify-center rounded-md border-2 border-white px-6 py-3 font-bold text-white transition-colors hover:bg-white hover:text-brand-700"

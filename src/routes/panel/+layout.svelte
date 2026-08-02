@@ -13,7 +13,10 @@
 	const menuOpen = $derived(page.url.searchParams.has("menu"));
 	const menuHref = (open: boolean) => searchHref(page.url, { menu: open ? "1" : null });
 
-	const isActive = (href: string) => page.url.pathname.startsWith(href);
+	// Agenda lives at /panel itself, which is a prefix of every other section — so that one
+	// entry has to match exactly or it would light up on every screen.
+	const isActive = (href: string) =>
+		href === "/panel" ? page.url.pathname === "/panel" : page.url.pathname.startsWith(href);
 </script>
 
 <div class="min-h-svh bg-sand-50">

@@ -93,6 +93,168 @@ the account. A wrong password on a locked account still gets the generic
 "Correo o contraseña incorrectos". **Never move the lockout check before password
 verification, and never surface `lockoutNotice` from anywhere but that error path.**
 
+### Contact roles — the two-tier rule
+
+A customer contact holds roles from `CONTACTO_ROLES` in
+[src/lib/contacto-roles.ts](src/lib/contacto-roles.ts). Each carries an `autoridad` flag:
+
+| Role | `autoridad` | |
+| --- | --- | --- |
+| `entregador` | **yes** | may collect a unit and sign the handover |
+| `autorizador` | **yes** | may approve a quote / authorize the repair |
+| `facturacion` | no | receives the invoice |
+| `general` | no | just a phone number |
+
+- `contacto:manage` (Admin, Gerente, Operador) — create and edit contacts.
+- `contacto:grant-authority` (Admin, Gerente) — **additionally** required to add or remove a
+  role flagged `autoridad`.
+
+A front-desk Operador should never be the only person involved in making someone able to
+drive a customer's vehicle off the lot. Use `canAssignContactoRole`; never check
+`role === 'admin'` inline.
+
+**The check runs on the delta, not the final state.** An Operador editing a contact that
+already holds `entregador` may change its phone number — the save carries that role in the
+payload and must not be refused. Only *adding or removing* an authority role needs the extra
+permission. Deleting a contact that holds one counts as removing it.
+
+### Clientes, contactos y unidades
+
+- A customer is `persona` or `organizacion`; the name fields required for each are enforced
+  by a CHECK constraint, not just by the app.
+- A **persona** customer is implicitly authorized to collect their own units — no contact
+  row needed. An **organizacion** cannot sign, so it needs named people.
+- Contacts are **scoped to one customer**. The same human on two customers is two rows;
+  there is no shared person registry.
+- `cliente_contacto.alcanceUnidades` is explicit (`todas` | `especificas`). Do not "optimize"
+  it into "no rows in `contacto_unidad` means all units" — that silent default reads as a bug.
+- Units require only `marca` + `modelo`. VIN is unique when present; **placas are not unique**,
+  because plates get reassigned.
+- **CFDI fields hold SAT catalog keys, never labels.** `regimenFiscal` and `usoCfdi` are picked
+  from [src/lib/sat-catalogos.ts](src/lib/sat-catalogos.ts) and validated server-side; the column
+  is `VarChar(8)` because a clave is `601` / `G03`, not its description. The picker filters by
+  `cliente.tipo` (`fisica` / `moral`), so an organización is never offered a persona-only régimen.
+- **Every string written to a `VarChar` column goes through `trim(value, max, label)`** from
+  [src/lib/server/clientes.ts](src/lib/server/clientes.ts) — shared by contactos and unidades.
+  Without the `max`, Postgres rejects the write with `value too long for the column's type.
+  Column: (not available)`, which names neither the field nor a fix. Adding a column means adding
+  its length to the matching `trim` call.
+- `unidad.clienteId` deliberately duplicates the open `unidad_propietario` row (`hasta` null).
+  A partial unique index enforces at most one open period per unit, so a transfer that forgot
+  to close the previous one fails loudly. Always write both in one transaction.
+- **Transfer** (`unidad:transfer`, Admin only, `motivo` required): service history stays with
+  the unit — future work orders must store the customer they were billed to, so old invoices
+  stay with the old owner. Per-unit pickup authorizations are revoked on transfer; the new
+  owner re-authorizes their own people.
+- Archive is the normal removal path (Admin). Hard delete exists for genuine mistakes and is
+  refused while a customer still owns units or appears in an ownership history.
+
+### Citas (agenda)
+
+Appointments come from two places and live in one table, `cita`, discriminated by `origen`:
+
+| `origen` | Who | Starts as |
+| --- | --- | --- |
+| `publico` | anonymous visitor at `/citas`, behind Cloudflare Turnstile | `solicitada`, **no hour** — only `fecha` + `franja` |
+| `panel` | staff at the counter | `confirmada`, with `inicio`/`fin` |
+
+- `cita:read` · `cita:create` · `cita:advance` — Admin, Gerente, Operador.
+- `cita:update` · `cita:cancel` · `cita:assign` — Admin, Gerente only.
+- **`cita:advance` is narrower than it looks.** An Operador may advance only an appointment
+  whose `asignadoId` is them, and only forward. The check lives in `avanzarCita` and keys off
+  *not* holding `cita:update` — if anyone ever grants Operador `cita:update`, that ownership
+  rule silently stops applying. `check-roles.ts` asserts the pairing for that reason.
+- Cancelling is **not** reachable through `avanzarCita`. It is `cita:cancel`, it requires a
+  `motivo`, and the reason is what gets read back to the customer.
+- `TRANSICIONES` in [src/lib/citas.ts](src/lib/citas.ts) is the state machine **as data**. A move
+  not listed is a 409. `completada`, `cancelada` and `no_asistio` are terminal — nothing reopens.
+- **`REQUIEREN_HORA` mirrors the `cita_inicio_requerido_check` constraint.** A `solicitada` has no
+  `inicio`, so it can only become `confirmada` (which grants the hour) or `cancelada`. Anything
+  else — including "no asistió", which is meaningless before an appointment was granted — is
+  refused by `avanzarCita` with a Spanish message and hidden from the detail screen. Without that
+  guard the database rejects the write and the user sees a raw
+  `DriverAdapterError: violates check constraint`. Change the list, change the migration.
+
+**Recolección is the default and is listed first.** Going to collect the vehicle is a core part of
+what the shop sells, not an afterthought. `CITA_TIPO_KEYS` order drives every picker, and
+`check-agenda.ts` asserts it — a reorder silently changes what customers pick first.
+
+### Vincular: a cita cannot be confirmed in the abstract
+
+`confirmarCita` refuses (409) until the appointment points at a real `cliente` **and** a real
+`unidad`. A confirmed appointment is a commitment to work on a specific car for a specific person,
+and the work order that follows hangs off both.
+
+`vincularCita` is how that happens, and it can **create** either side in one step from what the
+customer already typed (`crearCliente` / `crearUnidad`). That shortcut is the point — the counter
+should never have to leave the appointment, open Clientes, retype the same name, and come back to
+search for it. It creates through `createCliente` / `createUnidad`, never by writing those tables
+directly, so their own rules and audit entries still apply.
+
+The two pickers use [EntitySearch.svelte](src/lib/components/EntitySearch.svelte) — debounced
+type-to-search over `/api/clientes?q=` and `/api/unidades?q=` (name, teléfono, RFC / número
+económico, placas, VIN, marca). The unit search is **scoped to the chosen customer**, and picking a
+different customer clears the unit, so a pair from two different owners can never be posted.
+
+Two rules that fall out of Rule 7 and are easy to break here:
+
+- **Both halves of an either/or render server-side.** Radios cannot hide anything without JS, so
+  a no-JS user would be trapped in whichever branch SSR happened to pick. `EntitySearch` renders a
+  real `<select>` until hydrated, and the drawer renders the "choose existing" *and* "create new"
+  blocks; hiding one is a JS-only courtesy.
+- **Nothing in the unused branch may be `required`**, or the browser blocks a submit on a field the
+  user cannot see. Gate `required` on `hydrated && creando…`.
+
+`cita.entregadorId` is who hands the unit over when it is not the customer. A foreign key cannot
+say "a contact **of this customer** holding the `entregador` role", so `resolverEntregador` checks
+it — and re-checks whenever the cita's cliente changes. Letting another customer's contact through
+would authorize a stranger to drive a vehicle away.
+
+**The public endpoint holds no permission at all**, on purpose: it is anonymous, and Turnstile is
+its gate. `solicitarCita` therefore builds the row field by field from a whitelist and *forces*
+`origen`, `estado`, and null `inicio` / `notas` / `clienteId` / `unidadId` / `asignadoId` no matter
+what the body says. Never spread a request body there, and never widen what it returns — the
+response is `{ folio, fecha, franja }` only, with no id, so it cannot be used to read back or
+enumerate somebody else's appointment.
+
+Turnstile fails **closed**: no secret configured means 503, never an open door. There is no dev
+bypass flag — `.env.example` ships Cloudflare's always-pass test keys so local development runs the
+real verification path. This is the one form in the app that requires JavaScript; `/citas` carries a
+`<noscript>` block with phone and WhatsApp, and every `/panel` form stays no-JS (Rule 7).
+
+**Time is always the shop's.** `src/lib/agenda.ts` pins `America/Hermosillo` (UTC-7, no DST since
+1998) as a fixed offset. Never format an appointment with the viewer's clock — a Gerente on a laptop
+set to CDMX has to see the same grid as the counter. `datetime-local` values are wall-clock and are
+read with `enZona`, not `new Date()`.
+
+The calendar is server-rendered CSS grid with no client JS and no calendar library; `acomodar`
+computes the overlap columns before the data reaches the browser. Requests with no hour yet are
+never guessed onto the time grid — they sit in the per-day "Sin hora" strip, which *is* the cue that
+somebody still has to confirm them.
+
+`/panel` is the dashboard (counters + week calendar) for anyone with `cita:read`; `/panel/citas` is
+the same data as a filterable table. Roles without `cita:read` keep the old redirect-to-first-section
+behaviour — and that redirect must skip `/panel` itself or it loops forever.
+
+The week view is a **rolling seven days from the anchor date**, not a Monday-aligned calendar week,
+so today is always the first column. On a Friday, a Monday-aligned week would spend five of its
+seven columns on days that already happened.
+
+`?mias=1` filters both views to the caller's own assignments. It resolves against the **session**,
+never against an id in the URL — otherwise it would just be `asignadoId` with extra steps, and
+"mine" could be read as somebody else.
+
+`/panel/usuarios/[id]` is one person's profile and their appointment numbers over a period
+(`user:stats` — Admin and Gerente). Reading how a colleague is performing is deliberately a
+separate key from `user:list`: seeing that somebody has an account is not the same as seeing how
+they are doing. The `cumplimiento` figure counts completed over appointments that actually reached
+an outcome — counting the ones still in flight as failures would punish someone for having work
+scheduled.
+
+**`?? ` vs `||` on form values.** The `v(name)` helper returns `""` for an absent field, and `""`
+is not nullish — so `v("tipo") ?? DEFAULT` silently never applies the default and leaves the form
+with nothing selected. Use `||` for these. This shipped as a real bug on the public form.
+
 ### Who can cancel an invitation
 
 Two permissions, deliberately:
@@ -196,6 +358,10 @@ Current shared components:
 | `EmptyState`   | "Nothing here yet" panels                                    |
 | `Drawer`       | Anything that would otherwise have been a modal              |
 | `Icon`         | Icon lookup by serializable key, for nav data                |
+| `SatSelect`    | SAT catalog picker, filtered by customer type                |
+| `StatCard`     | Dashboard counter. Renders a link when given `href`          |
+| `Calendar`     | Agenda grid. Week and day share one component via `vista`    |
+| `EntitySearch` | Debounced type-to-search picker. Falls back to a `<select>`  |
 
 Rules of thumb:
 
@@ -284,7 +450,13 @@ never receives a link to a screen it cannot open.
 [src/lib/server/bootstrap.ts](src/lib/server/bootstrap.ts) blocks `POST /sign-up/email`
 entirely, including server-side calls. Accounts can only be created two ways:
 
-1. `npx prisma db seed` — bootstraps the first Admin (`alan@maieutica.mx`) into an empty DB.
+1. `npx prisma db seed` — bootstraps the first Admin (`alan@maieutica.mx`) into an empty DB, plus
+   a demo dataset: one account per role (`gerente@` / `operador@` / `taller@estacion360.test`,
+   sharing `SEED_DEMO_PASSWORD`), an organización with three contacts covering both contact tiers,
+   a fleet unit, and one **unconfirmed** public request to exercise the vincular → confirmar flow.
+   Every part is idempotent (fixed ids, existence-checked) and audited under a `semilla@sistema`
+   actor with a null `actorId`, so demo rows are never mistaken for something a person did.
+   The demo addresses use `.test`, a reserved TLD that can never resolve or receive mail.
 2. Redeeming an invitation — `acceptInvitation` in
    [src/lib/server/invitations.ts](src/lib/server/invitations.ts).
 

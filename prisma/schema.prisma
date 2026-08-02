@@ -26,6 +26,7 @@ model user {
 
   invitationsSent invitation[] @relation("invitedBy")
   auditLogs       audit_log[]  @relation("auditActor")
+  citasAsignadas  cita[]       @relation("citaAsignada")
 
   @@map("user")
 }
@@ -125,6 +126,235 @@ model invitation {
   @@index([email])
   @@index([expiresAt])
   @@map("invitation")
+}
+
+/// A customer: either a person or an organization. `tipo` decides which name fields apply;
+/// a CHECK constraint in the migration enforces it rather than trusting the app layer.
+///
+/// A **persona** customer is implicitly authorized to collect their own units — they do not
+/// need a `cliente_contacto` row. An **organizacion** cannot sign for anything, so it needs
+/// named people.
+model cliente {
+  id   String @id
+  tipo String @db.VarChar(16)
+
+  /// persona
+  nombre    String? @db.VarChar(120)
+  apellidos String? @db.VarChar(120)
+  /// organizacion
+  razonSocial String? @db.VarChar(200)
+
+  /// Denormalized display name, rewritten on every create/update. One indexed column that
+  /// searches and sorts both customer types — without it every list query needs a COALESCE
+  /// across three columns.
+  nombreCompleto String @db.VarChar(255)
+
+  telefono  String? @db.VarChar(32)
+  email     String? @db.VarChar(255)
+  direccion String? @db.VarChar(500)
+  notas     String?
+
+  /// CFDI 4.0. All optional until invoicing exists.
+  rfc           String? @db.VarChar(13)
+  regimenFiscal String? @db.VarChar(8)
+  codigoPostal  String? @db.VarChar(5)
+  usoCfdi       String? @db.VarChar(8)
+
+  archivedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  contactos   cliente_contacto[]
+  unidades    unidad[]
+  propiedades unidad_propietario[]
+  citas       cita[]
+
+  @@index([nombreCompleto])
+  @@index([rfc])
+  @@index([archivedAt])
+  @@map("cliente")
+}
+
+/// A person attached to one customer. Scoped, not shared: the same human on two customers
+/// is two rows. `roles` holds keys from CONTACTO_ROLES in src/lib/contacto-roles.ts.
+model cliente_contacto {
+  id        String  @id
+  clienteId String
+  cliente   cliente @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+
+  nombre   String  @db.VarChar(200)
+  telefono String? @db.VarChar(32)
+  email    String? @db.VarChar(255)
+  /// Free-text ID note for counter verification, e.g. "INE 1234". Never document images.
+  identificacion String? @db.VarChar(120)
+  notas          String?
+
+  roles String[] @db.VarChar(32)
+
+  /// "todas" | "especificas". Explicit on purpose: encoding "no rows in contacto_unidad
+  /// means all units" is shorter but reads as a bug later.
+  alcanceUnidades String @default("todas") @db.VarChar(16)
+
+  archivedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  unidadesAutorizadas contacto_unidad[]
+  citasComoEntregador cita[]
+
+  @@index([clienteId])
+  @@index([archivedAt])
+  @@map("cliente_contacto")
+}
+
+/// Which units a contact may collect. Only consulted when alcanceUnidades = "especificas".
+model contacto_unidad {
+  contactoId String
+  contacto   cliente_contacto @relation(fields: [contactoId], references: [id], onDelete: Cascade)
+  unidadId   String
+  unidad     unidad           @relation(fields: [unidadId], references: [id], onDelete: Cascade)
+
+  @@id([contactoId, unidadId])
+  @@index([unidadId])
+  @@map("contacto_unidad")
+}
+
+/// A vehicle. Only marca and modelo are required so a car can be received at the counter in
+/// seconds and completed later.
+///
+/// `clienteId` is the CURRENT owner and deliberately duplicates the open unidad_propietario
+/// row (the one with `hasta` null). Deriving the owner from history alone would put a join on
+/// every unit query. Both are written in the SAME transaction — see transferUnidad.
+model unidad {
+  id        String  @id
+  clienteId String
+  cliente   cliente @relation(fields: [clienteId], references: [id], onDelete: Restrict)
+
+  marca  String  @db.VarChar(60)
+  modelo String  @db.VarChar(60)
+  anio   Int?
+  color  String? @db.VarChar(40)
+  /// Not unique: plates get reassigned between vehicles over time.
+  placas String? @db.VarChar(16)
+  /// VIN/NIV — the real identity when present. Older units may not have one.
+  vin    String? @unique @db.VarChar(24)
+  /// The number a fleet paints on the door, and how they actually refer to a truck.
+  numeroEconomico String? @db.VarChar(32)
+  kilometraje     Int?
+  notas           String?
+
+  archivedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  propietarios unidad_propietario[]
+  autorizados  contacto_unidad[]
+  citas        cita[]
+
+  @@index([clienteId])
+  @@index([placas])
+  @@index([numeroEconomico])
+  @@index([archivedAt])
+  @@map("unidad")
+}
+
+/// Ownership history. The current owner is the row with `hasta` null.
+/// Visible to anyone with cliente:read — not just Admins reading the audit trail.
+model unidad_propietario {
+  id        String  @id
+  unidadId  String
+  unidad    unidad  @relation(fields: [unidadId], references: [id], onDelete: Cascade)
+  clienteId String
+  cliente   cliente @relation(fields: [clienteId], references: [id], onDelete: Restrict)
+
+  desde  DateTime  @default(now())
+  hasta  DateTime?
+  motivo String?   @db.VarChar(255)
+
+  createdAt DateTime @default(now())
+
+  @@index([unidadId])
+  @@index([clienteId])
+  @@map("unidad_propietario")
+}
+
+/// An appointment. Two origins, one table.
+///
+/// `origen = 'publico'` rows come from the anonymous form behind Cloudflare Turnstile and land
+/// as `estado = 'solicitada'` with a `fecha` + `franja` but no exact hour. Staff grant the hour
+/// when they confirm. `origen = 'panel'` rows are booked at the counter and always have `inicio`.
+///
+/// The contact and vehicle strings are kept as SUBMITTED, permanently, even after `clienteId` /
+/// `unidadId` are linked: an anonymous visitor cannot be trusted to identify a customer, and the
+/// record should always show what was actually said. Same reasoning as audit_log.entityLabel.
+model cita {
+  id String @id
+  /// Said out loud on the phone: "su cita es la 1042".
+  folio Int @unique @default(autoincrement())
+
+  /// 'publico' | 'panel'
+  origen String @db.VarChar(16)
+  /// solicitada | confirmada | en_proceso | completada | cancelada | no_asistio
+  estado String @default("solicitada") @db.VarChar(16)
+  /// 'en_sitio' | 'recoleccion' — whether we go get the vehicle.
+  tipo String @db.VarChar(16)
+
+  /// The day, always known. `franja` is what the customer asked for; `inicio`/`fin` is what the
+  /// shop granted, and is null until somebody schedules it.
+  fecha  DateTime  @db.Date
+  franja String?   @db.VarChar(8)
+  inicio DateTime? @db.Timestamptz(6)
+  fin    DateTime? @db.Timestamptz(6)
+
+  nombre   String  @db.VarChar(120)
+  telefono String  @db.VarChar(32)
+  email    String? @db.VarChar(255)
+  marca    String? @db.VarChar(60)
+  modelo   String? @db.VarChar(60)
+  anio     Int?
+  placas   String? @db.VarChar(16)
+  /// What the customer says they need.
+  motivo String
+  /// Internal, never shown to the customer and never writable from the public form.
+  notas String?
+
+  /// Filled in when staff recognise the customer. Nullable because a public request exists
+  /// before any of this is known — but CONFIRMING one requires both, enforced in confirmarCita.
+  /// SetNull so archiving history never deletes an appointment.
+  clienteId String?
+  cliente   cliente? @relation(fields: [clienteId], references: [id], onDelete: SetNull)
+  unidadId  String?
+  unidad    unidad?  @relation(fields: [unidadId], references: [id], onDelete: SetNull)
+
+  /// Who will hand the unit over, when it is not the customer themselves. Must be a contact of
+  /// `clienteId` holding the `entregador` role — checked in the server module, since a FK cannot
+  /// express "belongs to the same customer".
+  entregadorId String?
+  entregador   cliente_contacto? @relation(fields: [entregadorId], references: [id], onDelete: SetNull)
+
+  /// Required when tipo = 'recoleccion' (CHECK constraint) — sending someone to collect a
+  /// vehicle without an address is not a real appointment.
+  direccionRecoleccion String? @db.VarChar(500)
+
+  /// Who is handling the pickup. An Operador may advance only the appointments pointing here.
+  asignadoId String?
+  asignado   user?   @relation("citaAsignada", fields: [asignadoId], references: [id], onDelete: SetNull)
+
+  canceladoMotivo String? @db.VarChar(255)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([fecha])
+  @@index([inicio])
+  @@index([estado])
+  @@index([asignadoId])
+  @@index([clienteId])
+  @@index([telefono])
+  /// The calendar's hot query: everything in this week, in order. Declared here as well as in
+  /// the citas migration so Prisma stops proposing to drop it on every future diff.
+  @@index([fecha, inicio])
+  @@map("cita")
 }
 
 model configurations {

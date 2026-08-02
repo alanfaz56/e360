@@ -6,9 +6,19 @@
 	import Users from "@lucide/svelte/icons/users";
 	import Contact from "@lucide/svelte/icons/contact";
 	import ScrollText from "@lucide/svelte/icons/scroll-text";
+	import Car from "@lucide/svelte/icons/car";
+	import CalendarDays from "@lucide/svelte/icons/calendar-days";
+	import List from "@lucide/svelte/icons/list";
 	import type { NavItem } from "$lib/nav";
 
-	const ICONS = { users: Users, contact: Contact, "scroll-text": ScrollText };
+	const ICONS = {
+		users: Users,
+		contact: Contact,
+		car: Car,
+		"scroll-text": ScrollText,
+		"calendar-days": CalendarDays,
+		list: List,
+	};
 
 	let { name, ...rest }: { name: NavItem["icon"]; [key: string]: unknown } = $props();
 

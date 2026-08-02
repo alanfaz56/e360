@@ -2,13 +2,13 @@ import { randomUUID } from "node:crypto";
 import type { Prisma } from "../../generated/prisma/client.js";
 import prisma from "$lib/prisma";
 import { auditActionLabel, type AuditAction } from "$lib/audit-actions";
+import { DEFAULT_PAGE_SIZE, pageMeta, parseDate, parsePageParams, skipFor } from "./paginate";
 import type { Actor } from "./guard";
 
 /** Anything Prisma can run a query on — the client itself or a transaction handle. */
 type Db = Pick<typeof prisma, "audit_log">;
 
-export const AUDIT_PAGE_SIZE = 25;
-const MAX_PAGE_SIZE = 100;
+export const AUDIT_PAGE_SIZE = DEFAULT_PAGE_SIZE;
 
 /**
  * Append one entry to the audit trail.
@@ -23,7 +23,12 @@ export async function recordAudit(
 	db: Db,
 	entry: {
 		action: AuditAction;
-		actor: Pick<Actor, "id" | "email">;
+		/**
+		 * `id` is nullable because the public appointment form has no user behind it. The trail
+		 * still records the write — an unaudited anonymous endpoint would be the easiest thing in
+		 * the system to abuse quietly — with `email` naming the channel it came through.
+		 */
+		actor: { id: string | null; email: string };
 		entityId?: string | null;
 		entityLabel?: string | null;
 		summary?: string | null;
@@ -63,10 +68,6 @@ export type AuditQuery = {
 
 /** Parse query params into an AuditQuery. Shared by the API route and the page load. */
 export function parseAuditQuery(params: URLSearchParams): AuditQuery {
-	const int = (raw: string | null, fallback: number) => {
-		const n = Number(raw);
-		return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
-	};
 	return {
 		action: params.get("action"),
 		entity: params.get("entity"),
@@ -75,16 +76,8 @@ export function parseAuditQuery(params: URLSearchParams): AuditQuery {
 		q: params.get("q"),
 		desde: params.get("desde"),
 		hasta: params.get("hasta"),
-		page: int(params.get("page"), 1),
-		perPage: Math.min(int(params.get("perPage"), AUDIT_PAGE_SIZE), MAX_PAGE_SIZE),
+		...parsePageParams(params, AUDIT_PAGE_SIZE),
 	};
-}
-
-/** A valid Date, or undefined. Keeps a typo'd date from silently filtering everything out. */
-function parseDate(value: string | null | undefined, endOfDay = false): Date | undefined {
-	if (!value) return undefined;
-	const date = new Date(endOfDay && value.length === 10 ? `${value}T23:59:59.999` : value);
-	return Number.isNaN(date.getTime()) ? undefined : date;
 }
 
 /**
@@ -92,8 +85,7 @@ function parseDate(value: string | null | undefined, endOfDay = false): Date | u
  * Caller MUST have checked `audit:read` first — this does not re-derive authority.
  */
 export async function queryAuditLogs(query: AuditQuery) {
-	const page = query.page ?? 1;
-	const perPage = query.perPage ?? AUDIT_PAGE_SIZE;
+	const paging = { page: query.page ?? 1, perPage: query.perPage ?? AUDIT_PAGE_SIZE };
 
 	const desde = parseDate(query.desde);
 	const hasta = parseDate(query.hasta, true);
@@ -120,8 +112,8 @@ export async function queryAuditLogs(query: AuditQuery) {
 		prisma.audit_log.findMany({
 			where,
 			orderBy: { createdAt: "desc" },
-			skip: (page - 1) * perPage,
-			take: perPage,
+			skip: skipFor(paging),
+			take: paging.perPage,
 		}),
 	]);
 
@@ -139,9 +131,6 @@ export async function queryAuditLogs(query: AuditQuery) {
 			after: row.after,
 			createdAt: row.createdAt.toISOString(),
 		})),
-		page,
-		perPage,
-		total,
-		totalPages: Math.max(1, Math.ceil(total / perPage)),
+		...pageMeta(total, paging),
 	};
 }

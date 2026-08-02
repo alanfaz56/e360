@@ -5,6 +5,9 @@
 	import Lock from "@lucide/svelte/icons/lock";
 	import LockOpen from "@lucide/svelte/icons/lock-open";
 	import Eye from "@lucide/svelte/icons/eye";
+	import LinkIcon from "@lucide/svelte/icons/link";
+	import Copy from "@lucide/svelte/icons/copy";
+	import Check from "@lucide/svelte/icons/check";
 	import Badge from "$lib/components/Badge.svelte";
 	import Button from "$lib/components/Button.svelte";
 	import DataTable from "$lib/components/DataTable.svelte";
@@ -26,6 +29,20 @@
 	const editingHistory = $derived(data.roleChanges.filter((c) => c.entityId === editing?.id));
 
 	const closeDrawer = $derived(searchHref(page.url, { drawer: null, user: null }));
+
+	// Copy button only after hydration — $effect never runs during SSR, so a no-JS user is not
+	// left with a dead control. Same pattern as the password toggle in Field.
+	let hydrated = $state(false);
+	$effect(() => {
+		hydrated = true;
+	});
+	let copiado = $state(false);
+	async function copiar() {
+		if (!form?.inviteUrl) return;
+		await navigator.clipboard.writeText(form.inviteUrl);
+		copiado = true;
+		setTimeout(() => (copiado = false), 2000);
+	}
 
 	const STATUS_TONE = {
 		pendiente: "warn",
@@ -52,6 +69,48 @@
 	<p role="alert" class="mt-4 rounded border border-brand-200 bg-brand-50 px-3 py-2 text-sm text-brand-900">
 		{form.message}
 	</p>
+{/if}
+<!--
+	The one-time invitation link.
+
+	This lives at PAGE level, not inside the drawer: posting to `?/invitar` replaces the whole
+	query string, so `?drawer=invitar` is gone by the time the result renders and anything shown
+	only inside the drawer would never appear. The raw token exists exactly once — only its
+	SHA-256 is stored — so losing this panel means the invitation has to be reissued.
+-->
+{#if form?.inviteUrl}
+	<div class="mt-4 rounded-lg border-2 border-ok bg-ok/10 p-4">
+		<p class="flex items-center gap-2 text-sm font-bold text-sand-900">
+			<LinkIcon size={16} aria-hidden="true" />
+			Liga de invitación generada — cópiala ahora, no se vuelve a mostrar
+		</p>
+		<p class="mt-1 text-xs text-sand-600">Válida 72 horas y de un solo uso.</p>
+
+		<div class="mt-3 flex flex-wrap items-center gap-2">
+			<input
+				readonly
+				value={form.inviteUrl}
+				aria-label="Liga de invitación"
+				onfocus={(e) => e.currentTarget.select()}
+				class="min-w-0 flex-1 rounded border border-sand-300 bg-white px-2 py-1.5 font-mono text-xs"
+			/>
+			<!-- Enhancements only: the field above is always selectable, so no-JS still works. -->
+			{#if hydrated}
+				<Button type="button" size="sm" onclick={copiar}>
+					{#if copiado}
+						<Check size={16} aria-hidden="true" />
+						Copiada
+					{:else}
+						<Copy size={16} aria-hidden="true" />
+						Copiar
+					{/if}
+				</Button>
+			{/if}
+			<Button href="https://wa.me/?text={encodeURIComponent(form.inviteUrl)}" variant="outline" size="sm" target="_blank" rel="noopener">
+				Enviar por WhatsApp
+			</Button>
+		</div>
+	</div>
 {/if}
 {#if form?.roleChanged}
 	<p role="status" class="mt-4 rounded border border-ok/40 bg-ok/10 px-3 py-2 text-sm text-sand-800">
@@ -179,21 +238,7 @@
 		description="Se genera una liga de un solo uso, válida 72 horas."
 		closeHref={closeDrawer}
 	>
-		{#if form?.inviteUrl}
-			<div class="rounded border border-ok/40 bg-ok/10 p-3">
-				<p class="text-sm font-medium text-sand-800">
-					Liga generada. Cópiala ahora — no se vuelve a mostrar.
-				</p>
-				<input
-					readonly
-					value={form.inviteUrl}
-					onfocus={(e) => e.currentTarget.select()}
-					class="mt-2 w-full rounded border border-sand-300 bg-white px-2 py-1.5 font-mono text-xs"
-				/>
-			</div>
-		{/if}
-
-		<form method="POST" action="?/invitar" class="mt-4 space-y-4">
+		<form method="POST" action="?/invitar" class="space-y-4">
 			<Field label="Correo" name="email" type="email" required />
 			<Field label="Rol" name="role" hint="Solo puedes asignar roles por debajo del tuyo.">
 				{#snippet children(id)}
