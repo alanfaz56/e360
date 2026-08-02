@@ -136,7 +136,7 @@ async function seedCliente() {
 			direccion: "Blvd. Solidaridad 455, Col. Palo Verde, Hermosillo, Sonora",
 			rfc: "TDE010203AB1",
 			regimenFiscal: "601",
-			codigoPostal: "83280",
+			codigoPostal: "83280",  
 			usoCfdi: "G03",
 			notas: "Flotilla de reparto. Facturan cada quincena.",
 		},
