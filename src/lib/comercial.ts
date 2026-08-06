@@ -24,8 +24,7 @@ export type CotizacionEstado = keyof typeof COTIZACION_ESTADOS;
 export const COTIZACION_ESTADO_KEYS = Object.keys(COTIZACION_ESTADOS) as CotizacionEstado[];
 export const isCotizacionEstado = (v: unknown): v is CotizacionEstado =>
 	typeof v === "string" && v in COTIZACION_ESTADOS;
-export const cotizacionEstadoLabel = (v: string) =>
-	isCotizacionEstado(v) ? COTIZACION_ESTADOS[v].label : v;
+export const cotizacionEstadoLabel = (v: string) => (isCotizacionEstado(v) ? COTIZACION_ESTADOS[v].label : v);
 export const cotizacionEstadoTone = (v: string): Tone =>
 	isCotizacionEstado(v) ? COTIZACION_ESTADOS[v].tone : "neutral";
 
@@ -47,6 +46,63 @@ export function puedeTransicionarCotizacion(desde: string, hasta: string): boole
 	return (COTIZACION_TRANSICIONES[desde] as readonly string[]).includes(hasta);
 }
 
+/** Where a quote can go next on the CUSTOMER's axis, for rendering buttons from a plain string. */
+export const siguientesCliente = (desde: string): readonly CotizacionEstado[] =>
+	isCotizacionEstado(desde) ? COTIZACION_TRANSICIONES[desde] : [];
+
+/**
+ * The SHOP's track, alongside the customer's.
+ *
+ * Two axes on purpose. `estado` answers "what has the customer said"; this answers "what are we
+ * doing about it". Squeezing both into one column means every new answer to one multiplies the
+ * states of the other — and "autorizada pero todavía no cobrada" is the single most common
+ * situation in the shop, which one column cannot express at all.
+ */
+export const COTIZACION_INTERNOS = {
+	pendiente: {
+		label: "Pendiente",
+		tone: "neutral",
+		descripcion: "Nadie ha empezado; esperando la respuesta del cliente",
+	},
+	en_proceso: { label: "En proceso", tone: "brand", descripcion: "El taller está trabajando en esto" },
+	completada: { label: "Completada", tone: "ok", descripcion: "El trabajo quedó terminado" },
+	por_cobrar: { label: "Por cobrar", tone: "warn", descripcion: "Terminado y facturado, falta el dinero" },
+	cobrada: { label: "Cobrada", tone: "ok", descripcion: "Pagada por completo" },
+} as const satisfies Record<string, { label: string; tone: Tone; descripcion: string }>;
+
+export type CotizacionInterno = keyof typeof COTIZACION_INTERNOS;
+export const COTIZACION_INTERNO_KEYS = Object.keys(COTIZACION_INTERNOS) as CotizacionInterno[];
+export const isCotizacionInterno = (v: unknown): v is CotizacionInterno =>
+	typeof v === "string" && v in COTIZACION_INTERNOS;
+export const cotizacionInternoLabel = (v: string) => (isCotizacionInterno(v) ? COTIZACION_INTERNOS[v].label : v);
+export const cotizacionInternoTone = (v: string): Tone =>
+	isCotizacionInterno(v) ? COTIZACION_INTERNOS[v].tone : "neutral";
+
+/**
+ * Forward only, and it never starts before the customer authorized — `cotizacion_interno_requiere_
+ * autorizacion_check` enforces that half in the database.
+ *
+ * `cobrada` is deliberately NOT reachable from here: it is reached by ARITHMETIC over the payments
+ * on the linked invoices, exactly like `factura.pagada`. Listing it would invite a button that
+ * lies about money.
+ */
+export const COTIZACION_INTERNO_TRANSICIONES = {
+	pendiente: ["en_proceso", "completada"],
+	en_proceso: ["completada"],
+	completada: ["por_cobrar"],
+	por_cobrar: [],
+	cobrada: [],
+} as const satisfies Record<CotizacionInterno, readonly CotizacionInterno[]>;
+
+export function puedeTransicionarInterno(desde: string, hasta: string): boolean {
+	if (!isCotizacionInterno(desde) || !isCotizacionInterno(hasta)) return false;
+	return (COTIZACION_INTERNO_TRANSICIONES[desde] as readonly string[]).includes(hasta);
+}
+
+/** Where a quote can go next, for rendering buttons from a plain string estado. */
+export const siguientesInternos = (desde: string): readonly CotizacionInterno[] =>
+	isCotizacionInterno(desde) ? COTIZACION_INTERNO_TRANSICIONES[desde] : [];
+
 export const CONCEPTO_TIPOS = {
 	refaccion: { label: "Refacción" },
 	mano_obra: { label: "Mano de obra" },
@@ -56,8 +112,7 @@ export const CONCEPTO_TIPOS = {
 
 export type ConceptoTipo = keyof typeof CONCEPTO_TIPOS;
 export const CONCEPTO_TIPO_KEYS = Object.keys(CONCEPTO_TIPOS) as ConceptoTipo[];
-export const isConceptoTipo = (v: unknown): v is ConceptoTipo =>
-	typeof v === "string" && v in CONCEPTO_TIPOS;
+export const isConceptoTipo = (v: unknown): v is ConceptoTipo => typeof v === "string" && v in CONCEPTO_TIPOS;
 export const conceptoTipoLabel = (v: string) => (isConceptoTipo(v) ? CONCEPTO_TIPOS[v].label : v);
 
 /** IVA general. A rate, not a constant sprinkled through the code. */
@@ -74,12 +129,9 @@ export const FACTURA_ESTADOS = {
 
 export type FacturaEstado = keyof typeof FACTURA_ESTADOS;
 export const FACTURA_ESTADO_KEYS = Object.keys(FACTURA_ESTADOS) as FacturaEstado[];
-export const isFacturaEstado = (v: unknown): v is FacturaEstado =>
-	typeof v === "string" && v in FACTURA_ESTADOS;
-export const facturaEstadoLabel = (v: string) =>
-	isFacturaEstado(v) ? FACTURA_ESTADOS[v].label : v;
-export const facturaEstadoTone = (v: string): Tone =>
-	isFacturaEstado(v) ? FACTURA_ESTADOS[v].tone : "neutral";
+export const isFacturaEstado = (v: unknown): v is FacturaEstado => typeof v === "string" && v in FACTURA_ESTADOS;
+export const facturaEstadoLabel = (v: string) => (isFacturaEstado(v) ? FACTURA_ESTADOS[v].label : v);
+export const facturaEstadoTone = (v: string): Tone => (isFacturaEstado(v) ? FACTURA_ESTADOS[v].tone : "neutral");
 
 /**
  * `pagada` is NOT set by hand — it is reached by registering payments that cover the total, and
@@ -106,10 +158,8 @@ export const CONDICIONES_PAGO = {
 
 export type CondicionPago = keyof typeof CONDICIONES_PAGO;
 export const CONDICION_PAGO_KEYS = Object.keys(CONDICIONES_PAGO) as CondicionPago[];
-export const isCondicionPago = (v: unknown): v is CondicionPago =>
-	typeof v === "string" && v in CONDICIONES_PAGO;
-export const condicionPagoLabel = (v: string) =>
-	isCondicionPago(v) ? CONDICIONES_PAGO[v].label : v;
+export const isCondicionPago = (v: unknown): v is CondicionPago => typeof v === "string" && v in CONDICIONES_PAGO;
+export const condicionPagoLabel = (v: string) => (isCondicionPago(v) ? CONDICIONES_PAGO[v].label : v);
 export const esCredito = (v: string) => isCondicionPago(v) && CONDICIONES_PAGO[v].credito;
 
 // --- Pago ------------------------------------------------------------------------------------
@@ -124,8 +174,7 @@ export const METODOS_PAGO = {
 
 export type MetodoPago = keyof typeof METODOS_PAGO;
 export const METODO_PAGO_KEYS = Object.keys(METODOS_PAGO) as MetodoPago[];
-export const isMetodoPago = (v: unknown): v is MetodoPago =>
-	typeof v === "string" && v in METODOS_PAGO;
+export const isMetodoPago = (v: unknown): v is MetodoPago => typeof v === "string" && v in METODOS_PAGO;
 export const metodoPagoLabel = (v: string) => (isMetodoPago(v) ? METODOS_PAGO[v].label : v);
 
 // --- Money helpers ---------------------------------------------------------------------------
@@ -169,10 +218,7 @@ export function totales(
 	conceptos: { cantidad: number; precioUnitario: bigint }[],
 	tasaIva = IVA,
 ): { subtotal: bigint; iva: bigint; total: bigint } {
-	const subtotal = conceptos.reduce(
-		(suma, c) => suma + importeConcepto(c.cantidad, c.precioUnitario),
-		0n,
-	);
+	const subtotal = conceptos.reduce((suma, c) => suma + importeConcepto(c.cantidad, c.precioUnitario), 0n);
 	const iva = BigInt(Math.round(Number(subtotal) * tasaIva));
 	return { subtotal, iva, total: subtotal + iva };
 }

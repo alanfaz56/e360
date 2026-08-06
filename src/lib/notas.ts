@@ -74,9 +74,7 @@ export function puedeTransicionarNota(desde: string, hasta: string): boolean {
 }
 
 /** Estados where the unit is still the shop's responsibility. Drives the "abiertas" filter. */
-export const NOTA_ESTADOS_ABIERTOS = NOTA_ESTADO_KEYS.filter(
-	(e) => e !== "entregada" && e !== "cancelada",
-);
+export const NOTA_ESTADOS_ABIERTOS = NOTA_ESTADO_KEYS.filter((e) => e !== "entregada" && e !== "cancelada");
 
 /**
  * The fuel gauge, in eighths — what the needle actually shows. Storing a percentage would invent
@@ -123,13 +121,9 @@ export const INVENTARIO_ITEMS = {
 
 export type InventarioItem = keyof typeof INVENTARIO_ITEMS;
 export const INVENTARIO_ITEM_KEYS = Object.keys(INVENTARIO_ITEMS) as InventarioItem[];
-export const isInventarioItem = (v: unknown): v is InventarioItem =>
-	typeof v === "string" && v in INVENTARIO_ITEMS;
-export const inventarioLabel = (v: string) =>
-	isInventarioItem(v) ? INVENTARIO_ITEMS[v].label : v;
-export const INVENTARIO_OBLIGATORIOS = INVENTARIO_ITEM_KEYS.filter(
-	(k) => INVENTARIO_ITEMS[k].obligatorio,
-);
+export const isInventarioItem = (v: unknown): v is InventarioItem => typeof v === "string" && v in INVENTARIO_ITEMS;
+export const inventarioLabel = (v: string) => (isInventarioItem(v) ? INVENTARIO_ITEMS[v].label : v);
+export const INVENTARIO_OBLIGATORIOS = INVENTARIO_ITEM_KEYS.filter((k) => INVENTARIO_ITEMS[k].obligatorio);
 
 /**
  * Evidence attached to a nota: intake photos, a signed quote, a partner shop's report.
@@ -142,8 +136,7 @@ export const EVIDENCIA_TIPOS = {
 
 export type EvidenciaTipo = keyof typeof EVIDENCIA_TIPOS;
 export const EVIDENCIA_TIPO_KEYS = Object.keys(EVIDENCIA_TIPOS) as EvidenciaTipo[];
-export const isEvidenciaTipo = (v: unknown): v is EvidenciaTipo =>
-	typeof v === "string" && v in EVIDENCIA_TIPOS;
+export const isEvidenciaTipo = (v: unknown): v is EvidenciaTipo => typeof v === "string" && v in EVIDENCIA_TIPOS;
 
 /** Content types accepted for upload. Anything else is refused before a URL is ever signed. */
 export const TIPOS_MIME_PERMITIDOS = [
@@ -174,10 +167,8 @@ export const FOTO_CATEGORIAS = {
 
 export type FotoCategoria = keyof typeof FOTO_CATEGORIAS;
 export const FOTO_CATEGORIA_KEYS = Object.keys(FOTO_CATEGORIAS) as FotoCategoria[];
-export const isFotoCategoria = (v: unknown): v is FotoCategoria =>
-	typeof v === "string" && v in FOTO_CATEGORIAS;
-export const fotoCategoriaLabel = (v: string) =>
-	isFotoCategoria(v) ? FOTO_CATEGORIAS[v].label : v;
+export const isFotoCategoria = (v: unknown): v is FotoCategoria => typeof v === "string" && v in FOTO_CATEGORIAS;
+export const fotoCategoriaLabel = (v: string) => (isFotoCategoria(v) ? FOTO_CATEGORIAS[v].label : v);
 /** The angles the shop wants on every intake, so a damage claim later has a before picture. */
 export const FOTOS_SUGERIDAS = FOTO_CATEGORIA_KEYS.filter((k) => FOTO_CATEGORIAS[k].sugerida);
 
@@ -209,8 +200,7 @@ export const QA_RESULTADOS = {
 export type QaResultado = keyof typeof QA_RESULTADOS;
 /** What a person may choose. `no_aplica` is not here on purpose — see below. */
 export const QA_RESULTADO_KEYS = Object.keys(QA_RESULTADOS) as QaResultado[];
-export const isQaResultado = (v: unknown): v is QaResultado =>
-	typeof v === "string" && v in QA_RESULTADOS;
+export const isQaResultado = (v: unknown): v is QaResultado => typeof v === "string" && v in QA_RESULTADOS;
 
 /**
  * Set only when a note is CANCELLED while a unit is still out: the transfer has to close, and
@@ -220,16 +210,50 @@ export const isQaResultado = (v: unknown): v is QaResultado =>
 export const QA_NO_APLICA = "no_aplica";
 
 export const qaResultadoLabel = (v: string | null) =>
-	v === QA_NO_APLICA
-		? "No aplica (nota cancelada)"
-		: v && isQaResultado(v)
-			? QA_RESULTADOS[v].label
-			: "Sin revisar";
-export const qaResultadoTone = (v: string | null): Tone =>
-	v && isQaResultado(v) ? QA_RESULTADOS[v].tone : "neutral";
+	v === QA_NO_APLICA ? "No aplica (nota cancelada)" : v && isQaResultado(v) ? QA_RESULTADOS[v].label : "Sin revisar";
+export const qaResultadoTone = (v: string | null): Tone => (v && isQaResultado(v) ? QA_RESULTADOS[v].tone : "neutral");
 
-/** A rejected job goes straight back — the unit is not released to the customer on a bad repair. */
-export const qaExigeRetorno = (v: string) => v === "rechazado";
+/**
+ * Where the unit ends up. A SECOND decision, separate from the verdict.
+ *
+ * "The work was bad" and "who has the vehicle" are two different facts. Collapsing them meant a
+ * rejection could only ever leave the unit with the shop that botched it — so the honest answer to
+ * a bad repair ("take it back, I'll send it somewhere else") was unreachable without approving work
+ * that was not approved.
+ *
+ * The unit is never released to the CUSTOMER on a rejection either way: it comes back to Estación
+ * 360, which is who answers for the repair.
+ */
+export const QA_DESTINOS = {
+	retrabajo: {
+		label: "Se queda en ese taller",
+		descripcion: "Que lo corrijan ellos. La unidad sigue bajo su responsabilidad",
+	},
+	retorno: {
+		label: "Regresa a Estación 360",
+		descripcion: "La recuperamos para terminarla aquí o mandarla a otro taller",
+	},
+} as const satisfies Record<string, { label: string; descripcion: string }>;
+
+export type QaDestino = keyof typeof QA_DESTINOS;
+export const QA_DESTINO_KEYS = Object.keys(QA_DESTINOS) as QaDestino[];
+export const isQaDestino = (v: unknown): v is QaDestino => typeof v === "string" && v in QA_DESTINOS;
+
+/**
+ * What happens when nobody says. A rejection defaults to rework — the shop that did it badly is
+ * the one that owes the fix — and anything accepted always comes back.
+ */
+export const qaDestinoPorDefecto = (v: string): QaDestino => (v === "rechazado" ? "retrabajo" : "retorno");
+
+/**
+ * Does the unit stay with the partner shop? Only a rejection left for rework does.
+ *
+ * The whole rule in one place: an accepted job always comes back no matter what `destino` says,
+ * and a rejection is a verdict on the work rather than a sentence tying the vehicle to the shop
+ * that botched it. Pure so `check-notas.ts` can pin every combination.
+ */
+export const qaSigueEnTaller = (resultado: string, destino: QaDestino) =>
+	resultado === "rechazado" && destino === "retrabajo";
 
 /** Where a mileage reading came from. `nota` readings are the ones that mark a shop visit. */
 export const ORIGENES_KILOMETRAJE = {
@@ -241,5 +265,4 @@ export const ORIGENES_KILOMETRAJE = {
 export type OrigenKilometraje = keyof typeof ORIGENES_KILOMETRAJE;
 export const isOrigenKilometraje = (v: unknown): v is OrigenKilometraje =>
 	typeof v === "string" && v in ORIGENES_KILOMETRAJE;
-export const origenKilometrajeLabel = (v: string) =>
-	isOrigenKilometraje(v) ? ORIGENES_KILOMETRAJE[v] : v;
+export const origenKilometrajeLabel = (v: string) => (isOrigenKilometraje(v) ? ORIGENES_KILOMETRAJE[v] : v);

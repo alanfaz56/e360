@@ -14,17 +14,22 @@ import {
 	isCondicionPago,
 	isConceptoTipo,
 	isCotizacionEstado,
+	isCotizacionInterno,
 	isMetodoPago,
 	metodoPagoLabel,
 	pesos,
 	puedeTransicionarCotizacion,
+	puedeTransicionarInterno,
+	cotizacionInternoLabel,
 	totales,
 	type CotizacionEstado,
 } from "$lib/comercial";
+import { consumirFifo } from "./inventario";
 import { recordAudit } from "./audit";
 import { ClienteError, trim } from "./clientes";
 import { avisarClienteDeNota, notificar } from "./notificaciones";
 import { pageMeta, parsePageParams, skipFor, type PageParams } from "./paginate";
+import { tallerMencionado } from "./talleres";
 import type { Actor } from "./guard";
 
 /**
@@ -66,6 +71,9 @@ export const publicCotizacion = (c: CotizacionRow) => ({
 	clienteNombre: c.nota?.cliente?.nombreCompleto ?? null,
 	estado: c.estado,
 	estadoLabel: cotizacionEstadoLabel(c.estado),
+	// The shop's own track, alongside the customer's. Two axes, two columns — see COTIZACION_INTERNOS.
+	estadoInterno: c.estadoInterno,
+	estadoInternoLabel: cotizacionInternoLabel(c.estadoInterno),
 	subtotal: monto(c.subtotal),
 	iva: monto(c.iva),
 	total: monto(c.total),
@@ -86,6 +94,13 @@ export const publicCotizacion = (c: CotizacionRow) => ({
 		cantidad: x.cantidad.toFixed(2),
 		precioUnitario: monto(x.precioUnitario),
 		importe: monto(x.importe),
+		productoId: x.productoId,
+		claveProdServ: x.claveProdServ,
+		claveUnidad: x.claveUnidad,
+		surtido: x.surtido.toFixed(3),
+		// A line is fully issued when what left the shelf reaches what was quoted. Derived, never
+		// a flag somebody ticks — that is how stock and paperwork stop agreeing.
+		surtidoCompleto: Number(x.surtido) >= Number(x.cantidad),
 	})),
 	createdAt: c.createdAt.toISOString(),
 });
@@ -96,9 +111,15 @@ export async function getCotizacion(id: string) {
 	return cotizacion;
 }
 
-export async function listCotizaciones(query: { notaId?: string | null } & Partial<PageParams>) {
+export async function listCotizaciones(
+	query: { notaId?: string | null; estado?: string | null; estadoInterno?: string | null } & Partial<PageParams>,
+) {
 	const paging = { page: query.page ?? 1, perPage: query.perPage ?? 25 };
-	const where: Prisma.cotizacionWhereInput = query.notaId ? { notaId: query.notaId } : {};
+	const where: Prisma.cotizacionWhereInput = {
+		...(query.notaId ? { notaId: query.notaId } : {}),
+		...(isCotizacionEstado(query.estado) ? { estado: query.estado } : {}),
+		...(isCotizacionInterno(query.estadoInterno) ? { estadoInterno: query.estadoInterno } : {}),
+	};
 
 	const [total, rows] = await Promise.all([
 		prisma.cotizacion.count({ where }),
@@ -122,8 +143,12 @@ function leerConceptos(value: unknown) {
 		const c = (typeof raw === "object" && raw !== null ? raw : {}) as Record<string, unknown>;
 		if (!isConceptoTipo(c.tipo)) throw new ClienteError(400, `Concepto ${i + 1}: tipo inválido`);
 
+		// A catalogue line may leave the description blank: `resolverProductos` fills it from the
+		// product's own name. Making somebody retype what the catalogue already knows is how a
+		// quote ends up describing a part differently from the thing that leaves the shelf.
+		const productoId = trim(c.productoId);
 		const descripcion = trim(c.descripcion, 500, `La descripción del concepto ${i + 1}`);
-		if (!descripcion) throw new ClienteError(400, `Concepto ${i + 1}: falta la descripción`);
+		if (!descripcion && !productoId) throw new ClienteError(400, `Concepto ${i + 1}: falta la descripción`);
 
 		const cantidad = Number(c.cantidad);
 		if (!Number.isFinite(cantidad) || cantidad <= 0) {
@@ -136,14 +161,79 @@ function leerConceptos(value: unknown) {
 
 		return {
 			tipo: c.tipo,
-			descripcion,
+			// "" only survives when a productoId came with it, and `resolverProductos` replaces it
+			// with the product's name before anything is written.
+			descripcion: descripcion ?? "",
 			cantidad,
 			precioUnitario,
 			importe: importeConcepto(cantidad, precioUnitario),
 			orden: i,
+			// Optional: a one-off line ("mandar rectificar la cabeza con el del torno") is a real
+			// quote line that will never be a catalogue product.
+			productoId,
 		};
 	});
 }
+
+/**
+ * Fill in each line from the catalogue: SAT keys, and the price when the caller did not set one.
+ *
+ * The keys are **copied onto the line**, never read through the relation at display time.
+ * Re-classifying a product next year must not silently rewrite what was already quoted — the same
+ * reasoning as copying credit terms onto an invoice at issue.
+ */
+async function resolverProductos(conceptos: ReturnType<typeof leerConceptos>) {
+	const ids = [...new Set(conceptos.map((c) => c.productoId).filter((id): id is string => Boolean(id)))];
+	if (ids.length === 0) return conceptos.map((c) => ({ ...c, claveProdServ: null, claveUnidad: null }));
+
+	const productos = await prisma.producto.findMany({
+		where: { id: { in: ids } },
+		select: { id: true, nombre: true, claveProdServ: true, claveUnidad: true, precioVenta: true, archivedAt: true },
+	});
+	const porId = new Map(productos.map((p) => [p.id, p]));
+
+	return conceptos.map((c) => {
+		if (!c.productoId) return { ...c, claveProdServ: null, claveUnidad: null };
+		const p = porId.get(c.productoId);
+		if (!p) throw new ClienteError(404, `El producto de "${c.descripcion}" ya no existe`);
+		if (p.archivedAt) throw new ClienteError(409, `${p.nombre} está archivado y no se puede cotizar.`);
+
+		return {
+			...c,
+			// Blank means "call it whatever the catalogue calls it" — see `leerConceptos`.
+			descripcion: c.descripcion || p.nombre,
+			claveProdServ: p.claveProdServ,
+			claveUnidad: p.claveUnidad,
+			// A zero price on a catalogue line is almost always "the form did not send one", not a
+			// giveaway. Fall back to the list price rather than quoting free work.
+			precioUnitario: c.precioUnitario === 0n ? (centavos(p.precioVenta.toFixed(2)) ?? 0n) : c.precioUnitario,
+		};
+	});
+}
+
+/**
+ * A quote line is CUSTOMER-FACING data: they read the concepts on `/seguimiento`, and they read
+ * them on the invoice. So the same rule a visible comment follows applies here — the partner
+ * workshop never surfaces. Catches the honest slip ("mandar con El Sahuaro") written into a line.
+ *
+ * Checked on the way IN rather than filtered on the way out: redacting a money document after the
+ * fact would silently change what somebody was quoted.
+ */
+async function exigirSinTaller(conceptos: { descripcion: string }[]) {
+	for (const c of conceptos) {
+		const mencionado = await tallerMencionado(c.descripcion);
+		if (mencionado) {
+			throw new ClienteError(
+				400,
+				`El concepto "${c.descripcion}" menciona a "${mencionado}". El cliente lee la cotización, y los talleres aliados nunca se le comparten: descríbelo por el trabajo, no por quién lo hace.`,
+			);
+		}
+	}
+}
+
+/** Recompute importe after `resolverProductos` may have substituted a price. */
+const conImportes = <T extends { cantidad: number; precioUnitario: bigint }>(conceptos: T[]) =>
+	conceptos.map((c) => ({ ...c, importe: importeConcepto(c.cantidad, c.precioUnitario) }));
 
 export async function crearCotizacion(input: { actor: Actor; notaId: string; body: Record<string, unknown> }) {
 	if (!can(input.actor.role, "cotizacion:create")) {
@@ -157,7 +247,8 @@ export async function crearCotizacion(input: { actor: Actor; notaId: string; bod
 	if (!nota) throw new ClienteError(404, "Nota de servicio no encontrada");
 	if (nota.estado === "cancelada") throw new ClienteError(409, "Una nota cancelada ya no se cotiza.");
 
-	const conceptos = leerConceptos(input.body.conceptos);
+	const conceptos = conImportes(await resolverProductos(leerConceptos(input.body.conceptos)));
+	await exigirSinTaller(conceptos);
 	const { subtotal, iva, total } = totales(conceptos);
 
 	const cotizacion = await prisma.$transaction(async (tx) => {
@@ -181,6 +272,11 @@ export async function crearCotizacion(input: { actor: Actor; notaId: string; bod
 						precioUnitario: dec(c.precioUnitario),
 						importe: dec(c.importe),
 						orden: c.orden,
+						productoId: c.productoId,
+						// Copied, never read through the relation: re-classifying the product later
+						// must not rewrite what was already quoted.
+						claveProdServ: c.claveProdServ,
+						claveUnidad: c.claveUnidad,
 					})),
 				},
 			},
@@ -203,11 +299,7 @@ export async function crearCotizacion(input: { actor: Actor; notaId: string; bod
 }
 
 /** Only a `borrador` is editable: once the customer has seen it, the numbers are frozen. */
-export async function actualizarCotizacion(input: {
-	actor: Actor;
-	id: string;
-	body: Record<string, unknown>;
-}) {
+export async function actualizarCotizacion(input: { actor: Actor; id: string; body: Record<string, unknown> }) {
 	if (!can(input.actor.role, "cotizacion:create")) {
 		throw new ClienteError(403, "Sin permiso: cotizacion:create");
 	}
@@ -220,7 +312,8 @@ export async function actualizarCotizacion(input: {
 		);
 	}
 
-	const conceptos = leerConceptos(input.body.conceptos);
+	const conceptos = conImportes(await resolverProductos(leerConceptos(input.body.conceptos)));
+	await exigirSinTaller(conceptos);
 	const { subtotal, iva, total } = totales(conceptos);
 
 	const cotizacion = await prisma.$transaction(async (tx) => {
@@ -242,6 +335,11 @@ export async function actualizarCotizacion(input: {
 						precioUnitario: dec(c.precioUnitario),
 						importe: dec(c.importe),
 						orden: c.orden,
+						productoId: c.productoId,
+						// Copied, never read through the relation: re-classifying the product later
+						// must not rewrite what was already quoted.
+						claveProdServ: c.claveProdServ,
+						claveUnidad: c.claveUnidad,
 					})),
 				},
 			},
@@ -440,10 +538,7 @@ async function asegurarCredito(
 	const estado = await saldoCliente(input.clienteId);
 
 	if (estado.limiteCents === null) {
-		throw new ClienteError(
-			409,
-			"Este cliente no tiene crédito autorizado. Cobra de contado o asígnale un límite.",
-		);
+		throw new ClienteError(409, "Este cliente no tiene crédito autorizado. Cobra de contado o asígnale un límite.");
 	}
 
 	const nuevoSaldo = estado.saldoCents + input.montoCents;
@@ -479,11 +574,7 @@ async function asegurarCredito(
 }
 
 /** Set or clear a customer's credit terms. Both fields move together — a CHECK enforces it too. */
-export async function actualizarCredito(input: {
-	actor: Actor;
-	clienteId: string;
-	body: Record<string, unknown>;
-}) {
+export async function actualizarCredito(input: { actor: Actor; clienteId: string; body: Record<string, unknown> }) {
 	if (!can(input.actor.role, "cliente:credito")) {
 		throw new ClienteError(403, "Sin permiso: cliente:credito");
 	}
@@ -495,9 +586,7 @@ export async function actualizarCredito(input: {
 	if (!cliente) throw new ClienteError(404, "Cliente no encontrado");
 
 	const sinCredito =
-		input.body.limiteCredito === "" ||
-		input.body.limiteCredito === null ||
-		input.body.limiteCredito === undefined;
+		input.body.limiteCredito === "" || input.body.limiteCredito === null || input.body.limiteCredito === undefined;
 
 	let limite: bigint | null = null;
 	let dias: number | null = null;
@@ -597,7 +686,12 @@ export async function getFactura(id: string) {
 }
 
 export async function listFacturas(
-	query: { clienteId?: string | null; notaId?: string | null; estado?: string | null; vencidas?: boolean } & Partial<PageParams>,
+	query: {
+		clienteId?: string | null;
+		notaId?: string | null;
+		estado?: string | null;
+		vencidas?: boolean;
+	} & Partial<PageParams>,
 ) {
 	const paging = { page: query.page ?? 1, perPage: query.perPage ?? 25 };
 	const where: Prisma.facturaWhereInput = {
@@ -846,6 +940,9 @@ export async function registrarPago(input: { actor: Actor; facturaId: string; bo
 
 	const liquidada = pagado + monto >= total;
 
+	// `cobrada` is arithmetic, not a button — recompute it wherever the arithmetic changes.
+	await sincronizarCobranza(factura.cotizacionId);
+
 	await notificar({
 		evento: "pago_registrado",
 		destino: { difusion: true },
@@ -868,6 +965,240 @@ export async function registrarPago(input: { actor: Actor; facturaId: string; bo
 	}
 
 	return pago;
+}
+
+// --- La pista interna: trabajo y cobro ---------------------------------------------------------
+
+/**
+ * How much of this quote has actually been collected.
+ *
+ * Reads the payments on its linked invoices — the same numbers `factura.pagada` turns on, so the
+ * two can never disagree. This is what makes `cobrada` arithmetic instead of a button.
+ */
+async function cobranzaDe(cotizacionId: string) {
+	const facturas = await prisma.factura.findMany({
+		where: { cotizacionId, estado: { not: "cancelada" } },
+		select: { total: true, pagos: { select: { monto: true } } },
+	});
+
+	const facturado = facturas.reduce((s, f) => s + aCentavos(f.total), 0n);
+	const pagado = facturas.reduce((s, f) => s + f.pagos.reduce((t, p) => t + aCentavos(p.monto), 0n), 0n);
+	return { facturas: facturas.length, facturado, pagado, saldo: facturado - pagado };
+}
+
+/**
+ * Move a quote along the SHOP's track.
+ *
+ * `cobrada` is deliberately NOT reachable here — it is derived from the payments, and
+ * `sincronizarCobranza` sets it. Offering it as a destination would be a button that lies about
+ * money, the same reason `factura.pagada` has none.
+ *
+ * The database also refuses any internal state past `pendiente` while the customer has not
+ * authorized (`cotizacion_interno_requiere_autorizacion_check`), so a race between "the customer
+ * said yes" and "we started" cannot leave an impossible row behind.
+ */
+export async function avanzarInterno(input: { actor: Actor; id: string; estado: unknown }) {
+	if (!can(input.actor.role, "cotizacion:interno")) {
+		throw new ClienteError(403, "Sin permiso: cotizacion:interno");
+	}
+
+	const destino = input.estado;
+	if (!isCotizacionInterno(destino)) throw new ClienteError(400, "Estado interno inválido");
+	if (destino === "cobrada") {
+		throw new ClienteError(
+			400,
+			"«Cobrada» se alcanza registrando los pagos, no a mano. Registra el pago en la factura.",
+		);
+	}
+
+	const current = await getCotizacion(input.id);
+	if (current.estado !== "autorizada") {
+		throw new ClienteError(
+			409,
+			"El cliente todavía no autoriza esta cotización. No se puede empezar a trabajarla ni cobrarla.",
+		);
+	}
+	if (!puedeTransicionarInterno(current.estadoInterno, destino)) {
+		throw new ClienteError(
+			409,
+			`No se puede pasar de ${cotizacionInternoLabel(current.estadoInterno)} a ${cotizacionInternoLabel(destino)}.`,
+		);
+	}
+
+	// "Por cobrar" means there is something to collect. Without an invoice there is nothing.
+	if (destino === "por_cobrar") {
+		const { facturas } = await cobranzaDe(current.id);
+		if (facturas === 0) {
+			throw new ClienteError(
+				409,
+				"Emite la factura antes de marcarla por cobrar: no hay nada que cobrar todavía.",
+			);
+		}
+	}
+
+	const cotizacion = await prisma.$transaction(async (tx) => {
+		const actualizada = await tx.cotizacion.update({
+			where: { id: current.id },
+			data: { estadoInterno: destino },
+			include: COTIZACION_INCLUDE,
+		});
+
+		await recordAudit(tx, {
+			action: "cotizacion.interno",
+			actor: input.actor,
+			entityId: actualizada.id,
+			entityLabel: `Cotización #${actualizada.folio}`,
+			summary: `Cotización #${actualizada.folio}: ${cotizacionInternoLabel(current.estadoInterno)} → ${cotizacionInternoLabel(destino)}`,
+			before: { estadoInterno: current.estadoInterno },
+			after: { estadoInterno: destino },
+		});
+
+		return actualizada;
+	});
+
+	return publicCotizacion(cotizacion);
+}
+
+/**
+ * Recompute `cobrada` from the payments. Called after every payment and every invoice issue.
+ *
+ * Runs both ways: a quote that is fully paid becomes `cobrada`, and one that stops being fully
+ * paid (an invoice cancelled, a payment reversed) drops back to `por_cobrar`. A one-way flag would
+ * leave the shop's own board claiming money it no longer has.
+ *
+ * Never throws into the payment path — a status label is not worth failing a transaction that took
+ * somebody's money.
+ */
+export async function sincronizarCobranza(cotizacionId: string | null | undefined): Promise<void> {
+	if (!cotizacionId) return;
+	try {
+		const cotizacion = await prisma.cotizacion.findUnique({
+			where: { id: cotizacionId },
+			select: { id: true, folio: true, estadoInterno: true, estado: true },
+		});
+		if (!cotizacion || cotizacion.estado !== "autorizada") return;
+
+		const { facturas, facturado, saldo } = await cobranzaDe(cotizacion.id);
+		if (facturas === 0 || facturado === 0n) return;
+
+		const liquidada = saldo <= 0n;
+		if (liquidada && cotizacion.estadoInterno !== "cobrada") {
+			await prisma.cotizacion.update({ where: { id: cotizacion.id }, data: { estadoInterno: "cobrada" } });
+		} else if (!liquidada && cotizacion.estadoInterno === "cobrada") {
+			await prisma.cotizacion.update({ where: { id: cotizacion.id }, data: { estadoInterno: "por_cobrar" } });
+		}
+	} catch (err) {
+		console.error("sincronizarCobranza falló:", err);
+	}
+}
+
+/**
+ * Issue the parts a quote calls for, FIFO, and record how much of each line has been supplied.
+ *
+ * Only catalogue lines that carry stock are touched — labour and sublet work have nothing to
+ * issue. Lines already fully supplied are skipped, so calling this twice does not double-consume:
+ * the guard is `cantidad - surtido`, computed from the row, not from what the caller asks for.
+ *
+ * All or nothing. If one part is short the whole thing rolls back, because half a job's parts
+ * leaving the shelf without anybody being told is worse than a clear refusal.
+ */
+export async function surtirCotizacion(input: { actor: Actor; id: string }) {
+	if (!can(input.actor.role, "inventario:salida")) {
+		throw new ClienteError(403, "Sin permiso: inventario:salida");
+	}
+
+	const current = await getCotizacion(input.id);
+	if (current.estado !== "autorizada") {
+		throw new ClienteError(409, "Surte hasta que el cliente autorice la cotización.");
+	}
+
+	const conProducto = current.conceptos.filter((c) => c.productoId);
+	if (conProducto.length === 0) {
+		throw new ClienteError(409, "Esta cotización no tiene renglones del catálogo que surtir.");
+	}
+
+	const productos = await prisma.producto.findMany({
+		where: { id: { in: conProducto.map((c) => c.productoId!) } },
+		select: { id: true, nombre: true, controlaInventario: true },
+	});
+	const porId = new Map(productos.map((p) => [p.id, p]));
+
+	const pendientes = conProducto
+		.filter((c) => porId.get(c.productoId!)?.controlaInventario)
+		.map((c) => ({ concepto: c, falta: Number(c.cantidad) - Number(c.surtido) }))
+		.filter((x) => x.falta > 0.0005);
+
+	if (pendientes.length === 0) throw new ClienteError(409, "Ya está todo surtido.");
+
+	const resultado = await prisma.$transaction(async (tx) => {
+		let costo = 0;
+		for (const { concepto, falta } of pendientes) {
+			const { costoTotal } = await consumirFifo(tx, {
+				actor: input.actor,
+				productoId: concepto.productoId!,
+				cantidad: falta,
+				notaId: current.notaId,
+				conceptoId: concepto.id,
+				motivo: `Cotización #${current.folio}`,
+			});
+			costo += costoTotal;
+
+			await tx.cotizacion_concepto.update({
+				where: { id: concepto.id },
+				data: { surtido: new Prisma.Decimal(Number(concepto.cantidad).toFixed(3)) },
+			});
+		}
+
+		await recordAudit(tx, {
+			action: "cotizacion.concepto",
+			actor: input.actor,
+			entityId: current.id,
+			entityLabel: `Cotización #${current.folio}`,
+			summary: `Surtidos ${pendientes.length} renglón(es) de la cotización #${current.folio}`,
+			after: { renglones: pendientes.length, costo: costo.toFixed(2) },
+		});
+
+		return { renglones: pendientes.length, costo: costo.toFixed(2) };
+	});
+
+	// Anything that hit zero or dropped under its reorder point is a purchase somebody has to make.
+	await avisarStockBajo(
+		pendientes.map((p) => p.concepto.productoId!),
+		input.actor.id,
+	);
+
+	return resultado;
+}
+
+/** Tell whoever buys parts that something ran out. One notification per product, only on the edge. */
+export async function avisarStockBajo(productoIds: string[], excepto?: string | null) {
+	if (productoIds.length === 0) return;
+	try {
+		const productos = await prisma.producto.findMany({
+			where: { id: { in: [...new Set(productoIds)] }, controlaInventario: true },
+			select: { id: true, nombre: true, unidad: true, existencia: true, minimo: true },
+		});
+
+		for (const p of productos) {
+			const existencia = Number(p.existencia);
+			const minimo = p.minimo === null ? null : Number(p.minimo);
+			const bajo = existencia <= 0 || (minimo !== null && existencia <= minimo);
+			if (!bajo) continue;
+
+			await notificar({
+				evento: "stock_bajo",
+				destino: { difusion: true },
+				titulo: existencia <= 0 ? "Se acabó una refacción" : "Refacción bajo mínimo",
+				cuerpo: `${p.nombre}: quedan ${existencia.toFixed(3).replace(/\.?0+$/, "")} ${p.unidad}`,
+				url: `/panel/inventario?bajos=1`,
+				entidad: "producto",
+				entidadId: p.id,
+				excepto,
+			});
+		}
+	} catch (err) {
+		console.error("avisarStockBajo falló:", err);
+	}
 }
 
 export { IVA };

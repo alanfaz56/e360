@@ -30,7 +30,10 @@ import {
 	notaEstadoClienteLabel,
 	notaEstadoLabel,
 	puedeTransicionarNota,
-	qaExigeRetorno,
+	QA_DESTINO_KEYS,
+	isQaDestino,
+	qaDestinoPorDefecto,
+	qaSigueEnTaller,
 	qaResultadoLabel,
 } from "../src/lib/notas.js";
 
@@ -129,11 +132,25 @@ assert.equal(isQaResultado("aprobado"), true);
 assert.equal(isQaResultado("mas_o_menos"), false);
 assert.equal(qaResultadoLabel(null), "Sin revisar", "sin veredicto no es lo mismo que aprobado");
 
-// Only a rejection sends the unit back; the other two accept it. If this inverted, a bad repair
-// would be released to the customer.
-assert.equal(qaExigeRetorno("rechazado"), true);
-assert.equal(qaExigeRetorno("aprobado"), false);
-assert.equal(qaExigeRetorno("con_detalles"), false, "se acepta, con la observación asentada");
+// The verdict and where the unit ends up are two separate answers. A rejection defaults to leaving
+// it with the shop that owes the fix; anything accepted always comes back. If this inverted, an
+// approved job would be left sitting at a partner shop nobody is waiting on.
+assert.deepEqual(QA_DESTINO_KEYS, ["retrabajo", "retorno"]);
+assert.equal(qaDestinoPorDefecto("rechazado"), "retrabajo");
+assert.equal(qaDestinoPorDefecto("aprobado"), "retorno");
+assert.equal(qaDestinoPorDefecto("con_detalles"), "retorno", "se acepta, con la observación asentada");
+assert.equal(isQaDestino("retorno"), true);
+assert.equal(isQaDestino("a_la_calle"), false);
+
+// The unit stays at the partner shop in exactly ONE of the six combinations. Anything accepted
+// comes back whatever `destino` says, and a rejection no longer chains the vehicle to the shop
+// that botched it — that is what makes "rechazado, y me la llevo a otro taller" possible.
+assert.equal(qaSigueEnTaller("rechazado", "retrabajo"), true);
+assert.equal(qaSigueEnTaller("rechazado", "retorno"), false, "rechazar no obliga a dejársela");
+assert.equal(qaSigueEnTaller("aprobado", "retrabajo"), false, "lo aprobado siempre regresa");
+assert.equal(qaSigueEnTaller("aprobado", "retorno"), false);
+assert.equal(qaSigueEnTaller("con_detalles", "retrabajo"), false, "lo aprobado siempre regresa");
+assert.equal(qaSigueEnTaller("con_detalles", "retorno"), false);
 
 // --- The partner workshop is invisible to the customer -----------------------------------------
 // Estación 360 sources the job out and answers for it. Handing the customer the partner's name

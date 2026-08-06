@@ -16,7 +16,11 @@ export const load: ServerLoad = async ({ params, setHeaders }) => {
 	setHeaders({ "cache-control": "private, no-store", "x-robots-tag": "noindex, nofollow" });
 
 	try {
-		return { ...(await seguimientoPorToken(params.token!)), token: params.token!, clavePublica: clavePublicaVapid() };
+		return {
+			...(await seguimientoPorToken(params.token!)),
+			token: params.token!,
+			clavePublica: clavePublicaVapid(),
+		};
 	} catch (err) {
 		if (err instanceof ClienteError) error(err.status, err.message);
 		throw err;

@@ -1,105 +1,36 @@
-import { error, fail, redirect, type Actions, type ServerLoad } from "@sveltejs/kit";
-import { hoy, isVista, parseFecha, sumarDias } from "$lib/agenda";
+import { error, redirect, type ServerLoad } from "@sveltejs/kit";
 import { NAV } from "$lib/nav";
 import { can } from "$lib/roles";
-import { CitaError, agenda, crearCita, resumenAgenda } from "$lib/server/citas";
-import { listClientes } from "$lib/server/clientes";
-import { listUnidades } from "$lib/server/unidades";
 import { kpisPara } from "$lib/server/kpis";
 import { requireUser } from "$lib/server/guard";
-import { listUsers } from "$lib/server/users";
 
 /**
- * /panel is the dashboard: counters over the week calendar.
+ * /panel is Home: the shop's numbers and nothing else.
  *
- * A role without `cita:read` keeps the old behaviour and is sent to the first section it can
- * open — which is why the redirect below skips `/panel` itself, or it would bounce forever.
+ * The calendar moved to /panel/agenda. Two different questions — "how are we doing" and "what is
+ * coming in on Thursday" — were sharing one screen, which meant the agenda was always below a wall
+ * of counters and the counters were always above a calendar nobody scrolled past.
+ *
+ * The gate is the KPIs themselves, not a permission: every block is already gated by the data it
+ * summarises, so a role with no blocks has an empty home and is sent to the first section it can
+ * actually open. That redirect must skip `/panel` or it loops forever.
  */
-export const load: ServerLoad = async ({ locals, url }) => {
+export const load: ServerLoad = async ({ locals }) => {
 	const actor = requireUser(locals);
+	const bloques = await kpisPara(actor);
 
-	if (!can(actor.role, "cita:read")) {
-		const first = NAV.find((item) => item.href !== "/panel" && can(actor.role, item.permission));
+	if (bloques.length === 0) {
+		// Same filter the sidebar uses, `ocultarSi` included — otherwise a role could be redirected
+		// to a screen its own menu deliberately hides. A mechanic lands on /panel/taller here.
+		const first = NAV.find(
+			(item) =>
+				item.href !== "/panel" &&
+				can(actor.role, item.permission) &&
+				!(item.ocultarSi && can(actor.role, item.ocultarSi)),
+		);
 		if (!first) error(403, "Tu rol todavía no tiene secciones asignadas.");
 		redirect(303, first.href);
 	}
 
-	const vistaParam = url.searchParams.get("vista");
-	const vista = isVista(vistaParam) ? vistaParam : "semana";
-	const fecha = parseFecha(url.searchParams.get("fecha")) ?? hoy();
-	// Resolved from the session, never from the URL — "mine" has to mean the caller.
-	const mias = url.searchParams.get("mias") === "1";
-
-	const [datos, resumen, bloques] = await Promise.all([
-		agenda(vista, fecha, mias ? actor.id : null),
-		resumenAgenda(),
-		kpisPara(actor),
-	]);
-
-	// Only fetched when the actor could actually assign somebody — one less query, and the
-	// picker is never populated for a role the server would refuse anyway.
-	const asignables = can(actor.role, "cita:assign")
-		? (await listUsers())
-				.filter((u) => u.active)
-				.map((u) => ({ id: u.id, name: u.name, roleLabel: u.roleLabel }))
-		: [];
-
-	// For the "Nueva cita" drawer. A counter booking is born confirmada, so it needs a real
-	// customer and vehicle — the picker defaults to searching the registry rather than typing a
-	// duplicate. Both lists are the no-JS fallback; with JS the pickers search the API instead.
-	const puedeCrear = can(actor.role, "cita:create");
-	const clientes = puedeCrear
-		? (await listClientes({ perPage: 100 })).clientes.map((c) => ({
-				id: c.id,
-				nombreCompleto: c.nombreCompleto,
-				tipoLabel: c.tipoLabel,
-			}))
-		: [];
-	const unidades = puedeCrear
-		? (await listUnidades({ perPage: 100 })).unidades.map((u) => ({
-				id: u.id,
-				etiqueta: u.etiqueta,
-				numeroEconomico: u.numeroEconomico,
-				vin: u.vin,
-				anio: u.anio,
-				color: u.color,
-				clienteNombre: u.clienteNombre,
-				archivado: u.archivado,
-			}))
-		: [];
-
-	return {
-		...datos,
-		resumen,
-		asignables,
-		// Navigation, precomputed so the template stays markup. The week is a rolling seven days
-		// from the anchor, so stepping moves the whole window.
-		anterior: sumarDias(fecha, vista === "dia" ? -1 : -7),
-		siguiente: sumarDias(fecha, vista === "dia" ? 1 : 7),
-		hoy: hoy(),
-		mias,
-		bloques,
-		clientes,
-		unidades,
-		puede: {
-			crear: puedeCrear,
-			asignar: can(actor.role, "cita:assign"),
-		},
-	};
-};
-
-export const actions: Actions = {
-	/** Book at the counter. Same shared function the API route calls (Rule 4). */
-	crear: async ({ locals, request }) => {
-		const actor = requireUser(locals);
-		const body = Object.fromEntries(await request.formData()) as Record<string, unknown>;
-
-		try {
-			await crearCita({ actor, body });
-			return { creada: true };
-		} catch (err) {
-			if (err instanceof CitaError) return fail(err.status, { message: err.message, valores: body });
-			throw err;
-		}
-	},
+	return { bloques, nombre: actor.name, puedeAgenda: can(actor.role, "cita:read") };
 };

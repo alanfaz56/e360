@@ -6,12 +6,7 @@
  * Safe to import from both server and browser: it is data + pure functions, no I/O.
  */
 
-import {
-	CONTACTO_ROLE_KEYS,
-	esRolDeAutoridad,
-	isContactoRole,
-	type ContactoRole,
-} from "./contacto-roles";
+import { CONTACTO_ROLE_KEYS, esRolDeAutoridad, isContactoRole, type ContactoRole } from "./contacto-roles";
 
 export const ROLES = ["admin", "gerente", "operador", "taller"] as const;
 
@@ -99,7 +94,9 @@ export const PERMISSIONS = {
 	"nota:inspect": ["admin", "gerente", "operador"],
 	"nota:advance": ["admin", "gerente", "operador"],
 	"nota:transfer": ["admin", "gerente", "operador"],
-	"nota:comment": ["admin", "gerente", "operador"],
+	// A mechanic holds this too, but `comentarNota` FORCES `interno: true` for them: notes to the
+	// customer are written by whoever owns the relationship with that customer.
+	"nota:comment": ["admin", "gerente", "operador", "taller"],
 	"nota:close": ["admin", "gerente"],
 	"nota:cancel": ["admin", "gerente"],
 
@@ -120,12 +117,46 @@ export const PERMISSIONS = {
 	// This key is only for pushing a message AT somebody else, by hand or as a broadcast.
 	"notificacion:send": ["admin", "gerente"],
 
+	// --- Catálogo e inventario -----------------------------------------------------------------
+	// The counter quotes from the catalogue but does not set prices — the same split as
+	// `cliente:credito`. `taller` is absent: a mechanic asks for a part by name, and never sees
+	// what the shop charges for it.
+	"producto:read": ["admin", "gerente", "operador"],
+	"producto:manage": ["admin", "gerente"],
+	"inventario:read": ["admin", "gerente", "operador"],
+	// Receiving goods and correcting stock both move money; issuing a part to a job is daily work.
+	"inventario:entrada": ["admin", "gerente"],
+	"inventario:salida": ["admin", "gerente", "operador"],
+	// Always requires a motivo — enforced in `ajustarExistencia` and by a CHECK constraint.
+	"inventario:ajuste": ["admin", "gerente"],
+	// Asking for a part is not taking one. This is the mechanic's only write into inventory, and
+	// it produces a request somebody at the counter fills or turns down.
+	"inventario:solicitar": ["admin", "gerente", "operador", "taller"],
+
+	// Moving a quote along the SHOP's track (en_proceso → completada → por_cobrar). Separate from
+	// `cotizacion:send`, which is about what the customer has been told.
+	"cotizacion:interno": ["admin", "gerente", "operador"],
+
+	// --- Taller Mecánico -----------------------------------------------------------------------
+	// The first permissions this role has ever held. Scope is the point: a mechanic sees the notes
+	// assigned to THEM, and nothing else — `nota:read` (the whole floor) is still not theirs.
+	"nota:asignadas": ["admin", "gerente", "operador", "taller"],
+	"nota:asignar-mecanico": ["admin", "gerente", "operador"],
+	// Write the diagnosis and mark their own work finished. Advancing the NOTE stays with the
+	// counter: "the work is done" and "the car can be handed over" are different facts.
+	"nota:diagnostico": ["admin", "gerente", "operador", "taller"],
+	// Photographing the job. Split from `nota:inspect` (the intake walk-around) so a mechanic can
+	// document their work without being able to rewrite how the vehicle arrived.
+	"nota:evidencia": ["admin", "gerente", "operador", "taller"],
+
 	// --- Dinero ------------------------------------------------------------------------------
-	// Operador drafts and records the customer's answer; pricing decisions and anything that
-	// creates a receivable stay with Admin/Gerente.
+	// Operador quotes and talks to the customer; anything that creates a RECEIVABLE — an invoice,
+	// a credit limit — stays with Admin/Gerente.
 	"cotizacion:read": ["admin", "gerente", "operador"],
 	"cotizacion:create": ["admin", "gerente", "operador"],
-	"cotizacion:send": ["admin", "gerente"],
+	// The counter is who has the customer on the phone. Holding this back meant a quote sat in
+	// borrador until a Gerente was free, which is the shop losing the sale to its own permissions.
+	"cotizacion:send": ["admin", "gerente", "operador"],
 	"cotizacion:authorize": ["admin", "gerente", "operador"],
 	"factura:read": ["admin", "gerente", "operador"],
 	"factura:create": ["admin", "gerente"],

@@ -37,10 +37,7 @@ export const POST: RequestHandler = async ({ params, request }) => {
 			name: body.name,
 			password: body.password,
 		});
-		return json(
-			{ user: { id: user.id, email: user.email, name: user.name, role } },
-			{ status: 201 },
-		);
+		return json({ user: { id: user.id, email: user.email, name: user.name, role } }, { status: 201 });
 	} catch (err) {
 		if (err instanceof InviteError) error(err.status, err.message);
 		throw err;

@@ -1,4 +1,5 @@
 import { fail, redirect, type Actions, type ServerLoad } from "@sveltejs/kit";
+import { conFlash } from "$lib/flash";
 import { can } from "$lib/roles";
 import { TRANSICIONES, requiereHora, type CitaEstado } from "$lib/citas";
 import {
@@ -25,9 +26,7 @@ export const load: ServerLoad = async ({ locals, params, url }) => {
 	const cita = publicCita(await getCita(params.id!));
 
 	const asignables = can(actor.role, "cita:assign")
-		? (await listUsers())
-				.filter((u) => u.active)
-				.map((u) => ({ id: u.id, name: u.name, roleLabel: u.roleLabel }))
+		? (await listUsers()).filter((u) => u.active).map((u) => ({ id: u.id, name: u.name, roleLabel: u.roleLabel }))
 		: [];
 
 	// For the "vincular" drawer: candidate customers, and — once one is chosen — its vehicles and
@@ -76,10 +75,31 @@ export const load: ServerLoad = async ({ locals, params, url }) => {
 					.map((c) => ({ id: c.id, nombre: c.nombre, telefono: c.telefono }))
 			: [];
 
+	// For the "recibir" drawer. Every live contact, not just the `entregador` ones: handing a
+	// vehicle OVER carries no risk of releasing it to the wrong person, so it needs no authority —
+	// that rule belongs to `entregarNota`, at the other end of the job.
+	const contactos =
+		can(actor.role, "nota:create") && cita.clienteId
+			? (await listContactos(cita.clienteId)).map((c) => ({
+					id: c.id,
+					nombre: c.nombre,
+					telefono: c.telefono,
+					rolesLabel: c.rolesLabel,
+				}))
+			: [];
+
+	// The last reading on file, so the intake field comes prefilled instead of being retyped off
+	// a dashboard the operator is standing in front of anyway.
+	const unidadActual = cita.unidadId
+		? await prisma.unidad.findUnique({
+				where: { id: cita.unidadId },
+				select: { kilometraje: true },
+			})
+		: null;
+
 	// An Operador advances only their own; anyone with cita:update advances anything.
 	const puedeAvanzar =
-		can(actor.role, "cita:advance") &&
-		(can(actor.role, "cita:update") || cita.asignadoId === actor.id);
+		can(actor.role, "cita:advance") && (can(actor.role, "cita:update") || cita.asignadoId === actor.id);
 
 	return {
 		cita,
@@ -88,6 +108,8 @@ export const load: ServerLoad = async ({ locals, params, url }) => {
 		unidades,
 		sugeridas,
 		entregadores,
+		contactos,
+		kilometrajeUnidad: unidadActual?.kilometraje ?? null,
 		clienteElegido,
 		// Cancelling has its own permission and its own reason field, so it never shows up as
 		// just another "next state" button. An estado that needs an hour is hidden until the
@@ -106,7 +128,9 @@ export const load: ServerLoad = async ({ locals, params, url }) => {
 			recibir: can(actor.role, "nota:create"),
 		},
 		// At most one note per appointment, so this is either null or the one to jump to.
-		notaId: (await prisma.nota_servicio.findUnique({ where: { citaId: params.id! }, select: { id: true } }))?.id ?? null,
+		notaId:
+			(await prisma.nota_servicio.findUnique({ where: { citaId: params.id! }, select: { id: true } }))?.id ??
+			null,
 	};
 };
 
@@ -117,14 +141,21 @@ export const actions: Actions = {
 		const body = Object.fromEntries(await request.formData()) as Record<string, unknown>;
 		try {
 			await actualizarCita({ actor, id: params.id!, body });
-			redirect(303, `/panel/citas/${params.id}`);
+			redirect(303, conFlash(`/panel/citas/${params.id}`, "cita.editar"));
 		} catch (err) {
 			if (err instanceof CitaError) return fail(err.status, { message: err.message });
 			throw err;
 		}
 	},
 
-	/** The vehicle arrived: open its service note and take the operator straight to it. */
+	/**
+	 * The vehicle arrived: open its service note and land the operator IN the intake inspection.
+	 *
+	 * Receiving and inspecting are one continuous act at the counter — the person is standing next
+	 * to the truck with the customer waiting. Dropping them on the note and making them find the
+	 * button is how a unit gets moved into the bay with no walk-around on file, which is exactly
+	 * what the inspection protects the shop from.
+	 */
 	recibir: async ({ locals, params, request }) => {
 		const actor = requireUser(locals);
 		const data = await request.formData();
@@ -136,9 +167,12 @@ export const actions: Actions = {
 					kilometraje: data.get("kilometraje"),
 					forzarKilometraje: data.get("forzarKilometraje"),
 					observaciones: data.get("observaciones"),
+					entregoContactoId: data.get("entregoContactoId"),
+					entregoNombre: data.get("entregoNombre"),
+					entregoTelefono: data.get("entregoTelefono"),
 				},
 			});
-			redirect(303, `/panel/notas/${nota.id}`);
+			redirect(303, conFlash(`/panel/notas/${nota.id}?drawer=inspeccion`, "nota.recibir"));
 		} catch (err) {
 			if (err instanceof CitaError) return fail(err.status, { message: err.message });
 			throw err;
@@ -150,7 +184,7 @@ export const actions: Actions = {
 		const body = Object.fromEntries(await request.formData()) as Record<string, unknown>;
 		try {
 			await vincularCita({ actor, id: params.id!, body });
-			redirect(303, `/panel/citas/${params.id}`);
+			redirect(303, conFlash(`/panel/citas/${params.id}`, "cita.vincular"));
 		} catch (err) {
 			if (err instanceof CitaError) return fail(err.status, { message: err.message });
 			throw err;
@@ -162,7 +196,7 @@ export const actions: Actions = {
 		const body = Object.fromEntries(await request.formData()) as Record<string, unknown>;
 		try {
 			await confirmarCita({ actor, id: params.id!, body });
-			redirect(303, `/panel/citas/${params.id}`);
+			redirect(303, conFlash(`/panel/citas/${params.id}`, "cita.confirmar"));
 		} catch (err) {
 			if (err instanceof CitaError) return fail(err.status, { message: err.message });
 			throw err;
@@ -174,7 +208,7 @@ export const actions: Actions = {
 		const data = await request.formData();
 		try {
 			await asignarCita({ actor, id: params.id!, asignadoId: data.get("asignadoId") });
-			redirect(303, `/panel/citas/${params.id}`);
+			redirect(303, conFlash(`/panel/citas/${params.id}`, "cita.asignar"));
 		} catch (err) {
 			if (err instanceof CitaError) return fail(err.status, { message: err.message });
 			throw err;
@@ -186,7 +220,7 @@ export const actions: Actions = {
 		const data = await request.formData();
 		try {
 			await avanzarCita({ actor, id: params.id!, estado: data.get("estado") });
-			redirect(303, `/panel/citas/${params.id}`);
+			redirect(303, conFlash(`/panel/citas/${params.id}`, "cita.avanzar"));
 		} catch (err) {
 			if (err instanceof CitaError) return fail(err.status, { message: err.message });
 			throw err;
@@ -198,7 +232,7 @@ export const actions: Actions = {
 		const data = await request.formData();
 		try {
 			await cancelarCita({ actor, id: params.id!, motivo: data.get("motivo") });
-			redirect(303, `/panel/citas/${params.id}`);
+			redirect(303, conFlash(`/panel/citas/${params.id}`, "cita.cancelar"));
 		} catch (err) {
 			if (err instanceof CitaError) return fail(err.status, { message: err.message });
 			throw err;

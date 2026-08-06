@@ -1,13 +1,7 @@
 import { error, json, type RequestHandler } from "@sveltejs/kit";
 import { requirePermission, requireUser } from "$lib/server/guard";
 import { ClienteError } from "$lib/server/clientes";
-import {
-	deleteUnidad,
-	getUnidad,
-	listPropietarios,
-	publicUnidad,
-	updateUnidad,
-} from "$lib/server/unidades";
+import { deleteUnidad, getUnidad, listPropietarios, publicUnidad, updateUnidad } from "$lib/server/unidades";
 
 /** GET /api/unidades/:id — unit with its ownership history. Permission: `unidad:read`. */
 export const GET: RequestHandler = async ({ locals, params }) => {

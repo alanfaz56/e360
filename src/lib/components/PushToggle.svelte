@@ -12,17 +12,10 @@
 -->
 <script lang="ts">
 	import Bell from "@lucide/svelte/icons/bell";
-	import BellOff from "@lucide/svelte/icons/bell-off";
 	import BellRing from "@lucide/svelte/icons/bell-ring";
 	import Info from "@lucide/svelte/icons/info";
 	import Button from "./Button.svelte";
-	import {
-		activar,
-		desactivar,
-		estadoActual,
-		requiereInstalacionEnIOS,
-		type EstadoPush,
-	} from "$lib/push-cliente";
+	import { activar, estadoActual, requiereInstalacionEnIOS, type EstadoPush } from "$lib/push-cliente";
 
 	let {
 		clavePublica = "",
@@ -40,10 +33,10 @@
 		estadoActual(clavePublica).then((e) => (estado = e));
 	});
 
-	async function alternar() {
+	async function encender() {
 		trabajando = true;
 		mensaje = null;
-		const res = estado === "activo" ? await desactivar(endpoint) : await activar(clavePublica, endpoint);
+		const res = await activar(clavePublica, endpoint);
 		estado = res.estado;
 		mensaje = res.mensaje ?? null;
 		trabajando = false;
@@ -56,39 +49,47 @@
 			"Bloqueaste los avisos para este sitio. Actívalos desde el candado de la barra de direcciones y vuelve a intentar.",
 	};
 
-	const puedeActuar = $derived(
-		estado === "sin-permiso" || estado === "inactivo" || estado === "activo",
-	);
+	const puedeActuar = $derived(estado === "sin-permiso" || estado === "inactivo");
 </script>
 
 {#if estado !== null}
 	<div class="space-y-2">
-		{#if puedeActuar}
+		<!--
+			Already on: say so and stop. Offering "desactivar" next to it turns a settled thing back
+			into a decision every time the page is opened — and it is not this page's switch anyway.
+			The panel's device list is where a device gets removed; a customer uses the browser's own
+			site settings, which is the control they can always reach whatever we render.
+		-->
+		{#if estado === "activo"}
+			<p class="flex items-center gap-1.5 text-xs text-sand-600">
+				<BellRing
+					size={14}
+					aria-hidden="true"
+					class="shrink-0 text-ok"
+				/>
+				Este dispositivo ya recibe avisos.
+			</p>
+		{:else if puedeActuar}
 			<Button
 				type="button"
-				onclick={alternar}
+				onclick={encender}
 				disabled={trabajando}
-				variant={estado === "activo" ? "outline" : "primary"}
 				size={compacto ? "sm" : "md"}
 				full={!compacto}
 			>
-				{#if estado === "activo"}
-					<BellOff size={18} aria-hidden="true" />
-					Desactivar avisos en este dispositivo
-				{:else}
-					<Bell size={18} aria-hidden="true" />
-					Activar avisos en este dispositivo
-				{/if}
+				<Bell
+					size={18}
+					aria-hidden="true"
+				/>
+				Activar avisos en este dispositivo
 			</Button>
-			{#if estado === "activo"}
-				<p class="flex items-center gap-1.5 text-xs text-sand-600">
-					<BellRing size={14} aria-hidden="true" class="shrink-0 text-ok" />
-					Este dispositivo ya recibe avisos.
-				</p>
-			{/if}
 		{:else}
 			<p class="flex items-start gap-2 rounded border border-sand-200 bg-sand-50 px-3 py-2 text-xs text-sand-600">
-				<Info size={14} aria-hidden="true" class="mt-0.5 shrink-0" />
+				<Info
+					size={14}
+					aria-hidden="true"
+					class="mt-0.5 shrink-0"
+				/>
 				<span>
 					{AYUDA[estado] ?? "Los avisos no están disponibles aquí."}
 					{#if estado === "no-soportado" && requiereInstalacionEnIOS()}
@@ -100,7 +101,12 @@
 		{/if}
 
 		{#if mensaje}
-			<p role="status" class="text-xs text-sand-600">{mensaje}</p>
+			<p
+				role="status"
+				class="text-xs text-sand-600"
+			>
+				{mensaje}
+			</p>
 		{/if}
 	</div>
 {/if}

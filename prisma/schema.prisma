@@ -24,6 +24,14 @@ model user {
   banReason  String?
   banExpires DateTime?
 
+  /// The partner workshop this person works FOR, when they are not ours.
+  ///
+  /// Only a `taller` role may carry one — `user_taller_solo_rol_taller_check` enforces it in the
+  /// database, because this is what decides how much of a job somebody outside the company sees.
+  /// Null means one of ours: a mechanic on Estación 360's own floor.
+  tallerId String?
+  taller   taller? @relation("tallerMecanicos", fields: [tallerId], references: [id], onDelete: SetNull)
+
   invitationsSent invitation[] @relation("invitedBy")
   auditLogs       audit_log[]  @relation("auditActor")
   citasAsignadas  cita[]       @relation("citaAsignada")
@@ -42,6 +50,12 @@ model user {
   suscripcionesPush   push_suscripcion[]         @relation("pushSuscripcion")
   preferenciasAviso   notificacion_preferencia[] @relation("notificacionPreferencia")
   talleresRevisados   taller[]                   @relation("tallerRevisadoPor")
+
+  notasAsignadas       nota_servicio[]         @relation("notaMecanico")
+  entradasRegistradas  inventario_entrada[]    @relation("entradaRegistradaPor")
+  movimientosRegistrados inventario_movimiento[] @relation("movimientoRegistradoPor")
+  refaccionesSolicitadas solicitud_refaccion[]  @relation("refaccionSolicitadaPor")
+  refaccionesResueltas   solicitud_refaccion[]  @relation("refaccionResueltaPor")
 
   @@map("user")
 }
@@ -228,6 +242,7 @@ model cliente_contacto {
   unidadesAutorizadas contacto_unidad[]
   citasComoEntregador cita[]
   notasEntregadas     nota_servicio[] @relation("notaEntregadaA")
+  notasEntregadasPorEl nota_servicio[] @relation("notaEntregoUnidad")
   cotizacionesAutorizadas cotizacion[] @relation("cotizacionAutorizadaPor")
 
   @@index([clienteId])
@@ -438,6 +453,8 @@ model taller {
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
 
+  /// Their own people, with accounts. Only `taller`-role users; see `user.tallerId`.
+  mecanicos       user[]          @relation("tallerMecanicos")
   notas_recibidas nota_servicio[]
   transferencias  nota_transferencia[]
   sucursales      taller_sucursal[]
@@ -492,6 +509,20 @@ model nota_servicio {
   tallerActualId String?
   tallerActual   taller? @relation(fields: [tallerActualId], references: [id], onDelete: SetNull)
 
+  /// Who physically HANDED THE VEHICLE OVER at intake.
+  ///
+  /// Free text plus an optional FK, the same shape as `cita`: whoever showed up is often the
+  /// owner's brother-in-law, a driver, a neighbour — a real person the shop needs on the record
+  /// and who will never be a `cliente_contacto`. Requiring registration here would mean either
+  /// refusing the vehicle or inventing a contact row that nobody maintains.
+  ///
+  /// The name is snapshotted even when the contact IS registered, so the record still reads after
+  /// that contact is archived — same reasoning as `audit_log.entityLabel`.
+  entregoNombre    String? @db.VarChar(120)
+  entregoTelefono  String? @db.VarChar(32)
+  entregoContactoId String?
+  entregoContacto   cliente_contacto? @relation("notaEntregoUnidad", fields: [entregoContactoId], references: [id], onDelete: SetNull)
+
   entregadaAt DateTime?
   /// Who physically collected the unit. Must be the customer or one of its `entregador` contacts.
   entregadaAContactoId String?
@@ -518,11 +549,24 @@ model nota_servicio {
   facturas       factura[]
   lecturas       unidad_kilometraje[]
 
+  /// The mechanic working on it. This is the ONLY thing the `taller` role can see: their own
+  /// assigned notes. Without it that role has no screen at all.
+  mecanicoId String?
+  mecanico   user?   @relation("notaMecanico", fields: [mecanicoId], references: [id], onDelete: SetNull)
+  /// The mechanic says "I'm done"; advancing the note itself stays with the counter. Two different
+  /// facts — the work being finished and the job being ready to hand over — and conflating them is
+  /// how a car gets promised to a customer before anybody checked it.
+  trabajoTerminadoAt DateTime?
+
+  movimientos inventario_movimiento[]
+  solicitudes solicitud_refaccion[]
+
   @@index([estado])
   @@index([clienteId])
   @@index([unidadId])
   @@index([tallerActualId])
   @@index([recibidaAt])
+  @@index([mecanicoId])
   @@map("nota_servicio")
 }
 
@@ -668,8 +712,18 @@ model cotizacion {
   notaId String
   nota   nota_servicio @relation(fields: [notaId], references: [id], onDelete: Cascade)
 
-  /// borrador | enviada | autorizada | rechazada | vencida
+  /// What the CUSTOMER has said: borrador | enviada | autorizada | rechazada | vencida.
   estado String @default("borrador") @db.VarChar(16)
+
+  /// What the SHOP is doing about it: pendiente | en_proceso | completada | por_cobrar | cobrada.
+  ///
+  /// Two axes on purpose. "The customer approved it" and "we finished and got paid" are different
+  /// questions with different owners, and squeezing both into one column means every new answer to
+  /// one of them multiplies the states of the other.
+  ///
+  /// It only leaves `pendiente` once the customer has authorized — enforced in `avanzarInterno` —
+  /// and `cobrada` is reached by ARITHMETIC over the payments, never by a button.
+  estadoInterno String @default("pendiente") @db.VarChar(16)
 
   /// Totals in pesos. Recomputed from the line items on every write — never trusted from input.
   subtotal Decimal @default(0) @db.Decimal(12, 2)
@@ -716,7 +770,25 @@ model cotizacion_concepto {
   importe        Decimal @db.Decimal(12, 2)
   orden          Int     @default(0)
 
+  /// Optional link to the catalogue. Optional because a one-off line ("mandar rectificar la
+  /// cabeza con el torno de la esquina") is a real quote line that will never be a product.
+  productoId String?
+  producto   producto? @relation(fields: [productoId], references: [id], onDelete: SetNull)
+
+  /// SAT keys COPIED from the product at the moment the line was written, never read through the
+  /// relation. Re-classifying a product later must not silently rewrite what was already quoted —
+  /// same reasoning as copying the credit terms onto an invoice at issue.
+  claveProdServ String? @db.VarChar(8)
+  claveUnidad   String? @db.VarChar(3)
+
+  /// Stock actually issued against this line, in product units. Reaching `cantidad` is what
+  /// "surtido" means; it is a SUM of movements, never a checkbox.
+  surtido Decimal @default(0) @db.Decimal(12, 3)
+
+  movimientos inventario_movimiento[]
+
   @@index([cotizacionId, orden])
+  @@index([productoId])
   @@map("cotizacion_concepto")
 }
 
@@ -930,4 +1002,202 @@ model taller_sucursal {
 
   @@index([tallerId])
   @@map("taller_sucursal")
+}
+
+// ============================================================================================
+// Catálogo e inventario
+// ============================================================================================
+
+/// A product or service the shop sells: a part, an hour of labour, a consumable.
+///
+/// SAT keys are carried from day one even though nothing is stamped yet. Adding them later means
+/// going back over every line ever quoted to guess what `ClaveProdServ` it should have had — and
+/// nobody remembers. They are cheap now and impossible to backfill honestly.
+///
+/// `controlaInventario` is what separates a part from an hour of labour: you cannot run out of
+/// labour, so it has no stock, no layers and no movements.
+model producto {
+  id  String  @id
+  sku String? @unique @db.VarChar(40)
+
+  nombre      String  @db.VarChar(200)
+  descripcion String? @db.VarChar(500)
+  /// refaccion | mano_obra | insumo | externo — the same vocabulary as cotizacion_concepto.tipo.
+  tipo String @db.VarChar(16)
+
+  /// SAT c_ClaveProdServ (8 digits) and c_ClaveUnidad (up to 3 chars). Claves, never labels —
+  /// the same rule as `cliente.regimenFiscal`.
+  claveProdServ String @db.VarChar(8)
+  claveUnidad   String @db.VarChar(3)
+  /// What a human reads: "Pieza", "Hora", "Litro".
+  unidad String @db.VarChar(20)
+
+  /// What we charge. Money is Decimal, never Float.
+  precioVenta Decimal @default(0) @db.Decimal(12, 2)
+  /// IVA rate for this line. Stored per product because not everything is 16%.
+  ivaTasa Decimal @default(0.16) @db.Decimal(5, 4)
+
+  controlaInventario Boolean @default(true)
+  /// Denormalized sum of the open FIFO layers, so a product list needs no subquery. Written in
+  /// the SAME transaction as the layers — exactly like `unidad.kilometraje`.
+  existencia Decimal @default(0) @db.Decimal(12, 3)
+  /// Reorder point. Null means nobody wants to be told.
+  minimo Decimal? @db.Decimal(12, 3)
+
+  archivedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  capas       inventario_capa[]
+  movimientos inventario_movimiento[]
+  conceptos   cotizacion_concepto[]
+  solicitudes solicitud_refaccion[]
+
+  @@index([nombre])
+  @@index([tipo])
+  @@index([archivedAt])
+  @@map("producto")
+}
+
+/// A goods receipt: one delivery from one supplier, optionally backed by its CFDI.
+///
+/// The XML is stored VERBATIM. A parsed summary is convenient, but the stamped document is the
+/// thing the SAT and the supplier both recognise, and re-deriving it from columns is impossible.
+model inventario_entrada {
+  id    String @id
+  folio Int    @unique @default(autoincrement())
+
+  proveedor  String? @db.VarChar(200)
+  /// The supplier's own invoice or remission number, for people who do not use CFDI.
+  referencia String? @db.VarChar(120)
+
+  /// CFDI 4.0, all optional: plenty of parts arrive with a paper note and nothing else.
+  /// `cfdiUuid` is unique so the same invoice cannot be received into stock twice.
+  cfdiUuid         String?   @unique @db.VarChar(36)
+  cfdiEmisorRfc    String?   @db.VarChar(13)
+  cfdiEmisorNombre String?   @db.VarChar(200)
+  cfdiTotal        Decimal?  @db.Decimal(12, 2)
+  cfdiFecha        DateTime?
+  cfdiXml          String?
+
+  notas String?
+
+  registradaPorId String?
+  registradaPor   user?    @relation("entradaRegistradaPor", fields: [registradaPorId], references: [id], onDelete: SetNull)
+  recibidaAt      DateTime @default(now())
+  createdAt       DateTime @default(now())
+
+  capas       inventario_capa[]
+  movimientos inventario_movimiento[]
+
+  @@index([recibidaAt])
+  @@map("inventario_entrada")
+}
+
+/// One FIFO layer: a quantity bought at one cost, consumed oldest-first.
+///
+/// This is the whole reason inventory is not a single `existencia` number. Ten filters bought at
+/// $80 and ten more at $95 are not twenty filters at $87.50 — the cost of the next one out is $80
+/// until the first ten are gone, and a margin computed any other way is fiction.
+model inventario_capa {
+  id         String   @id
+  productoId String
+  producto   producto @relation(fields: [productoId], references: [id], onDelete: Restrict)
+  entradaId  String?
+  entrada    inventario_entrada? @relation(fields: [entradaId], references: [id], onDelete: SetNull)
+
+  cantidad Decimal @db.Decimal(12, 3)
+  /// What is LEFT in this layer. Reaches zero and the layer is spent, never deleted — the
+  /// movements that consumed it still point here.
+  restante Decimal @db.Decimal(12, 3)
+  /// Four decimals: unit cost divides, and rounding it to cents at this stage loses money slowly.
+  costoUnitario Decimal @db.Decimal(12, 4)
+
+  recibidaAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  movimientos inventario_movimiento[]
+
+  /// The FIFO order itself. `recibidaAt` first, `createdAt` as the tie-break so two layers
+  /// received in the same instant still consume deterministically.
+  @@index([productoId, recibidaAt, createdAt])
+  @@map("inventario_capa")
+}
+
+/// The stock ledger. Append-only in spirit: existencia is the sum of this, never edited directly.
+///
+/// A single issue of 15 units spanning three layers writes THREE rows, one per layer, each with
+/// the cost that layer actually charged. That is what makes cost of sale reconstructible.
+model inventario_movimiento {
+  id         String   @id
+  productoId String
+  producto   producto @relation(fields: [productoId], references: [id], onDelete: Restrict)
+
+  /// entrada | salida | ajuste
+  tipo String @db.VarChar(16)
+  /// Always POSITIVE. `tipo` carries the direction — a signed quantity plus a type is two sources
+  /// of truth for the same fact, and they drift.
+  cantidad Decimal @db.Decimal(12, 3)
+  /// Cost this movement moved, at the layer's unit cost.
+  costoUnitario Decimal @db.Decimal(12, 4)
+  costoTotal    Decimal @db.Decimal(12, 2)
+
+  capaId    String?
+  capa      inventario_capa?    @relation(fields: [capaId], references: [id], onDelete: SetNull)
+  entradaId String?
+  entrada   inventario_entrada? @relation(fields: [entradaId], references: [id], onDelete: SetNull)
+
+  /// What it was for. A part issued to a job points at both.
+  notaId    String?
+  nota      nota_servicio? @relation(fields: [notaId], references: [id], onDelete: SetNull)
+  conceptoId String?
+  concepto   cotizacion_concepto? @relation(fields: [conceptoId], references: [id], onDelete: SetNull)
+
+  /// Mandatory on an `ajuste` — enforced by `inventario_ajuste_motivo_check`. An adjustment with
+  /// no reason is shrinkage nobody will ever explain.
+  motivo String? @db.VarChar(255)
+
+  registradoPorId String?
+  registradoPor   user?    @relation("movimientoRegistradoPor", fields: [registradoPorId], references: [id], onDelete: SetNull)
+  createdAt       DateTime @default(now())
+
+  @@index([productoId, createdAt])
+  @@index([notaId])
+  @@index([tipo])
+  @@map("inventario_movimiento")
+}
+
+/// A mechanic asking for a part.
+///
+/// Deliberately NOT an inventory movement: asking is not taking. Somebody at the counter fills it
+/// (which is what writes the salida) or turns it down, and the request is the record of the gap
+/// between what the job needed and what the shop had.
+model solicitud_refaccion {
+  id     String        @id
+  notaId String
+  nota   nota_servicio @relation(fields: [notaId], references: [id], onDelete: Cascade)
+
+  /// Free text, because a mechanic knows what they need before it has a SKU.
+  descripcion String  @db.VarChar(500)
+  productoId  String?
+  producto    producto? @relation(fields: [productoId], references: [id], onDelete: SetNull)
+  cantidad    Decimal   @db.Decimal(12, 3)
+
+  /// pendiente | surtida | rechazada
+  estado String @default("pendiente") @db.VarChar(16)
+  /// Mandatory on a rejection — it is what the mechanic reads to know what to do instead.
+  resolucionMotivo String? @db.VarChar(500)
+
+  solicitadaPorId String?
+  solicitadaPor   user?   @relation("refaccionSolicitadaPor", fields: [solicitadaPorId], references: [id], onDelete: SetNull)
+  resueltaPorId   String?
+  resueltaPor     user?   @relation("refaccionResueltaPor", fields: [resueltaPorId], references: [id], onDelete: SetNull)
+  resueltaAt      DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([notaId])
+  @@index([estado])
+  @@map("solicitud_refaccion")
 }

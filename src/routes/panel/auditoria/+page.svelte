@@ -38,20 +38,42 @@
 />
 
 <!-- Filters: GET so the URL always describes exactly what you're looking at -->
-<form method="GET" class="mt-6 rounded-lg border border-sand-200 bg-white p-4">
+<form
+	method="GET"
+	class="mt-6 rounded-lg border border-sand-200 bg-white p-4"
+>
 	<div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-		<Field label="Buscar" name="q">
+		<Field
+			label="Buscar"
+			name="q"
+		>
 			{#snippet children(id)}
-				<input {id} name="q" value={data.filters.q} placeholder="Correo, resumen…" class={INPUT} />
+				<input
+					{id}
+					name="q"
+					value={data.filters.q}
+					placeholder="Correo, resumen…"
+					class={INPUT}
+				/>
 			{/snippet}
 		</Field>
 
-		<Field label="Acción" name="action">
+		<Field
+			label="Acción"
+			name="action"
+		>
 			{#snippet children(id)}
-				<select {id} name="action" class={INPUT}>
+				<select
+					{id}
+					name="action"
+					class={INPUT}
+				>
 					<option value="">Todas</option>
 					{#each data.actions as action (action.value)}
-						<option value={action.value} selected={action.value === data.filters.action}>
+						<option
+							value={action.value}
+							selected={action.value === data.filters.action}
+						>
 							{action.label}
 						</option>
 					{/each}
@@ -59,43 +81,86 @@
 			{/snippet}
 		</Field>
 
-		<Field label="Entidad" name="entity">
+		<Field
+			label="Entidad"
+			name="entity"
+		>
 			{#snippet children(id)}
-				<select {id} name="entity" class={INPUT}>
+				<select
+					{id}
+					name="entity"
+					class={INPUT}
+				>
 					<option value="">Todas</option>
 					{#each data.entities as entity (entity)}
-						<option value={entity} selected={entity === data.filters.entity}>{entity}</option>
+						<option
+							value={entity}
+							selected={entity === data.filters.entity}>{entity}</option
+						>
 					{/each}
 				</select>
 			{/snippet}
 		</Field>
 
-		<Field label="Usuario que hizo el cambio" name="actor">
+		<Field
+			label="Usuario que hizo el cambio"
+			name="actor"
+		>
 			{#snippet children(id)}
-				<input {id} name="actor" value={data.filters.actor} placeholder="correo@…" class={INPUT} />
+				<input
+					{id}
+					name="actor"
+					value={data.filters.actor}
+					placeholder="correo@…"
+					class={INPUT}
+				/>
 			{/snippet}
 		</Field>
 
-		<Field label="Desde" name="desde">
+		<Field
+			label="Desde"
+			name="desde"
+		>
 			{#snippet children(id)}
-				<input {id} name="desde" type="date" value={data.filters.desde} class={INPUT} />
+				<input
+					{id}
+					name="desde"
+					type="date"
+					value={data.filters.desde}
+					class={INPUT}
+				/>
 			{/snippet}
 		</Field>
 
-		<Field label="Hasta" name="hasta">
+		<Field
+			label="Hasta"
+			name="hasta"
+		>
 			{#snippet children(id)}
-				<input {id} name="hasta" type="date" value={data.filters.hasta} class={INPUT} />
+				<input
+					{id}
+					name="hasta"
+					type="date"
+					value={data.filters.hasta}
+					class={INPUT}
+				/>
 			{/snippet}
 		</Field>
 	</div>
 
 	<div class="mt-4 flex items-center gap-3">
 		<Button size="sm">
-			<Search size={16} aria-hidden="true" />
+			<Search
+				size={16}
+				aria-hidden="true"
+			/>
 			Filtrar
 		</Button>
 		{#if hasFilters}
-			<a href="/panel/auditoria" class="text-sm font-medium text-sand-600 underline hover:text-brand-700">
+			<a
+				href="/panel/auditoria"
+				class="text-sm font-medium text-sand-600 underline hover:text-brand-700"
+			>
 				Limpiar filtros
 			</a>
 		{/if}
@@ -114,13 +179,19 @@
 				: "Todavía no se ha registrado ningún cambio."}
 		>
 			{#snippet icon()}
-				<ScrollText size={32} aria-hidden="true" />
+				<ScrollText
+					size={32}
+					aria-hidden="true"
+				/>
 			{/snippet}
 		</EmptyState>
 	</div>
 {:else}
 	<div class="mt-6">
-		<DataTable columns={["Fecha", "Acción", "Detalle", "Por", ""]} items={data.logs}>
+		<DataTable
+			columns={["Fecha", "Acción", "Detalle", "Por", ""]}
+			items={data.logs}
+		>
 			{#snippet row(log)}
 				<td class="whitespace-nowrap px-4 py-2.5 text-sand-600">
 					{new Date(log.createdAt).toLocaleString("es-MX")}
@@ -130,7 +201,11 @@
 				<td class="px-4 py-2.5 text-sand-600">{log.actorEmail}</td>
 				<td class="px-4 py-2.5 text-right">
 					{#if log.before || log.after}
-						<Button href={searchHref(page.url, { log: log.id })} variant="ghost" size="sm">
+						<Button
+							href={searchHref(page.url, { log: log.id })}
+							variant="ghost"
+							size="sm"
+						>
 							Ver
 						</Button>
 					{/if}
@@ -140,10 +215,20 @@
 	</div>
 
 	{#if data.totalPages > 1}
-		<nav class="mt-4 flex items-center justify-between" aria-label="Paginación">
+		<nav
+			class="mt-4 flex items-center justify-between"
+			aria-label="Paginación"
+		>
 			{#if data.page > 1}
-				<Button href={pageHref(data.page - 1)} variant="ghost" size="sm">
-					<ChevronLeft size={16} aria-hidden="true" />
+				<Button
+					href={pageHref(data.page - 1)}
+					variant="ghost"
+					size="sm"
+				>
+					<ChevronLeft
+						size={16}
+						aria-hidden="true"
+					/>
 					Anterior
 				</Button>
 			{:else}
@@ -153,9 +238,16 @@
 			<span class="text-sm text-sand-600">Página {data.page} de {data.totalPages}</span>
 
 			{#if data.page < data.totalPages}
-				<Button href={pageHref(data.page + 1)} variant="ghost" size="sm">
+				<Button
+					href={pageHref(data.page + 1)}
+					variant="ghost"
+					size="sm"
+				>
 					Siguiente
-					<ChevronRight size={16} aria-hidden="true" />
+					<ChevronRight
+						size={16}
+						aria-hidden="true"
+					/>
 				</Button>
 			{:else}
 				<span></span>
@@ -202,11 +294,21 @@
 			<div class="mt-5 grid gap-3 border-t border-sand-200 pt-4">
 				<div>
 					<p class="text-xs font-medium uppercase tracking-wide text-sand-500">Antes</p>
-					<pre class="mt-1 overflow-x-auto rounded border border-sand-200 bg-sand-50 p-2 text-xs">{JSON.stringify(detail.before ?? null, null, 2)}</pre>
+					<pre
+						class="mt-1 overflow-x-auto rounded border border-sand-200 bg-sand-50 p-2 text-xs">{JSON.stringify(
+							detail.before ?? null,
+							null,
+							2,
+						)}</pre>
 				</div>
 				<div>
 					<p class="text-xs font-medium uppercase tracking-wide text-sand-500">Después</p>
-					<pre class="mt-1 overflow-x-auto rounded border border-sand-200 bg-sand-50 p-2 text-xs">{JSON.stringify(detail.after ?? null, null, 2)}</pre>
+					<pre
+						class="mt-1 overflow-x-auto rounded border border-sand-200 bg-sand-50 p-2 text-xs">{JSON.stringify(
+							detail.after ?? null,
+							null,
+							2,
+						)}</pre>
 				</div>
 			</div>
 		{/if}

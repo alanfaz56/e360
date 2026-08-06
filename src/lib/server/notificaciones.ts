@@ -65,6 +65,15 @@ async function usuariosCon(permiso: Permission, excepto?: string | null): Promis
 	return filas.map((f) => f.id);
 }
 
+/** Every active Admin. The last line of defence for a notification with nobody else to go to. */
+async function administradores(): Promise<string[]> {
+	const filas = await prisma.user.findMany({
+		where: { role: "admin", NOT: { banned: true } },
+		select: { id: true },
+	});
+	return filas.map((f) => f.id);
+}
+
 /**
  * Emit one notification.
  *
@@ -104,6 +113,30 @@ export async function notificar(input: AvisoInput): Promise<void> {
 			userIds = await usuariosCon(def.permiso, input.excepto);
 		}
 
+		// --- Un aviso SIEMPRE le llega a alguien -------------------------------------------------
+		// A staff notification that resolves to nobody is worse than no notification: the shop
+		// believes it was told. Three ways that happens, all real:
+		//
+		//   1. nobody holds the permission (a role list narrowed, an account suspended),
+		//   2. the only person who did is the one who caused it (`excepto`),
+		//   3. everybody who did has switched that event off.
+		//
+		// In all three the message falls back to the Admins, whose opt-out is IGNORED for the
+		// fallback. Somebody being able to silence the whole shop by unchecking a box is exactly
+		// the failure this exists to prevent. Customer notifications have no fallback: there is
+		// nobody else it could correctly go to, and misdirecting it would be worse than dropping it.
+		let forzados: string[] = [];
+		if (clienteIds.length === 0 && userIds.length === 0) {
+			forzados = await administradores();
+			userIds = forzados;
+			if (userIds.length === 0) {
+				// No live Admin at all. The database guarantees one exists, so reaching here means
+				// something is very wrong — say so loudly rather than dropping the message silently.
+				console.error(`notificar: ${input.evento} no tiene a quién llegarle; ni un admin activo`);
+				return;
+			}
+		}
+
 		if (userIds.length === 0 && clienteIds.length === 0) return;
 
 		// Opt-outs, read in one query. An absent row means both channels on, so a new hire and a
@@ -117,8 +150,22 @@ export async function notificar(input: AvisoInput): Promise<void> {
 				: [];
 		const pref = new Map(apagados.map((p) => [p.userId, p]));
 
-		const enApp = userIds.filter((id) => pref.get(id)?.enApp !== false);
-		const conPush = userIds.filter((id) => pref.get(id)?.push !== false);
+		let enApp = userIds.filter((id) => pref.get(id)?.enApp !== false);
+		let conPush = userIds.filter((id) => pref.get(id)?.push !== false);
+
+		// Everyone opted out of the in-app copy. The inbox is the system of record, so this is the
+		// case that would leave no trace at all — fall back rather than let it vanish.
+		if (enApp.length === 0 && clienteIds.length === 0) {
+			const admins = forzados.length > 0 ? forzados : await administradores();
+			if (admins.length === 0) {
+				console.error(`notificar: ${input.evento} quedó sin bandeja; ni un admin activo`);
+				return;
+			}
+			enApp = admins;
+			// Push stays opted-out: the fallback guarantees the message is READABLE, it does not
+			// override somebody's choice about being buzzed on their phone at 9pm.
+			conPush = conPush.filter((id) => admins.includes(id) || userIds.includes(id));
+		}
 
 		const base = {
 			evento: input.evento,
@@ -136,10 +183,7 @@ export async function notificar(input: AvisoInput): Promise<void> {
 		if (filas.length > 0) await prisma.notificacion.createMany({ data: filas });
 
 		// Push carries the row id so a click can mark it read without another round trip.
-		await enviarPush(
-			{ userIds: conPush, clienteIds },
-			{ ...base, id: filas[0]?.id, prioritario: def.prioritario },
-		);
+		await enviarPush({ userIds: conPush, clienteIds }, { ...base, id: filas[0]?.id, prioritario: def.prioritario });
 	} catch (err) {
 		// A notification that failed to send is not a reason to fail the work it was about.
 		console.error("notificar falló:", err);
@@ -241,8 +285,7 @@ export async function listarNotificaciones(actor: Actor, query: NotificacionQuer
 	return { notificaciones: rows.map(publicNotificacion), noLeidas, ...pageMeta(total, paging) };
 }
 
-export const contarNoLeidas = (userId: string) =>
-	prisma.notificacion.count({ where: { userId, leidaAt: null } });
+export const contarNoLeidas = (userId: string) => prisma.notificacion.count({ where: { userId, leidaAt: null } });
 
 /**
  * Mark read. With no ids, marks everything.
@@ -284,9 +327,9 @@ const publicDispositivo = (d: {
 });
 
 export const listarDispositivos = async (userId: string) =>
-	(
-		await prisma.push_suscripcion.findMany({ where: { userId }, orderBy: { createdAt: "desc" } })
-	).map(publicDispositivo);
+	(await prisma.push_suscripcion.findMany({ where: { userId }, orderBy: { createdAt: "desc" } })).map(
+		publicDispositivo,
+	);
 
 /** How many devices one recipient may register. Stops a loop from filling the table. */
 const MAX_DISPOSITIVOS = 20;
@@ -464,10 +507,7 @@ export async function guardarPreferencias(input: {
  * is the one path where the taller-invisibility rule cannot be enforced by the template. It is
  * audited with the full text for exactly that reason.
  */
-export async function enviarAviso(input: {
-	actor: Actor;
-	body: Record<string, unknown>;
-}) {
+export async function enviarAviso(input: { actor: Actor; body: Record<string, unknown> }) {
 	if (!can(input.actor.role, "notificacion:send")) {
 		throw new NotificacionError(403, "Sin permiso: notificacion:send");
 	}

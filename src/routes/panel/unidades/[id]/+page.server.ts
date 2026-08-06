@@ -36,10 +36,7 @@ export const load: ServerLoad = async ({ locals, params }) => {
 			where: {
 				clienteId: unidad.clienteId,
 				archivedAt: null,
-				OR: [
-					{ alcanceUnidades: "todas" },
-					{ unidadesAutorizadas: { some: { unidadId: unidad.id } } },
-				],
+				OR: [{ alcanceUnidades: "todas" }, { unidadesAutorizadas: { some: { unidadId: unidad.id } } }],
 			},
 			orderBy: { nombre: "asc" },
 			select: { id: true, nombre: true, telefono: true, roles: true, alcanceUnidades: true },

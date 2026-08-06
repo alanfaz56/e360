@@ -1,12 +1,6 @@
 import { error, json, type RequestHandler } from "@sveltejs/kit";
 import { requirePermission, requireUser } from "$lib/server/guard";
-import {
-	ClienteError,
-	deleteCliente,
-	getCliente,
-	publicCliente,
-	updateCliente,
-} from "$lib/server/clientes";
+import { ClienteError, deleteCliente, getCliente, publicCliente, updateCliente } from "$lib/server/clientes";
 import { listContactos } from "$lib/server/contactos";
 import { listUnidades, publicUnidad } from "$lib/server/unidades";
 

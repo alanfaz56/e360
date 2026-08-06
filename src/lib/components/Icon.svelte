@@ -8,19 +8,25 @@
 	import ScrollText from "@lucide/svelte/icons/scroll-text";
 	import Car from "@lucide/svelte/icons/car";
 	import CalendarDays from "@lucide/svelte/icons/calendar-days";
+	import LayoutDashboard from "@lucide/svelte/icons/layout-dashboard";
 	import List from "@lucide/svelte/icons/list";
 	import ClipboardList from "@lucide/svelte/icons/clipboard-list";
+	import ReceiptText from "@lucide/svelte/icons/receipt-text";
 	import Wrench from "@lucide/svelte/icons/wrench";
+	import Package from "@lucide/svelte/icons/package";
 	import type { NavItem } from "$lib/nav";
 
 	const ICONS = {
+		package: Package,
 		users: Users,
 		contact: Contact,
 		car: Car,
 		"scroll-text": ScrollText,
+		"layout-dashboard": LayoutDashboard,
 		"calendar-days": CalendarDays,
 		list: List,
 		"clipboard-list": ClipboardList,
+		"receipt-text": ReceiptText,
 		wrench: Wrench,
 	};
 

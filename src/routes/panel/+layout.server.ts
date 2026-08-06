@@ -20,7 +20,9 @@ export const load: ServerLoad = async ({ locals, url }) => {
 		actor: { name: actor.name, email: actor.email, role: actor.role, roleLabel: ROLE_LABEL[actor.role] },
 		permissions: permissionsFor(actor.role),
 		// Filtered server-side: a role never receives links to screens it cannot open.
-		nav: NAV.filter((item) => can(actor.role, item.permission)),
+		nav: NAV.filter(
+			(item) => can(actor.role, item.permission) && !(item.ocultarSi && can(actor.role, item.ocultarSi)),
+		),
 		avisos: bandeja.notificaciones,
 		noLeidas: bandeja.noLeidas,
 	};

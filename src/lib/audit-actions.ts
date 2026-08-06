@@ -58,9 +58,23 @@ export const AUDIT_ACTIONS = {
 	"taller.solicitud": "Taller solicitó certificarse (público)",
 	"taller.approve": "Taller certificado",
 	"taller.reject": "Solicitud de taller rechazada",
+	"taller.mecanico": "Mecánico asignado a un taller aliado",
 	"sucursal.create": "Sucursal de taller creada",
 	"sucursal.update": "Sucursal de taller actualizada",
 	"sucursal.archive": "Sucursal de taller archivada",
+	"producto.create": "Producto dado de alta",
+	"producto.update": "Producto actualizado",
+	"producto.archive": "Producto archivado",
+	"inventario.entrada": "Entrada de mercancía",
+	"inventario.ajuste": "Ajuste de existencia",
+	"refaccion.solicitud": "Refacción solicitada",
+	"refaccion.surtida": "Refacción surtida",
+	"refaccion.rechazada": "Refacción no disponible",
+	"cotizacion.interno": "Avance interno de cotización",
+	"cotizacion.concepto": "Conceptos de cotización actualizados",
+	"nota.mecanico": "Mecánico asignado",
+	"nota.diagnostico": "Diagnóstico capturado",
+	"nota.trabajo": "Trabajo del mecánico terminado",
 	"notificacion.send": "Aviso enviado a mano",
 	"notificacion.preferencias": "Preferencias de avisos actualizadas",
 	"push.subscribe": "Dispositivo registrado para avisos",
@@ -82,9 +96,6 @@ export const AUDIT_ACTIONS = {
 export type AuditAction = keyof typeof AUDIT_ACTIONS;
 
 /** Entities that appear in the log, derived from the action keys. */
-export const AUDIT_ENTITIES = [
-	...new Set(Object.keys(AUDIT_ACTIONS).map((key) => key.split(".")[0])),
-] as string[];
+export const AUDIT_ENTITIES = [...new Set(Object.keys(AUDIT_ACTIONS).map((key) => key.split(".")[0]))] as string[];
 
-export const auditActionLabel = (action: string): string =>
-	(AUDIT_ACTIONS as Record<string, string>)[action] ?? action;
+export const auditActionLabel = (action: string): string => (AUDIT_ACTIONS as Record<string, string>)[action] ?? action;

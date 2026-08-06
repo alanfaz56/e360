@@ -1,11 +1,6 @@
 import { error, json, type RequestHandler } from "@sveltejs/kit";
 import { requirePermission, requireUser } from "$lib/server/guard";
-import {
-	createTaller,
-	listTalleres,
-	parseTallerQuery,
-	publicTaller,
-} from "$lib/server/talleres";
+import { createTaller, listTalleres, parseTallerQuery, publicTaller } from "$lib/server/talleres";
 import { ClienteError } from "$lib/server/clientes";
 
 /**

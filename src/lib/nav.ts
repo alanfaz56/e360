@@ -16,19 +16,44 @@ export type NavItem = {
 		| "contact"
 		| "car"
 		| "scroll-text"
+		| "layout-dashboard"
 		| "calendar-days"
 		| "list"
 		| "clipboard-list"
-		| "wrench";
+		| "receipt-text"
+		| "wrench"
+		| "package";
 	permission: Permission;
+	/**
+	 * Hide the entry from anybody who ALSO holds this permission.
+	 *
+	 * For the one case where a narrow screen and a wide one overlap: "Mi trabajo" lists the notes
+	 * assigned to you, and everybody technically holds `nota:asignadas` — but a Gerente is not a
+	 * mechanic and already has the whole floor two rows down. Showing both is clutter, and gating
+	 * the narrow screen on a permission only one role holds would be a lie about what it does.
+	 */
+	ocultarSi?: Permission;
 };
 
 export const NAV: readonly NavItem[] = [
-	// Agenda lives at /panel itself — it is the dashboard. Roles without cita:read fall through
-	// to the first section they can open, so this being first changes nothing for them.
-	{ href: "/panel", label: "Agenda", icon: "calendar-days", permission: "cita:read" },
+	// Home is the KPI dashboard and lives at /panel itself. Gated on `cita:read` because that is
+	// exactly the set of roles with at least one KPI block today — a role with none is redirected
+	// by the page anyway, so the worst a drift here does is show a link that bounces.
+	{ href: "/panel", label: "Inicio", icon: "layout-dashboard", permission: "cita:read" },
+	{ href: "/panel/agenda", label: "Agenda", icon: "calendar-days", permission: "cita:read" },
 	{ href: "/panel/citas", label: "Citas", icon: "list", permission: "cita:read" },
+	// The mechanic's whole app. First for them because it is the ONLY entry they hold — everyone
+	// else already has the full floor above it, so its position changes nothing.
+	{
+		href: "/panel/taller",
+		label: "Mi trabajo",
+		icon: "wrench",
+		permission: "nota:asignadas",
+		ocultarSi: "nota:read",
+	},
 	{ href: "/panel/notas", label: "Notas de servicio", icon: "clipboard-list", permission: "nota:read" },
+	{ href: "/panel/cotizaciones", label: "Cotizaciones", icon: "receipt-text", permission: "cotizacion:read" },
+	{ href: "/panel/inventario", label: "Inventario", icon: "package", permission: "producto:read" },
 	{ href: "/panel/clientes", label: "Clientes", icon: "contact", permission: "cliente:read" },
 	{ href: "/panel/unidades", label: "Unidades", icon: "car", permission: "unidad:read" },
 	{ href: "/panel/talleres", label: "Talleres aliados", icon: "wrench", permission: "taller:read" },

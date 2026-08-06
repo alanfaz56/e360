@@ -23,11 +23,16 @@
 
 <div class="min-h-svh bg-sand-50">
 	<!-- Mobile top bar -->
-	<header
-		class="sticky top-0 z-30 flex items-center gap-3 border-b border-sand-200 bg-white px-4 py-3 md:hidden"
-	>
-		<a href={menuHref(true)} aria-label="Abrir menú" class="-ml-2 rounded-md p-2 text-sand-700 hover:bg-sand-100">
-			<Menu size={22} aria-hidden="true" />
+	<header class="sticky top-0 z-30 flex items-center gap-3 border-b border-sand-200 bg-white px-4 py-3 md:hidden">
+		<a
+			href={menuHref(true)}
+			aria-label="Abrir menú"
+			class="-ml-2 rounded-md p-2 text-sand-700 hover:bg-sand-100"
+		>
+			<Menu
+				size={22}
+				aria-hidden="true"
+			/>
 		</a>
 		<span class="font-display text-lg text-sand-950">ESTACIÓN <span class="text-brand-600">360</span></span>
 		<!-- Thumb-reachable on a phone: top-right of the bar the operator is already holding. -->
@@ -42,8 +47,8 @@
 			href={menuHref(false)}
 			tabindex="-1"
 			aria-hidden="true"
-			class="fixed inset-0 z-40 bg-sand-950/40 md:hidden"
-		>{""}</a>
+			class="fixed inset-0 z-40 bg-sand-950/40 md:hidden">{""}</a
+		>
 	{/if}
 
 	<!--
@@ -55,7 +60,10 @@
 			{menuOpen ? 'translate-x-0' : '-translate-x-full'}"
 	>
 		<div class="flex items-center gap-2 border-b border-sand-200 px-5 py-4">
-			<a href="/panel" class="font-display text-lg text-sand-950">
+			<a
+				href="/panel"
+				class="font-display text-lg text-sand-950"
+			>
 				ESTACIÓN <span class="text-brand-600">360</span>
 			</a>
 			{#if menuOpen}
@@ -64,22 +72,30 @@
 					aria-label="Cerrar menú"
 					class="-mr-2 ml-auto rounded-md p-2 text-sand-500 hover:bg-sand-100 md:hidden"
 				>
-					<X size={20} aria-hidden="true" />
+					<X
+						size={20}
+						aria-hidden="true"
+					/>
 				</a>
 			{/if}
 		</div>
 
-		<nav class="flex-1 space-y-1 p-3" aria-label="Secciones">
+		<nav
+			class="flex-1 space-y-1 p-3"
+			aria-label="Secciones"
+		>
 			{#each data.nav as item (item.href)}
 				<a
 					href={item.href}
 					aria-current={isActive(item.href) ? "page" : undefined}
 					class="flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors
-						{isActive(item.href)
-						? 'bg-brand-50 text-brand-700'
-						: 'text-sand-700 hover:bg-sand-100 hover:text-sand-950'}"
+						{isActive(item.href) ? 'bg-brand-50 text-brand-700' : 'text-sand-700 hover:bg-sand-100 hover:text-sand-950'}"
 				>
-					<Icon name={item.icon} size={18} aria-hidden="true" />
+					<Icon
+						name={item.icon}
+						size={18}
+						aria-hidden="true"
+					/>
 					{item.label}
 				</a>
 			{/each}
@@ -97,11 +113,18 @@
 					<NotificationBell noLeidas={data.noLeidas} />
 				</span>
 			</div>
-			<form method="POST" action="/logout" class="mt-2">
+			<form
+				method="POST"
+				action="/logout"
+				class="mt-2"
+			>
 				<button
 					class="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-sand-700 transition-colors hover:bg-sand-100 hover:text-brand-700"
 				>
-					<LogOut size={18} aria-hidden="true" />
+					<LogOut
+						size={18}
+						aria-hidden="true"
+					/>
 					Salir
 				</button>
 			</form>
@@ -115,5 +138,8 @@
 	</div>
 
 	<!-- One inbox for both breakpoints. -->
-	<NotificationDrawer noLeidas={data.noLeidas} avisos={data.avisos} />
+	<NotificationDrawer
+		noLeidas={data.noLeidas}
+		avisos={data.avisos}
+	/>
 </div>

@@ -1,12 +1,7 @@
 import { error, json, type RequestHandler } from "@sveltejs/kit";
 import { requirePermission, requireUser } from "$lib/server/guard";
 import { ClienteError } from "$lib/server/clientes";
-import {
-	createUnidad,
-	listUnidades,
-	parseUnidadQuery,
-	publicUnidad,
-} from "$lib/server/unidades";
+import { createUnidad, listUnidades, parseUnidadQuery, publicUnidad } from "$lib/server/unidades";
 
 /**
  * GET /api/unidades — global vehicle search. Permission: `unidad:read`.

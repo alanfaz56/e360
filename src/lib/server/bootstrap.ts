@@ -56,6 +56,17 @@ export function createAuth(
 			// stored — only the signed session token, exactly as in a normal login.
 			expiresIn: 60 * 60 * 24 * 30,
 		},
+		user: {
+			additionalFields: {
+				// The partner workshop a mechanic works for. Declared here or better-auth simply
+				// does not select the column, and `locals.user.tallerId` would be `undefined` on
+				// every request — a scope that silently evaluates to "none".
+				//
+				// `input: false`: this is never set from a sign-up or update payload. It is
+				// changed only through `asignarTaller`, which checks the role and audits it.
+				tallerId: { type: "string", required: false, input: false },
+			},
+		},
 		emailAndPassword: {
 			enabled: true,
 			// Invitation-only. This kills POST /sign-up/email outright, including server-side
@@ -71,8 +82,7 @@ export function createAuth(
 				adminRoles: ["admin"],
 				// Fallback shown when a locked account signs in with no reason recorded. The
 				// login page replaces it with the actual `banReason` when there is one.
-				bannedUserMessage:
-					"Tu cuenta está suspendida. Contacta a un administrador de Estación 360.",
+				bannedUserMessage: "Tu cuenta está suspendida. Contacta a un administrador de Estación 360.",
 				// Least privilege if a role is ever somehow omitted at creation.
 				defaultRole: "taller",
 			}),

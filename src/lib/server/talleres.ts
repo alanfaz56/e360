@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Prisma } from "../../generated/prisma/client.js";
 import prisma from "$lib/prisma";
 import { can } from "$lib/roles";
-import { isTallerEstado, tallerEstadoLabel } from "$lib/talleres";
+import { TALLER_PUEDE_RECIBIR, isTallerEstado, tallerEstadoLabel } from "$lib/talleres";
 import { recordAudit } from "./audit";
 import { ClienteError, trim } from "./clientes";
 import { notificar } from "./notificaciones";
@@ -13,9 +13,9 @@ import type { Actor } from "./guard";
 /**
  * Partner workshops. Estación 360 takes the vehicle in and sources the job out to one of these.
  *
- * External shops only, by decision: internal work needs no transfer. These will eventually be
- * onboarded as users of the `taller` role — that link does not exist yet, deliberately, because
- * letting an outside party write to these records is its own permission decision.
+ * External shops only, by decision: internal work needs no transfer. Their own people can now hold
+ * accounts — `user.tallerId`, set through `asignarMecanicoATaller` — and only a `taller` role may
+ * carry one, enforced by `user_taller_solo_rol_taller_check`.
  */
 
 export const publicSucursal = (s: {
@@ -397,12 +397,7 @@ export async function solicitarTaller(input: {
  * anything that is not `aprobado`. Rejecting requires a reason, enforced here and again by
  * `taller_rechazo_motivo_check` in the database.
  */
-export async function revisarTaller(input: {
-	actor: Actor;
-	id: string;
-	estado: string;
-	motivo?: unknown;
-}) {
+export async function revisarTaller(input: { actor: Actor; id: string; estado: string; motivo?: unknown }) {
 	if (!can(input.actor.role, "taller:review")) throw new ClienteError(403, "Sin permiso: taller:review");
 	if (!isTallerEstado(input.estado) || input.estado === "solicitado") {
 		throw new ClienteError(400, "Decide aprobado o rechazado.");
@@ -495,11 +490,7 @@ async function despromoverPrincipal(tx: Prisma.TransactionClient, tallerId: stri
 	});
 }
 
-export async function createSucursal(input: {
-	actor: Actor;
-	tallerId: string;
-	body: Record<string, unknown>;
-}) {
+export async function createSucursal(input: { actor: Actor; tallerId: string; body: Record<string, unknown> }) {
 	if (!can(input.actor.role, "taller:manage")) throw new ClienteError(403, "Sin permiso: taller:manage");
 
 	const taller = await getTaller(input.tallerId);
@@ -615,4 +606,155 @@ export async function archivarSucursal(input: { actor: Actor; id: string; archiv
 	});
 
 	return publicSucursal(sucursal);
+}
+
+/**
+ * Does this text name one of our partner workshops?
+ *
+ * Deliberately simple: normalize accents and case, then look for each active shop's name and its
+ * distinctive words. It is a guard against the honest slip, not against somebody determined to
+ * leak the name — that is a people problem, not a regex problem. Short/common words are skipped
+ * so "Taller" or "del" never trips it.
+ *
+ * Lives here rather than in `notas.ts` because BOTH customer-facing surfaces need it: a comment
+ * marked visible, and a quote line — the customer reads the quote too, so a line item that names
+ * the partner shop leaks exactly what the invisibility rule exists to prevent.
+ */
+export async function tallerMencionado(texto: string): Promise<string | null> {
+	const talleres = await prisma.taller.findMany({
+		where: { archivedAt: null },
+		select: { nombre: true },
+	});
+	if (talleres.length === 0) return null;
+
+	const normalizar = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+	const cuerpo = normalizar(texto);
+
+	const GENERICAS = new Set([
+		"taller",
+		"talleres",
+		"de",
+		"del",
+		"la",
+		"el",
+		"los",
+		"las",
+		"y",
+		"e",
+		"sa",
+		"cv",
+		"srl",
+		"auto",
+		"autos",
+		"servicio",
+		"servicios",
+		"hermosillo",
+	]);
+
+	for (const { nombre } of talleres) {
+		const completo = normalizar(nombre);
+		if (cuerpo.includes(completo)) return nombre;
+		// A distinctive word is enough: "El Sahuaro" is recognisable from "Sahuaro" alone.
+		for (const palabra of completo.split(/\s+/)) {
+			if (palabra.length >= 5 && !GENERICAS.has(palabra) && cuerpo.includes(palabra)) return nombre;
+		}
+	}
+	return null;
+}
+
+// --- Su gente --------------------------------------------------------------------------------
+
+/**
+ * The people who work AT a partner workshop, with accounts of their own.
+ *
+ * Kept here rather than in `users.ts` because the question is "who is this shop's crew", and the
+ * answer is read on the taller screen. `listUsers` stays the registry of everybody.
+ */
+export async function mecanicosDeTaller(tallerId: string) {
+	const filas = await prisma.user.findMany({
+		where: { tallerId },
+		orderBy: { name: "asc" },
+		select: { id: true, name: true, email: true, banned: true },
+	});
+	return filas.map((u) => ({ id: u.id, name: u.name, email: u.email, active: !u.banned }));
+}
+
+/** Mechanics with no workshop of their own — the candidates a taller can take on. */
+export async function mecanicosSinTaller() {
+	const filas = await prisma.user.findMany({
+		where: { role: "taller", tallerId: null, OR: [{ banned: null }, { banned: false }] },
+		orderBy: { name: "asc" },
+		select: { id: true, name: true, email: true },
+	});
+	return filas;
+}
+
+/**
+ * Put a mechanic on a partner workshop's crew, or take them off it (`tallerId: null`).
+ *
+ * **Only a Taller Mecánico may belong to a workshop.** An Operador or Gerente carrying one would
+ * be an account with the counter's permissions AND an outside shop's scope — so the role is
+ * checked here and again by `user_taller_solo_rol_taller_check` in the database, because this
+ * decides how much of a job somebody outside the company can open.
+ *
+ * `taller:manage` and not `user:manage`: this is a commercial decision about a supplier's crew,
+ * taken on the supplier's screen, and it grants no permission the account did not already have —
+ * it only changes WHICH notes are in scope.
+ */
+export async function asignarMecanicoATaller(input: { actor: Actor; userId: unknown; tallerId: unknown }) {
+	if (!can(input.actor.role, "taller:manage")) throw new ClienteError(403, "Sin permiso: taller:manage");
+
+	const userId = trim(input.userId);
+	if (!userId) throw new ClienteError(400, "Falta el usuario");
+	const tallerId = trim(input.tallerId);
+
+	const usuario = await prisma.user.findUnique({
+		where: { id: userId },
+		select: { id: true, name: true, email: true, role: true, tallerId: true },
+	});
+	if (!usuario) throw new ClienteError(404, "Usuario no encontrado");
+	if (usuario.role !== "taller") {
+		throw new ClienteError(
+			400,
+			`${usuario.name} no es Taller Mecánico. Solo ese rol puede pertenecer a un taller aliado.`,
+		);
+	}
+
+	let nombreTaller: string | null = null;
+	if (tallerId) {
+		const taller = await prisma.taller.findUnique({
+			where: { id: tallerId },
+			select: { nombre: true, estado: true, archivedAt: true },
+		});
+		if (!taller) throw new ClienteError(404, "Taller no encontrado");
+		if (taller.archivedAt) throw new ClienteError(409, "Ese taller está archivado.");
+		// The same gate `transferirNota` uses: a shop that merely applied never holds a customer's
+		// vehicle, so its people have no job to open either.
+		if (taller.estado !== TALLER_PUEDE_RECIBIR) {
+			throw new ClienteError(409, `${taller.nombre} todavía no está certificado como taller aliado.`);
+		}
+		nombreTaller = taller.nombre;
+	}
+
+	return prisma.$transaction(async (tx) => {
+		const actualizado = await tx.user.update({
+			where: { id: usuario.id },
+			data: { tallerId },
+			select: { id: true, name: true, email: true, tallerId: true },
+		});
+
+		await recordAudit(tx, {
+			action: "taller.mecanico",
+			actor: input.actor,
+			entityId: usuario.id,
+			entityLabel: usuario.email,
+			summary: tallerId
+				? `${usuario.name} asignado al taller ${nombreTaller}`
+				: `${usuario.name} desligado de su taller aliado`,
+			before: { tallerId: usuario.tallerId },
+			after: { tallerId, taller: nombreTaller },
+		});
+
+		return actualizado;
+	});
 }

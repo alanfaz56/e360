@@ -11,17 +11,22 @@ import {
 	isFotoCategoria,
 	isInventarioItem,
 	isNotaEstado,
+	isQaDestino,
 	isQaResultado,
 	notaEstadoClienteLabel,
 	notaEstadoLabel,
 	puedeTransicionarNota,
-	qaExigeRetorno,
+	qaDestinoPorDefecto,
 	qaResultadoLabel,
+	qaSigueEnTaller,
 	type NotaEstado,
 } from "$lib/notas";
 import { TALLER_PUEDE_RECIBIR } from "$lib/talleres";
+import { conceptoTipoLabel, cotizacionEstadoLabel, facturaEstadoLabel } from "$lib/comercial";
+import { tallerMencionado } from "./talleres";
 import { recordAudit } from "./audit";
 import { ClienteError, trim } from "./clientes";
+import { listSolicitudes } from "./inventario";
 import { avisarClienteDeNota, notificar, nuevoTokenSeguimiento } from "./notificaciones";
 import { pageMeta, parsePageParams, skipFor, type PageParams } from "./paginate";
 import { borrarObjeto, firmarSubida, urlDeLectura } from "./r2";
@@ -54,6 +59,7 @@ const INCLUDE = {
 		select: { marca: true, modelo: true, anio: true, placas: true, vin: true, numeroEconomico: true },
 	},
 	recibidaPor: { select: { name: true, email: true } },
+	mecanico: { select: { id: true, name: true, email: true } },
 	tallerActual: { select: { nombre: true, telefono: true } },
 	entregadaAContacto: { select: { nombre: true } },
 	cita: { select: { folio: true } },
@@ -82,6 +88,13 @@ export const publicNota = (n: NotaRow) => ({
 	recibidaPorId: n.recibidaPorId,
 	recibidaPorNombre: n.recibidaPor?.name ?? null,
 	recibidaAt: n.recibidaAt.toISOString(),
+	// Who handed the vehicle over. Often not a registered contact — see `resolverQuienEntrego`.
+	entregoNombre: n.entregoNombre,
+	entregoTelefono: n.entregoTelefono,
+	entregoContactoId: n.entregoContactoId,
+	mecanicoId: n.mecanicoId,
+	mecanicoNombre: n.mecanico?.name ?? null,
+	trabajoTerminadoAt: n.trabajoTerminadoAt?.toISOString() ?? null,
 	kilometraje: n.kilometraje,
 	combustibleOctavos: n.combustibleOctavos,
 	combustibleLabel: combustibleLabel(n.combustibleOctavos),
@@ -172,7 +185,30 @@ export async function seguimientoPorToken(token: string) {
 			// A draft is not something the customer has been shown yet.
 			where: { notaId: nota.id, estado: { notIn: ["borrador"] } },
 			orderBy: { createdAt: "desc" },
-			select: { id: true, folio: true, estado: true, total: true, enviadaAt: true },
+			select: {
+				id: true,
+				folio: true,
+				estado: true,
+				subtotal: true,
+				iva: true,
+				total: true,
+				vigenciaHasta: true,
+				enviadaAt: true,
+				// The line items, because "¿qué me van a cobrar?" is the whole question. Safe by
+				// construction: `exigirSinTaller` refuses a description naming a partner shop at
+				// write time, so nothing has to be redacted on the way out.
+				conceptos: {
+					orderBy: { orden: "asc" },
+					select: {
+						id: true,
+						tipo: true,
+						descripcion: true,
+						cantidad: true,
+						precioUnitario: true,
+						importe: true,
+					},
+				},
+			},
 		}),
 		prisma.factura.findMany({
 			where: { notaId: nota.id, estado: { not: "borrador" } },
@@ -199,14 +235,27 @@ export async function seguimientoPorToken(token: string) {
 		cotizaciones: cotizaciones.map((c) => ({
 			folio: c.folio,
 			estado: c.estado,
+			estadoLabel: cotizacionEstadoLabel(c.estado),
 			// `.toFixed(2)`, never `.toString()`: Decimal drops trailing zeros and 5050.00 would
 			// serialize as "5050".
+			subtotal: c.subtotal.toFixed(2),
+			iva: c.iva.toFixed(2),
 			total: c.total.toFixed(2),
+			vigenciaHasta: c.vigenciaHasta?.toISOString() ?? null,
 			enviadaAt: c.enviadaAt?.toISOString() ?? null,
+			conceptos: c.conceptos.map((x) => ({
+				id: x.id,
+				tipoLabel: conceptoTipoLabel(x.tipo),
+				descripcion: x.descripcion,
+				cantidad: x.cantidad.toFixed(2),
+				precioUnitario: x.precioUnitario.toFixed(2),
+				importe: x.importe.toFixed(2),
+			})),
 		})),
 		facturas: facturas.map((f) => ({
 			folio: f.folio,
 			estado: f.estado,
+			estadoLabel: facturaEstadoLabel(f.estado),
 			total: f.total.toFixed(2),
 			vence: f.vence?.toISOString() ?? null,
 		})),
@@ -357,6 +406,47 @@ export async function getNotaDetalle(id: string) {
  * `clienteId` is captured HERE and never follows a later ownership transfer: the vehicle keeps one
  * continuous service history, but each job stays billed to whoever owned it that day.
  */
+/**
+ * Who handed the vehicle over at intake.
+ *
+ * Three real answers, and the third is why this exists: the customer themselves, one of their
+ * registered contacts, or **somebody who is not in the registry at all** — a driver, a relative,
+ * the neighbour who happened to be free. Refusing that case would mean either turning the vehicle
+ * away or inventing a `cliente_contacto` nobody maintains.
+ *
+ * Handing OVER is not the same as collecting: taking a vehicle IN carries no risk of releasing it
+ * to the wrong person, so it does not need the `entregador` authority that `entregarNota` enforces.
+ * It is a record of who was standing there, and it is optional.
+ *
+ * A registered contact still gets its name snapshotted, so the note reads after that contact is
+ * archived — and `nota_servicio_entrego_nombre_check` refuses the row otherwise.
+ */
+async function resolverQuienEntrego(clienteId: string, body: Record<string, unknown>) {
+	const contactoId = trim(body.entregoContactoId);
+	const nombreLibre = trim(body.entregoNombre, 120, "El nombre de quien entrega");
+	const telefono = trim(body.entregoTelefono, 32, "El teléfono de quien entrega");
+
+	if (contactoId) {
+		const contacto = await prisma.cliente_contacto.findUnique({
+			where: { id: contactoId },
+			select: { clienteId: true, nombre: true, telefono: true, archivedAt: true },
+		});
+		if (!contacto) throw new ClienteError(404, "Contacto no encontrado");
+		// A contact of ANOTHER customer standing in this record would be a lie about who was here.
+		if (contacto.clienteId !== clienteId) {
+			throw new ClienteError(400, "Ese contacto pertenece a otro cliente");
+		}
+		if (contacto.archivedAt) throw new ClienteError(409, "Ese contacto está archivado.");
+		return {
+			entregoContactoId: contactoId,
+			entregoNombre: contacto.nombre,
+			entregoTelefono: telefono ?? contacto.telefono,
+		};
+	}
+
+	return { entregoContactoId: null, entregoNombre: nombreLibre, entregoTelefono: telefono };
+}
+
 export async function crearNota(input: { actor: Actor; body: Record<string, unknown> }) {
 	if (!can(input.actor.role, "nota:create")) throw new ClienteError(403, "Sin permiso: nota:create");
 
@@ -368,7 +458,14 @@ export async function crearNota(input: { actor: Actor; body: Record<string, unkn
 	if (citaId) {
 		const cita = await prisma.cita.findUnique({
 			where: { id: citaId },
-			select: { id: true, estado: true, clienteId: true, unidadId: true, motivo: true, nota: { select: { id: true } } },
+			select: {
+				id: true,
+				estado: true,
+				clienteId: true,
+				unidadId: true,
+				motivo: true,
+				nota: { select: { id: true } },
+			},
 		});
 		if (!cita) throw new ClienteError(404, "Cita no encontrada");
 		if (cita.nota) throw new ClienteError(409, "Esa cita ya tiene una nota de servicio abierta.");
@@ -407,6 +504,7 @@ export async function crearNota(input: { actor: Actor; body: Record<string, unkn
 	}
 
 	const kilometraje = int(input.body.kilometraje);
+	const entrego = await resolverQuienEntrego(clienteId!, input.body);
 
 	const nota = await prisma.$transaction(async (tx) => {
 		const creada = await tx.nota_servicio.create({
@@ -418,6 +516,7 @@ export async function crearNota(input: { actor: Actor; body: Record<string, unkn
 				motivo: motivo!,
 				estado: "recibida",
 				recibidaPorId: input.actor.id,
+				...entrego,
 				observaciones: trim(input.body.observaciones),
 				// Minted at intake, so the customer can be sent their tracking link the moment the
 				// vehicle is in. Generating it later would mean a note nobody can follow.
@@ -448,11 +547,24 @@ export async function crearNota(input: { actor: Actor; body: Record<string, unkn
 			);
 		}
 
-		// The appointment is now in progress — the car is here.
+		// The appointment is DONE the moment the vehicle is here — that was its whole job. What
+		// happens to the car from now on is the nota's business, and leaving the cita `en_proceso`
+		// meant somebody had to close it by hand later, which nobody does: the "citas sin procesar"
+		// counter filled up with appointments that had actually succeeded.
 		if (citaId) {
+			// `completada` is in REQUIEREN_HORA, so a request that never got an hour would violate
+			// `cita_inicio_requerido_check` and surface as a raw 500. Stamp the arrival as the hour
+			// first — it IS when the appointment happened — then complete it. Two statements, not a
+			// data-modifying CTE: every part of one command shares a snapshot, so the second half
+			// would not see the first.
+			const VIVAS = ["solicitada", "confirmada", "en_proceso"];
 			await tx.cita.updateMany({
-				where: { id: citaId, estado: { in: ["confirmada", "solicitada"] } },
-				data: { estado: "en_proceso" },
+				where: { id: citaId, estado: { in: VIVAS }, inicio: null },
+				data: { inicio: new Date() },
+			});
+			await tx.cita.updateMany({
+				where: { id: citaId, estado: { in: VIVAS } },
+				data: { estado: "completada" },
 			});
 		}
 
@@ -496,7 +608,12 @@ export async function crearNota(input: { actor: Actor; body: Record<string, unkn
  */
 async function avisarPersonal(
 	nota: { id: string; folio: number },
-	aviso: { evento: "nota_abierta" | "nota_taller_retorno" | "nota_qa_rechazado"; titulo: string; cuerpo: string; excepto?: string | null },
+	aviso: {
+		evento: "nota_abierta" | "nota_taller_retorno" | "nota_qa_rechazado";
+		titulo: string;
+		cuerpo: string;
+		excepto?: string | null;
+	},
 ) {
 	await notificar({
 		evento: aviso.evento,
@@ -661,11 +778,7 @@ export async function historialKilometraje(unidadId: string) {
  * `inspeccionAt` moving to the latest pass. Every submission is audited, so a quietly softened
  * damage note is still visible in the trail.
  */
-export async function inspeccionarNota(input: {
-	actor: Actor;
-	id: string;
-	body: Record<string, unknown>;
-}) {
+export async function inspeccionarNota(input: { actor: Actor; id: string; body: Record<string, unknown> }) {
 	if (!can(input.actor.role, "nota:inspect")) throw new ClienteError(403, "Sin permiso: nota:inspect");
 
 	const current = await getNota(input.id);
@@ -856,14 +969,17 @@ export async function avanzarNota(input: { actor: Actor; id: string; estado: unk
  * the repair — the partner shop is invisible to them — so accepting work back is a decision with
  * a name and a timestamp on it, not a status that flips because the truck showed up in the yard.
  *
- * A rejected job stays with that shop: the transfer is reopened rather than closed, because the
- * unit is going straight back and releasing it to the customer on a bad repair is the failure
- * this whole step exists to prevent.
+ * The verdict and WHERE THE UNIT ENDS UP are two separate answers. A rejection defaults to leaving
+ * it with the shop that owes the fix, but `destino: "retorno"` takes it back — that is what makes
+ * "the work was bad, I'm sending it somewhere else" possible without approving work that was not
+ * approved. Either way the unit is never released to the CUSTOMER on a bad repair.
  */
 export async function recibirDeTaller(input: {
 	actor: Actor;
 	id: string;
 	qaResultado: unknown;
+	/** Only meaningful on a rejection; anything accepted always comes back. */
+	destino?: unknown;
 	qaNotas?: unknown;
 	resultado?: unknown;
 	kilometraje?: unknown;
@@ -893,7 +1009,12 @@ export async function recibirDeTaller(input: {
 	if (!abierta) throw new ClienteError(409, "No hay una transferencia abierta que cerrar.");
 
 	const kilometraje = int(input.kilometraje);
-	const rechazado = qaExigeRetorno(qaResultado);
+	const rechazado = qaResultado === "rechazado";
+	// An accepted job always comes back, so `destino` only decides anything on a rejection. Left
+	// unsaid it means rework, which is what this used to do unconditionally — old API callers keep
+	// the behaviour they had.
+	const destino = isQaDestino(input.destino) ? input.destino : qaDestinoPorDefecto(qaResultado);
+	const sigueEnTaller = qaSigueEnTaller(qaResultado, destino);
 
 	const nota = await prisma.$transaction(async (tx) => {
 		const ahora = new Date();
@@ -901,8 +1022,10 @@ export async function recibirDeTaller(input: {
 		await tx.nota_transferencia.update({
 			where: { id: abierta.id },
 			data: {
-				// A rejected job is NOT received: the period stays open because the unit goes back.
-				hasta: rechazado ? null : ahora,
+				// Left for rework, the period stays open: the unit never physically came back, and a
+				// closed transfer would say it did. Recovered, it closes like any other — carrying the
+				// rejection as its verdict, which is what gets claimed back from the shop.
+				hasta: sigueEnTaller ? null : ahora,
 				resultado: trim(input.resultado) ?? abierta.resultado,
 				qaResultado,
 				qaNotas,
@@ -925,7 +1048,7 @@ export async function recibirDeTaller(input: {
 
 		const actualizada = await tx.nota_servicio.update({
 			where: { id: current.id },
-			data: rechazado
+			data: sigueEnTaller
 				? {} // still `en_taller`, still theirs
 				: { estado: "en_diagnostico", tallerActualId: null },
 			include: INCLUDE,
@@ -937,7 +1060,11 @@ export async function recibirDeTaller(input: {
 			data: {
 				id: randomUUID(),
 				notaId: current.id,
-				texto: `Control de calidad: ${qaResultadoLabel(qaResultado)}.${qaNotas ? ` ${qaNotas}` : ""}`,
+				texto: `Control de calidad: ${qaResultadoLabel(qaResultado)}.${qaNotas ? ` ${qaNotas}` : ""}${
+					rechazado
+						? ` La unidad ${sigueEnTaller ? "se queda para retrabajo" : "regresa a Estación 360"}.`
+						: ""
+				}`,
 				interno: true,
 				autorId: input.actor.id,
 				autorEmail: input.actor.email,
@@ -950,12 +1077,15 @@ export async function recibirDeTaller(input: {
 			entityId: actualizada.id,
 			entityLabel: notaLabel(actualizada),
 			summary: rechazado
-				? `Nota #${actualizada.folio}: trabajo RECHAZADO a ${abierta.taller.nombre} — ${qaNotas}`
+				? `Nota #${actualizada.folio}: trabajo RECHAZADO a ${abierta.taller.nombre} (${
+						sigueEnTaller ? "se queda para retrabajo" : "unidad recuperada"
+					}) — ${qaNotas}`
 				: `Nota #${actualizada.folio}: recibida de ${abierta.taller.nombre} (${qaResultadoLabel(qaResultado)})`,
 			before: { estado: current.estado, tallerActualId: current.tallerActualId },
 			after: {
 				estado: actualizada.estado,
 				qaResultado,
+				destino,
 				taller: abierta.taller.nombre,
 				kilometraje,
 			},
@@ -969,7 +1099,9 @@ export async function recibirDeTaller(input: {
 		evento: rechazado ? "nota_qa_rechazado" : "nota_taller_retorno",
 		titulo: rechazado ? "Control de calidad rechazado" : "Regresó una unidad del taller aliado",
 		cuerpo: rechazado
-			? `Nota #${nota.folio}: se le regresa a ${abierta.taller.nombre}. ${qaNotas}`
+			? sigueEnTaller
+				? `Nota #${nota.folio}: se le regresa a ${abierta.taller.nombre} para retrabajo. ${qaNotas}`
+				: `Nota #${nota.folio}: rechazado el trabajo de ${abierta.taller.nombre} y la unidad ya está de vuelta con nosotros. ${qaNotas}`
 			: `Nota #${nota.folio} de vuelta de ${abierta.taller.nombre} (${qaResultadoLabel(qaResultado)}).`,
 		excepto: input.actor.id,
 	});
@@ -1126,12 +1258,7 @@ export async function pendientesDeQa() {
  * denormalization discipline as `unidad.clienteId`. A partial unique index guarantees at most one
  * open transfer per note, so a vehicle can never be at two shops at once.
  */
-export async function transferirNota(input: {
-	actor: Actor;
-	id: string;
-	tallerId: unknown;
-	motivo: unknown;
-}) {
+export async function transferirNota(input: { actor: Actor; id: string; tallerId: unknown; motivo: unknown }) {
 	if (!can(input.actor.role, "nota:transfer")) throw new ClienteError(403, "Sin permiso: nota:transfer");
 
 	const motivo = trim(input.motivo, 500, "El motivo");
@@ -1261,12 +1388,7 @@ export async function registrarResultadoTransferencia(input: {
  * their own unit) or one of their contacts holding `entregador`. That is the same rule the cita's
  * handover person follows, and it is the whole reason those roles exist.
  */
-export async function entregarNota(input: {
-	actor: Actor;
-	id: string;
-	contactoId?: unknown;
-	observaciones?: unknown;
-}) {
+export async function entregarNota(input: { actor: Actor; id: string; contactoId?: unknown; observaciones?: unknown }) {
 	if (!can(input.actor.role, "nota:close")) throw new ClienteError(403, "Sin permiso: nota:close");
 
 	const current = await getNota(input.id);
@@ -1306,8 +1428,7 @@ export async function entregarNota(input: {
 				estado: "entregada",
 				entregadaAt: new Date(),
 				entregadaAContactoId: contactoId,
-				observaciones:
-					input.observaciones !== undefined ? trim(input.observaciones) : current.observaciones,
+				observaciones: input.observaciones !== undefined ? trim(input.observaciones) : current.observaciones,
 			},
 			include: INCLUDE,
 		});
@@ -1393,19 +1514,22 @@ export async function cancelarNota(input: { actor: Actor; id: string; motivo: un
  * Running commentary. `interno` defaults to true: the safe default is that a note stays inside
  * the shop, and sharing it with the customer is the deliberate act.
  */
-export async function comentarNota(input: {
-	actor: Actor;
-	id: string;
-	texto: unknown;
-	interno?: unknown;
-}) {
+export async function comentarNota(input: { actor: Actor; id: string; texto: unknown; interno?: unknown }) {
 	if (!can(input.actor.role, "nota:comment")) throw new ClienteError(403, "Sin permiso: nota:comment");
 
 	const texto = trim(input.texto);
 	if (!texto) throw new ClienteError(400, "El comentario no puede ir vacío");
 
 	const nota = await getNota(input.id);
-	const interno = input.interno === undefined ? true : input.interno === true || input.interno === "1";
+	let interno = input.interno === undefined ? true : input.interno === true || input.interno === "1";
+
+	// A mechanic may comment, but never AT the customer. Writing to the customer belongs to
+	// whoever owns that relationship — and `notaParaCliente` exists precisely because what reaches
+	// them is a decision, not a side effect of somebody unchecking a box in the bay.
+	if (!can(input.actor.role, "nota:read")) {
+		if (nota.mecanicoId !== input.actor.id) throw new ClienteError(404, "Nota no encontrada");
+		interno = true;
+	}
 
 	// A comment marked visible to the customer IS customer-facing data, so the same rule applies:
 	// the partner workshop never surfaces. This catches the honest slip — pasting "ya lo mandamos
@@ -1455,44 +1579,6 @@ export async function comentarNota(input: {
 	return comentario;
 }
 
-/**
- * Does this text name one of our partner workshops?
- *
- * Deliberately simple: normalize accents and case, then look for each active shop's name and its
- * distinctive words. It is a guard against the honest slip, not against somebody determined to
- * leak the name — that is a people problem, not a regex problem. Short/common words are skipped
- * so "Taller" or "del" never trips it.
- */
-async function tallerMencionado(texto: string): Promise<string | null> {
-	const talleres = await prisma.taller.findMany({
-		where: { archivedAt: null },
-		select: { nombre: true },
-	});
-	if (talleres.length === 0) return null;
-
-	const normalizar = (s: string) =>
-		s
-			.toLowerCase()
-			.normalize("NFD")
-			.replace(/[̀-ͯ]/g, "");
-	const cuerpo = normalizar(texto);
-
-	const GENERICAS = new Set([
-		"taller", "talleres", "de", "del", "la", "el", "los", "las", "y", "e",
-		"sa", "cv", "srl", "auto", "autos", "servicio", "servicios", "hermosillo",
-	]);
-
-	for (const { nombre } of talleres) {
-		const completo = normalizar(nombre);
-		if (cuerpo.includes(completo)) return nombre;
-		// A distinctive word is enough: "El Sahuaro" is recognisable from "Sahuaro" alone.
-		for (const palabra of completo.split(/\s+/)) {
-			if (palabra.length >= 5 && !GENERICAS.has(palabra) && cuerpo.includes(palabra)) return nombre;
-		}
-	}
-	return null;
-}
-
 // --- Evidencia -------------------------------------------------------------------------------
 
 /**
@@ -1502,6 +1588,23 @@ async function tallerMencionado(texto: string): Promise<string | null> {
  * evidence — and the content type is checked BEFORE anything is signed, so a signed URL is never
  * handed out for a file we would refuse to record.
  */
+/**
+ * A mechanic may only touch the note assigned to them.
+ *
+ * 404, not 403: a mechanic probing ids must not be able to confirm that somebody else's job
+ * exists. Anyone holding `nota:read` (the counter) passes straight through.
+ */
+async function exigirNotaPropia(actor: Actor, notaId: string) {
+	if (can(actor.role, "nota:read")) return;
+	// Same `alcanceDeTaller` the read path uses: a partner shop's mechanic may write on a note
+	// their workshop holds even though nobody assigned it to them by name.
+	const fila = await prisma.nota_servicio.findFirst({
+		where: { id: notaId, ...alcanceDeTaller(actor) },
+		select: { id: true },
+	});
+	if (!fila) throw new ClienteError(404, "Nota no encontrada");
+}
+
 export async function firmarEvidencia(input: {
 	actor: Actor;
 	id: string;
@@ -1509,7 +1612,8 @@ export async function firmarEvidencia(input: {
 	contentType: unknown;
 	bytes?: unknown;
 }) {
-	if (!can(input.actor.role, "nota:inspect")) throw new ClienteError(403, "Sin permiso: nota:inspect");
+	if (!can(input.actor.role, "nota:evidencia")) throw new ClienteError(403, "Sin permiso: nota:evidencia");
+	await exigirNotaPropia(input.actor, input.id);
 
 	const nombre = trim(input.nombre, 255, "El nombre del archivo");
 	if (!nombre) throw new ClienteError(400, "Falta el nombre del archivo");
@@ -1539,12 +1643,9 @@ export async function firmarEvidencia(input: {
  * The key must be one WE signed for THIS note — checked by prefix — so a client cannot register
  * an object belonging to another job, or a path outside the bucket's note area.
  */
-export async function registrarEvidencia(input: {
-	actor: Actor;
-	id: string;
-	body: Record<string, unknown>;
-}) {
-	if (!can(input.actor.role, "nota:inspect")) throw new ClienteError(403, "Sin permiso: nota:inspect");
+export async function registrarEvidencia(input: { actor: Actor; id: string; body: Record<string, unknown> }) {
+	if (!can(input.actor.role, "nota:evidencia")) throw new ClienteError(403, "Sin permiso: nota:evidencia");
+	await exigirNotaPropia(input.actor, input.id);
 
 	const nota = await getNota(input.id);
 
@@ -1594,7 +1695,8 @@ export async function registrarEvidencia(input: {
 
 /** Remove evidence. The row goes first; R2 is best-effort, so a dead object never blocks the UI. */
 export async function borrarEvidencia(input: { actor: Actor; id: string; evidenciaId: string }) {
-	if (!can(input.actor.role, "nota:inspect")) throw new ClienteError(403, "Sin permiso: nota:inspect");
+	if (!can(input.actor.role, "nota:evidencia")) throw new ClienteError(403, "Sin permiso: nota:evidencia");
+	await exigirNotaPropia(input.actor, input.id);
 
 	const nota = await getNota(input.id);
 	const evidencia = await prisma.nota_evidencia.findUnique({ where: { id: input.evidenciaId } });
@@ -1614,4 +1716,316 @@ export async function borrarEvidencia(input: { actor: Actor; id: string; evidenc
 
 	await borrarObjeto(evidencia.clave);
 	return { ok: true };
+}
+
+// ================================================================================================
+// El taller mecánico
+// ================================================================================================
+
+/**
+ * The notes assigned to ONE mechanic.
+ *
+ * Scoped by `mecanicoId` in the WHERE, never by filtering a full list afterwards: a mechanic holds
+ * `nota:asignadas`, not `nota:read`, and the difference has to be a different query or it is not a
+ * boundary at all.
+ *
+ * Returns `notaParaTaller`, which carries no money and no customer contact — a mechanic needs the
+ * vehicle, the fault and the history, not what the shop charges for it.
+ */
+export async function misNotas(actor: Actor, opciones: { cerradas?: boolean } = {}) {
+	const notas = await prisma.nota_servicio.findMany({
+		where: {
+			...alcanceDeTaller(actor),
+			...(opciones.cerradas ? {} : { estado: { in: NOTA_ESTADOS_ABIERTOS } }),
+		},
+		orderBy: [{ trabajoTerminadoAt: "asc" }, { recibidaAt: "asc" }],
+		take: 100,
+		include: INCLUDE,
+	});
+
+	const ids = notas.map((n) => n.id);
+	const solicitudes = ids.length
+		? await prisma.solicitud_refaccion.groupBy({
+				by: ["notaId", "estado"],
+				where: { notaId: { in: ids } },
+				_count: { _all: true },
+			})
+		: [];
+
+	return notas.map((n) => ({
+		...notaParaTaller(n),
+		refaccionesPendientes: solicitudes.find((s) => s.notaId === n.id && s.estado === "pendiente")?._count._all ?? 0,
+	}));
+}
+
+/**
+ * The note as a MECHANIC may see it.
+ *
+ * No prices, no credit, no customer phone number: the mechanic's job is the vehicle. This is the
+ * same reasoning as `notaParaCliente` — one mapper that decides what crosses a boundary, so the
+ * rule lives in a single place instead of being re-remembered on every screen.
+ *
+ * The partner taller IS visible here: a mechanic being told the unit went out to hojalatería is
+ * ordinary shop information. The rule is about the customer, not about staff.
+ */
+/**
+ * Which notes a mechanic may see AT ALL — as a `where`, never as a filter after the fact.
+ *
+ * Two answers, and both are "work that is theirs":
+ *
+ * 1. **Assigned to them.** That is the whole scope for one of our own people.
+ * 2. **Ever transferred to their partner workshop.** An outside shop's mechanic is not assigned
+ *    the note by name — the vehicle was sent to their SHOP — and they still need it back after
+ *    the job closes, because "what did we do to this truck last time" is the question that stops
+ *    them from redoing it. Past transfers are included on purpose: the history is theirs too.
+ *
+ * Doing this as a query condition rather than a post-filter is the difference between a boundary
+ * and a habit. A `take` limit applied before a post-filter would also silently drop rows.
+ */
+export function alcanceDeTaller(actor: Actor): Prisma.nota_servicioWhereInput {
+	if (!actor.tallerId) return { mecanicoId: actor.id };
+	return {
+		OR: [{ mecanicoId: actor.id }, { transferencias: { some: { tallerId: actor.tallerId } } }],
+	};
+}
+
+export const notaParaTaller = (n: NotaRow, motivoTaller: string | null = null) => ({
+	id: n.id,
+	folio: n.folio,
+	estado: n.estado,
+	estadoLabel: notaEstadoLabel(n.estado),
+	// Why the job was sent to THEIR workshop, which is a different question from why the vehicle
+	// came to Estación 360 in the first place. Both matter to somebody about to touch the truck:
+	// the customer's complaint, and the specific piece of work we sourced out.
+	motivoTaller,
+	unidad: n.unidad ? `${n.unidad.marca} ${n.unidad.modelo}` : null,
+	unidadDetalle: n.unidad
+		? [n.unidad.anio, n.unidad.placas, n.unidad.numeroEconomico].filter(Boolean).join(" · ")
+		: null,
+	unidadId: n.unidadId,
+	motivo: n.motivo,
+	diagnostico: n.diagnostico,
+	kilometraje: n.kilometraje,
+	combustibleLabel: combustibleLabel(n.combustibleOctavos),
+	condicion: n.condicion,
+	inspeccionada: n.inspeccionAt !== null,
+	recibidaAt: n.recibidaAt.toISOString(),
+	tallerActualNombre: n.tallerActual?.nombre ?? null,
+	trabajoTerminadoAt: n.trabajoTerminadoAt?.toISOString() ?? null,
+	evidencias: n._count.evidencias,
+});
+
+/**
+ * Read one note as a mechanic, with the ownership check built in.
+ *
+ * Anybody holding `nota:read` (the counter) passes through; a mechanic gets a 404 for a note that
+ * is not theirs — **404, not 403**, so the id of somebody else's job cannot be confirmed by
+ * probing.
+ */
+export async function getNotaDeTaller(actor: Actor, id: string) {
+	// The scope is the WHERE, not a check on the row afterwards — same rule as `misNotas`, and the
+	// reason it is the same helper: two spellings of one boundary drift.
+	const nota = can(actor.role, "nota:read")
+		? await prisma.nota_servicio.findUnique({ where: { id }, include: INCLUDE })
+		: await prisma.nota_servicio.findFirst({
+				where: { id, ...alcanceDeTaller(actor) },
+				include: INCLUDE,
+			});
+	if (!nota) throw new ClienteError(404, "Nota no encontrada");
+
+	const [evidencias, solicitudes, comentarios, transferencia] = await Promise.all([
+		prisma.nota_evidencia.findMany({
+			where: { notaId: nota.id },
+			orderBy: { createdAt: "desc" },
+			take: 40,
+		}),
+		listSolicitudes({ notaId: nota.id }),
+		prisma.nota_comentario.findMany({
+			where: { notaId: nota.id },
+			orderBy: { createdAt: "desc" },
+			take: 30,
+		}),
+		// What WE asked their shop to do. Only for an outside mechanic: one of ours has no
+		// workshop, and there is no "their" transfer to read.
+		actor.tallerId
+			? prisma.nota_transferencia.findFirst({
+					where: { notaId: nota.id, tallerId: actor.tallerId },
+					orderBy: { desde: "desc" },
+					select: { motivo: true },
+				})
+			: null,
+	]);
+
+	return {
+		nota: notaParaTaller(nota, transferencia?.motivo ?? null),
+		evidencias: evidencias.map((e) => ({
+			id: e.id,
+			categoria: e.categoria,
+			nombre: e.nombre,
+			descripcion: e.descripcion,
+			url: urlDeLectura(e.clave),
+			createdAt: e.createdAt.toISOString(),
+		})),
+		solicitudes,
+		comentarios: comentarios.map((c) => ({
+			id: c.id,
+			texto: c.texto,
+			interno: c.interno,
+			autorEmail: c.autorEmail,
+			createdAt: c.createdAt.toISOString(),
+		})),
+	};
+}
+
+/** Hand a job to a mechanic. Null takes it off them. */
+export async function asignarMecanico(input: { actor: Actor; id: string; mecanicoId: unknown }) {
+	if (!can(input.actor.role, "nota:asignar-mecanico")) {
+		throw new ClienteError(403, "Sin permiso: nota:asignar-mecanico");
+	}
+
+	const current = await getNota(input.id);
+	if (current.estado === "entregada" || current.estado === "cancelada") {
+		throw new ClienteError(409, `Una nota ${notaEstadoLabel(current.estado).toLowerCase()} ya no se asigna.`);
+	}
+
+	const mecanicoId = trim(input.mecanicoId);
+	if (mecanicoId) {
+		const mecanico = await prisma.user.findUnique({
+			where: { id: mecanicoId },
+			select: { id: true, name: true, role: true, banned: true },
+		});
+		if (!mecanico) throw new ClienteError(404, "Ese usuario no existe");
+		if (mecanico.banned) throw new ClienteError(409, "Esa cuenta está bloqueada.");
+		// Anybody who can be handed a job is anybody who can open it. Checking the permission
+		// rather than `role === 'taller'` is what keeps this from breaking the day an Operador
+		// starts turning wrenches.
+		if (!can(mecanico.role, "nota:asignadas")) {
+			throw new ClienteError(400, "A esa persona no se le pueden asignar unidades.");
+		}
+	}
+	if (mecanicoId === current.mecanicoId) throw new ClienteError(409, "La nota ya está así asignada.");
+
+	const nota = await prisma.$transaction(async (tx) => {
+		const actualizada = await tx.nota_servicio.update({
+			where: { id: current.id },
+			// Re-assigning restarts the clock: the new mechanic has not finished anything yet.
+			data: { mecanicoId, trabajoTerminadoAt: null },
+			include: INCLUDE,
+		});
+
+		await recordAudit(tx, {
+			action: "nota.mecanico",
+			actor: input.actor,
+			entityId: actualizada.id,
+			entityLabel: notaLabel(actualizada),
+			summary: mecanicoId
+				? `Nota #${actualizada.folio} asignada a ${actualizada.mecanico?.name ?? mecanicoId}`
+				: `Nota #${actualizada.folio} sin mecánico`,
+			before: { mecanicoId: current.mecanicoId },
+			after: { mecanicoId },
+		});
+
+		return actualizada;
+	});
+
+	if (mecanicoId) {
+		await notificar({
+			evento: "nota_asignada",
+			destino: { userId: mecanicoId },
+			titulo: "Te asignaron una unidad",
+			cuerpo: `Nota #${nota.folio} · ${nota.unidad?.marca} ${nota.unidad?.modelo} — ${nota.motivo}`,
+			url: `/panel/taller/${nota.id}`,
+			entidad: "nota",
+			entidadId: nota.id,
+			excepto: input.actor.id,
+		});
+	}
+
+	return nota;
+}
+
+/**
+ * The mechanic writes what they found, and says when they are done.
+ *
+ * `trabajoTerminadoAt` is deliberately NOT a note estado. "The work is finished" and "the car can
+ * be handed to the customer" are two different facts owned by two different people — collapsing
+ * them is how a vehicle gets promised before anybody checked it.
+ */
+export async function capturarDiagnostico(input: {
+	actor: Actor;
+	id: string;
+	diagnostico?: unknown;
+	terminado?: unknown;
+}) {
+	if (!can(input.actor.role, "nota:diagnostico")) throw new ClienteError(403, "Sin permiso: nota:diagnostico");
+
+	const current = await getNota(input.id);
+	if (!can(input.actor.role, "nota:read") && current.mecanicoId !== input.actor.id) {
+		throw new ClienteError(404, "Nota no encontrada");
+	}
+	if (current.estado === "entregada" || current.estado === "cancelada") {
+		throw new ClienteError(409, `Una nota ${notaEstadoLabel(current.estado).toLowerCase()} ya no se edita.`);
+	}
+
+	const diagnostico = input.diagnostico === undefined ? current.diagnostico : trim(input.diagnostico);
+	const marcaTerminado = input.terminado === true || input.terminado === "1";
+	const desmarca = input.terminado === false || input.terminado === "0";
+
+	if (marcaTerminado && !diagnostico) {
+		throw new ClienteError(400, "Antes de cerrar tu trabajo escribe qué le hiciste a la unidad.");
+	}
+
+	const yaEstaba = current.trabajoTerminadoAt !== null;
+	const nota = await prisma.$transaction(async (tx) => {
+		const actualizada = await tx.nota_servicio.update({
+			where: { id: current.id },
+			data: {
+				diagnostico,
+				...(marcaTerminado ? { trabajoTerminadoAt: current.trabajoTerminadoAt ?? new Date() } : {}),
+				...(desmarca ? { trabajoTerminadoAt: null } : {}),
+			},
+			include: INCLUDE,
+		});
+
+		await recordAudit(tx, {
+			action: marcaTerminado && !yaEstaba ? "nota.trabajo" : "nota.diagnostico",
+			actor: input.actor,
+			entityId: actualizada.id,
+			entityLabel: notaLabel(actualizada),
+			summary:
+				marcaTerminado && !yaEstaba
+					? `Trabajo terminado en la nota #${actualizada.folio}`
+					: `Diagnóstico capturado en la nota #${actualizada.folio}`,
+			before: { diagnostico: current.diagnostico, terminado: yaEstaba },
+			after: { diagnostico, terminado: actualizada.trabajoTerminadoAt !== null },
+		});
+
+		return actualizada;
+	});
+
+	// Only on the transition, not on every save of the same note.
+	if (marcaTerminado && !yaEstaba) {
+		await notificar({
+			evento: "trabajo_terminado",
+			destino: { difusion: true },
+			titulo: "Trabajo terminado",
+			cuerpo: `Nota #${nota.folio} · ${nota.unidad?.marca} ${nota.unidad?.modelo} — ${input.actor.name}`,
+			url: `/panel/notas/${nota.id}`,
+			entidad: "nota",
+			entidadId: nota.id,
+			excepto: input.actor.id,
+		});
+	}
+
+	return nota;
+}
+
+/** Everyone a job can be handed to, for the picker. */
+export async function mecanicosDisponibles() {
+	const filas = await prisma.user.findMany({
+		where: { role: "taller", NOT: { banned: true } },
+		orderBy: { name: "asc" },
+		select: { id: true, name: true, email: true },
+	});
+	return filas;
 }

@@ -1,12 +1,6 @@
 import { error, json, type RequestHandler } from "@sveltejs/kit";
 import { requirePermission, requireUser } from "$lib/server/guard";
-import {
-	ClienteError,
-	createCliente,
-	listClientes,
-	parseClienteQuery,
-	publicCliente,
-} from "$lib/server/clientes";
+import { ClienteError, createCliente, listClientes, parseClienteQuery, publicCliente } from "$lib/server/clientes";
 
 /**
  * GET /api/clientes — searchable, paginated customer list. Permission: `cliente:read`.

@@ -30,36 +30,71 @@
 
 <svelte:head><title>Notas de servicio — Estación 360</title></svelte:head>
 
-<PageHeader title="Notas de servicio" description="Las unidades que están —o estuvieron— en el taller.">
+<PageHeader
+	title="Notas de servicio"
+	description="Las unidades que están —o estuvieron— en el taller."
+>
 	{#snippet actions()}
-		<Button href={searchHref(page.url, { abiertas: data.filtros.abiertas ? null : "1", page: null })} variant={data.filtros.abiertas ? "primary" : "outline"}>
+		<Button
+			href={searchHref(page.url, { abiertas: data.filtros.abiertas ? null : "1", page: null })}
+			variant={data.filtros.abiertas ? "primary" : "outline"}
+		>
 			Solo abiertas
 		</Button>
 	{/snippet}
 </PageHeader>
 
 <!-- Real GET form: the filters ARE the URL, so any view is shareable and works with JS off. -->
-<form method="GET" class="mb-4 grid gap-3 rounded-lg border border-sand-200 bg-white p-4 sm:grid-cols-2 lg:grid-cols-4">
-	<Field label="Buscar" name="q" value={data.filtros.q} placeholder="Folio, cliente, placas, VIN, económico…" />
-	<Field label="Estado" name="estado">
+<form
+	method="GET"
+	class="mb-4 grid gap-3 rounded-lg border border-sand-200 bg-white p-4 sm:grid-cols-2 lg:grid-cols-4"
+>
+	<Field
+		label="Buscar"
+		name="q"
+		value={data.filtros.q}
+		placeholder="Folio, cliente, placas, VIN, económico…"
+	/>
+	<Field
+		label="Estado"
+		name="estado"
+	>
 		{#snippet children(id)}
-			<select {id} name="estado" class={INPUT}>
+			<select
+				{id}
+				name="estado"
+				class={INPUT}
+			>
 				<option value="">Todos</option>
 				{#each data.estados as e (e.value)}
-					<option value={e.value} selected={data.filtros.estado === e.value}>{e.label}</option>
+					<option
+						value={e.value}
+						selected={data.filtros.estado === e.value}>{e.label}</option
+					>
 				{/each}
 			</select>
 		{/snippet}
 	</Field>
-	{#if data.filtros.abiertas}<input type="hidden" name="abiertas" value="1" />{/if}
+	{#if data.filtros.abiertas}<input
+			type="hidden"
+			name="abiertas"
+			value="1"
+		/>{/if}
 
 	<div class="flex flex-wrap items-end gap-2 sm:col-span-2 lg:col-span-4">
 		<Button size="sm">
-			<Search size={16} aria-hidden="true" />
+			<Search
+				size={16}
+				aria-hidden="true"
+			/>
 			Filtrar
 		</Button>
 		{#if hayFiltros}
-			<Button href="/panel/notas" variant="ghost" size="sm">Limpiar filtros</Button>
+			<Button
+				href="/panel/notas"
+				variant="ghost"
+				size="sm">Limpiar filtros</Button
+			>
 		{/if}
 		<span class="ml-auto text-sm text-sand-600">
 			{#if data.total > 0}{from}–{to} de {data.total}{:else}Sin resultados{/if}
@@ -74,10 +109,16 @@
 			? "Prueba con otro estado o quita los filtros."
 			: "Se abre una nota cuando recibes una unidad desde su cita en la agenda."}
 	>
-		{#snippet icon()}<ClipboardList size={40} aria-hidden="true" />{/snippet}
+		{#snippet icon()}<ClipboardList
+				size={40}
+				aria-hidden="true"
+			/>{/snippet}
 	</EmptyState>
 {:else}
-	<DataTable columns={["Folio", "Recibida", "Cliente", "Unidad", "Estado", "Km", ""]} items={data.notas}>
+	<DataTable
+		columns={["Folio", "Recibida", "Cliente", "Unidad", "Estado", "Km", ""]}
+		items={data.notas}
+	>
 		{#snippet row(nota)}
 			<td class="px-4 py-2.5 font-medium text-sand-950">#{nota.folio}</td>
 			<td class="px-4 py-2.5">
@@ -95,12 +136,22 @@
 				<span class="flex flex-wrap items-center gap-1.5">
 					<Badge tone={notaEstadoTone(nota.estado)}>{nota.estadoLabel}</Badge>
 					{#if nota.tallerActualNombre}
-						<Badge tone="brand"><Wrench size={11} class="inline" aria-hidden="true" /> {nota.tallerActualNombre}</Badge>
+						<Badge tone="brand"
+							><Wrench
+								size={11}
+								class="inline"
+								aria-hidden="true"
+							/>
+							{nota.tallerActualNombre}</Badge
+						>
 					{/if}
 					{#if !nota.inspeccionada}<Badge tone="warn">Sin inspección</Badge>{/if}
 					{#if nota.evidencias > 0}
 						<span class="inline-flex items-center gap-0.5 text-xs text-sand-500">
-							<Camera size={12} aria-hidden="true" />{nota.evidencias}
+							<Camera
+								size={12}
+								aria-hidden="true"
+							/>{nota.evidencias}
 						</span>
 					{/if}
 				</span>
@@ -109,24 +160,45 @@
 				{nota.kilometraje === null ? "—" : nota.kilometraje.toLocaleString("es-MX")}
 			</td>
 			<td class="px-4 py-2.5 text-right">
-				<Button href="/panel/notas/{nota.id}" variant="ghost" size="sm">Ver</Button>
+				<Button
+					href="/panel/notas/{nota.id}"
+					variant="ghost"
+					size="sm">Ver</Button
+				>
 			</td>
 		{/snippet}
 	</DataTable>
 
 	{#if data.totalPages > 1}
-		<nav class="mt-4 flex items-center justify-between" aria-label="Paginación">
+		<nav
+			class="mt-4 flex items-center justify-between"
+			aria-label="Paginación"
+		>
 			{#if data.page > 1}
-				<Button href={searchHref(page.url, { page: String(data.page - 1) })} variant="ghost" size="sm">
-					<ChevronLeft size={16} aria-hidden="true" />
+				<Button
+					href={searchHref(page.url, { page: String(data.page - 1) })}
+					variant="ghost"
+					size="sm"
+				>
+					<ChevronLeft
+						size={16}
+						aria-hidden="true"
+					/>
 					Anterior
 				</Button>
 			{:else}<span></span>{/if}
 			<span class="text-sm text-sand-600">Página {data.page} de {data.totalPages}</span>
 			{#if data.page < data.totalPages}
-				<Button href={searchHref(page.url, { page: String(data.page + 1) })} variant="ghost" size="sm">
+				<Button
+					href={searchHref(page.url, { page: String(data.page + 1) })}
+					variant="ghost"
+					size="sm"
+				>
 					Siguiente
-					<ChevronRight size={16} aria-hidden="true" />
+					<ChevronRight
+						size={16}
+						aria-hidden="true"
+					/>
 				</Button>
 			{:else}<span></span>{/if}
 		</nav>

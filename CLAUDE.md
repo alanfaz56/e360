@@ -5,14 +5,14 @@ SaaS to run the Estación 360 mechanic shop (Hermosillo, Sonora). Priorities, in
 
 ## Stack
 
-| Layer     | Technology                                    |
-| --------- | --------------------------------------------- |
-| Framework | SvelteKit 2 + Svelte 5 (runes mode enforced)  |
-| Language  | TypeScript                                    |
-| Styling   | Tailwind CSS v4, CSS-first `@theme`           |
-| ORM       | Prisma 7 (`pg` adapter)                       |
-| Database  | PostgreSQL                                    |
-| Auth      | Better Auth + `admin` plugin                  |
+| Layer     | Technology                                   |
+| --------- | -------------------------------------------- |
+| Framework | SvelteKit 2 + Svelte 5 (runes mode enforced) |
+| Language  | TypeScript                                   |
+| Styling   | Tailwind CSS v4, CSS-first `@theme`          |
+| ORM       | Prisma 7 (`pg` adapter)                      |
+| Database  | PostgreSQL                                   |
+| Auth      | Better Auth + `admin` plugin                 |
 
 ---
 
@@ -20,12 +20,12 @@ SaaS to run the Estación 360 mechanic shop (Hermosillo, Sonora). Priorities, in
 
 There are exactly four roles. They are fixed; do not invent a fifth without being told.
 
-| Role      | Key         | Rank |
-| --------- | ----------- | ---- |
-| Admin     | `admin`     | 1    |
-| Gerente   | `gerente`   | 2    |
-| Operador  | `operador`  | 3    |
-| Taller Mecánico | `taller` | 4 |
+| Role            | Key        | Rank |
+| --------------- | ---------- | ---- |
+| Admin           | `admin`    | 1    |
+| Gerente         | `gerente`  | 2    |
+| Operador        | `operador` | 3    |
+| Taller Mecánico | `taller`   | 4    |
 
 **Claude must ASK which roles get access before implementing any new endpoint, action,
 page, or capability.** Do not guess, do not infer from the rank ladder, do not copy the
@@ -58,10 +58,10 @@ what an Operador has; each key lists its roles in full.
 
 Two different ladders, do not confuse them:
 
-| Action                              | Helper           | Rule                                       |
-| ----------------------------------- | ---------------- | ------------------------------------------ |
-| Inviting a **new** user             | `canAssignRole`  | Strictly below your own rank. No exceptions |
-| Re-ranking an **existing** user     | `settableRoles`  | Admin only, any role **including Admin**    |
+| Action                          | Helper          | Rule                                        |
+| ------------------------------- | --------------- | ------------------------------------------- |
+| Inviting a **new** user         | `canAssignRole` | Strictly below your own rank. No exceptions |
+| Re-ranking an **existing** user | `settableRoles` | Admin only, any role **including Admin**    |
 
 Promotion to Admin is possible only through the second path. That is deliberate: without
 it, a second Admin could only ever come from re-running the seed.
@@ -72,7 +72,7 @@ Role changes go through `changeUserRole` in [src/lib/server/users.ts](src/lib/se
 which enforces two rules that exist purely to keep you from locking yourself out:
 
 1. **No self-demotion.** Nobody can change their own role, ever. Another Admin has to.
-2. **Never zero Admins.** The count is taken *after* the write, inside a transaction that
+2. **Never zero Admins.** The count is taken _after_ the write, inside a transaction that
    first does `SELECT ... FOR UPDATE` on the admin rows. The lock is load-bearing: without
    it two Admins demoting each other concurrently would each see the other as still an
    Admin and both commit. Do not remove it in the name of simplicity.
@@ -88,7 +88,7 @@ the lockout drawer warns the person writing it. It is also recorded in the audit
 Why that is safe, and the rule to preserve: login errors are otherwise deliberately vague
 so nobody can discover which addresses exist. The suspension notice is the one exception,
 and only because better-auth throws `BANNED_USER` from its **session-create** hook, which
-runs *after* the password is verified. Reaching that error therefore proves the caller owns
+runs _after_ the password is verified. Reaching that error therefore proves the caller owns
 the account. A wrong password on a locked account still gets the generic
 "Correo o contraseña incorrectos". **Never move the lockout check before password
 verification, and never surface `lockoutNotice` from anywhere but that error path.**
@@ -98,12 +98,12 @@ verification, and never surface `lockoutNotice` from anywhere but that error pat
 A customer contact holds roles from `CONTACTO_ROLES` in
 [src/lib/contacto-roles.ts](src/lib/contacto-roles.ts). Each carries an `autoridad` flag:
 
-| Role | `autoridad` | |
-| --- | --- | --- |
-| `entregador` | **yes** | may collect a unit and sign the handover |
-| `autorizador` | **yes** | may approve a quote / authorize the repair |
-| `facturacion` | no | receives the invoice |
-| `general` | no | just a phone number |
+| Role          | `autoridad` |                                            |
+| ------------- | ----------- | ------------------------------------------ |
+| `entregador`  | **yes**     | may collect a unit and sign the handover   |
+| `autorizador` | **yes**     | may approve a quote / authorize the repair |
+| `facturacion` | no          | receives the invoice                       |
+| `general`     | no          | just a phone number                        |
 
 - `contacto:manage` (Admin, Gerente, Operador) — create and edit contacts.
 - `contacto:grant-authority` (Admin, Gerente) — **additionally** required to add or remove a
@@ -115,7 +115,7 @@ drive a customer's vehicle off the lot. Use `canAssignContactoRole`; never check
 
 **The check runs on the delta, not the final state.** An Operador editing a contact that
 already holds `entregador` may change its phone number — the save carries that role in the
-payload and must not be refused. Only *adding or removing* an authority role needs the extra
+payload and must not be refused. Only _adding or removing_ an authority role needs the extra
 permission. Deleting a contact that holds one counts as removing it.
 
 ### Clientes, contactos y unidades
@@ -137,7 +137,7 @@ permission. Deleting a contact that holds one counts as removing it.
 - **Every string written to a `VarChar` column goes through `trim(value, max, label)`** from
   [src/lib/server/clientes.ts](src/lib/server/clientes.ts) — shared by contactos and unidades.
   Without the `max`, Postgres rejects the write with `value too long for the column's type.
-  Column: (not available)`, which names neither the field nor a fix. Adding a column means adding
+Column: (not available)`, which names neither the field nor a fix. Adding a column means adding
   its length to the matching `trim` call.
 - `unidad.clienteId` deliberately duplicates the open `unidad_propietario` row (`hasta` null).
   A partial unique index enforces at most one open period per unit, so a transfer that forgot
@@ -153,16 +153,16 @@ permission. Deleting a contact that holds one counts as removing it.
 
 Appointments come from two places and live in one table, `cita`, discriminated by `origen`:
 
-| `origen` | Who | Starts as |
-| --- | --- | --- |
+| `origen`  | Who                                                        | Starts as                                           |
+| --------- | ---------------------------------------------------------- | --------------------------------------------------- |
 | `publico` | anonymous visitor at `/citas`, behind Cloudflare Turnstile | `solicitada`, **no hour** — only `fecha` + `franja` |
-| `panel` | staff at the counter | `confirmada`, with `inicio`/`fin` |
+| `panel`   | staff at the counter                                       | `confirmada`, with `inicio`/`fin`                   |
 
 - `cita:read` · `cita:create` · `cita:advance` — Admin, Gerente, Operador.
 - `cita:update` · `cita:cancel` · `cita:assign` — Admin, Gerente only.
 - **`cita:advance` is narrower than it looks.** An Operador may advance only an appointment
   whose `asignadoId` is them, and only forward. The check lives in `avanzarCita` and keys off
-  *not* holding `cita:update` — if anyone ever grants Operador `cita:update`, that ownership
+  _not_ holding `cita:update` — if anyone ever grants Operador `cita:update`, that ownership
   rule silently stops applying. `check-roles.ts` asserts the pairing for that reason.
 - Cancelling is **not** reachable through `avanzarCita`. It is `cita:cancel`, it requires a
   `motivo`, and the reason is what gets read back to the customer.
@@ -208,7 +208,7 @@ chips that actually tell two identical trucks apart (económico, placas, VIN).
 `sugerirUnidades` puts vehicles already on file at the top of the unit picker, **ranked** — VIN,
 then exact placas, then partial placas, then marca+modelo, then marca. Ranked rather than filtered
 because the signals differ enormously in strength: a plate identifies one vehicle, a marca only
-says "a Nissan". Each card says *why* it matched, so a wrong pick is obvious.
+says "a Nissan". Each card says _why_ it matched, so a wrong pick is obvious.
 
 Scoping: with a customer chosen, the search and the suggestions stay inside their fleet. With
 none, both search the whole registry — **picking a vehicle then fills the customer**, because a
@@ -228,7 +228,7 @@ Two rules that fall out of Rule 7 and are easy to break here:
 
 - **Both halves of an either/or render server-side.** Radios cannot hide anything without JS, so
   a no-JS user would be trapped in whichever branch SSR happened to pick. `EntitySearch` renders a
-  real `<select>` until hydrated, and the drawer renders the "choose existing" *and* "create new"
+  real `<select>` until hydrated, and the drawer renders the "choose existing" _and_ "create new"
   blocks; hiding one is a JS-only courtesy.
 - **Nothing in the unused branch may be `required`**, or the browser blocks a submit on a field the
   user cannot see. Gate `required` on `hydrated && creando…`.
@@ -239,7 +239,7 @@ it — and re-checks whenever the cita's cliente changes. Letting another custom
 would authorize a stranger to drive a vehicle away.
 
 **The public endpoint holds no permission at all**, on purpose: it is anonymous, and Turnstile is
-its gate. `solicitarCita` therefore builds the row field by field from a whitelist and *forces*
+its gate. `solicitarCita` therefore builds the row field by field from a whitelist and _forces_
 `origen`, `estado`, and null `inicio` / `notas` / `clienteId` / `unidadId` / `asignadoId` no matter
 what the body says. Never spread a request body there, and never widen what it returns — the
 response is `{ folio, fecha, franja }` only, with no id, so it cannot be used to read back or
@@ -250,19 +250,25 @@ bypass flag — `.env.example` ships Cloudflare's always-pass test keys so local
 real verification path. This is the one form in the app that requires JavaScript; `/citas` carries a
 `<noscript>` block with phone and WhatsApp, and every `/panel` form stays no-JS (Rule 7).
 
-**Time is always the shop's.** `src/lib/agenda.ts` pins `America/Hermosillo` (UTC-7, no DST since
-1998) as a fixed offset. Never format an appointment with the viewer's clock — a Gerente on a laptop
+**Time is always the shop's.** `src/lib/agenda.ts` pins `America/Hermosillo` (UTC-7, no DST since 1998) as a fixed offset. Never format an appointment with the viewer's clock — a Gerente on a laptop
 set to CDMX has to see the same grid as the counter. `datetime-local` values are wall-clock and are
 read with `enZona`, not `new Date()`.
 
 The calendar is server-rendered CSS grid with no client JS and no calendar library; `acomodar`
 computes the overlap columns before the data reaches the browser. Requests with no hour yet are
-never guessed onto the time grid — they sit in the per-day "Sin hora" strip, which *is* the cue that
+never guessed onto the time grid — they sit in the per-day "Sin hora" strip, which _is_ the cue that
 somebody still has to confirm them.
 
-`/panel` is the dashboard (counters + week calendar) for anyone with `cita:read`; `/panel/citas` is
-the same data as a filterable table. Roles without `cita:read` keep the old redirect-to-first-section
-behaviour — and that redirect must skip `/panel` itself or it loops forever.
+**Home and the agenda are two screens.** `/panel` is Home — the KPI dashboard and nothing else, the
+first thing anybody sees. `/panel/agenda` is the week calendar. `/panel/citas` is the same data as a
+filterable table. They were one page, which meant the calendar you open twenty times a day always
+sat below a wall of counters, and the counters always sat above a calendar nobody scrolled past.
+
+**Home's gate is the KPIs themselves, not a permission.** Every block in `kpisPara` is already gated
+by the data it summarises, so a role with zero blocks has an empty home and is redirected to the
+first section it can open — which is why that redirect must skip `/panel` itself or it loops
+forever. The sidebar entry is gated on `cita:read` because that is exactly the set of roles with at
+least one block today; if that ever drifts, the worst case is a link that bounces, not a leak.
 
 The week view is a **rolling seven days from the anchor date**, not a Monday-aligned calendar week,
 so today is always the first column. On a Friday, a Monday-aligned week would spend five of its
@@ -289,18 +295,22 @@ A `cita` is a promise; a **nota de servicio** is the vehicle physically being he
 an appointment on arrival ("Recibir unidad") or standalone for a walk-in, and it is the spine
 everything else hangs off: inspection, evidence, comments, transfers, quotes, invoices, payments.
 
-| Permission | Admin | Gerente | Operador | Taller |
-| --- | :-: | :-: | :-: | :-: |
-| `nota:read` · `create` · `inspect` · `advance` · `transfer` · `comment` | ✅ | ✅ | ✅ | — |
-| `nota:close` · `nota:cancel` | ✅ | ✅ | — | — |
-| `taller:read` | ✅ | ✅ | ✅ | — |
-| `taller:manage` | ✅ | ✅ | — | — |
-| `taller:review` — decide who gets certified | ✅ | ✅ | — | — |
-| `notificacion:send` — mandar un aviso a mano | ✅ | ✅ | — | — |
+| Permission                                                                | Admin | Gerente | Operador | Taller |
+| ------------------------------------------------------------------------- | :---: | :-----: | :------: | :----: |
+| `nota:read` · `create` · `inspect` · `advance` · `transfer` · `comment`   |  ✅   |   ✅    |    ✅    |   —    |
+| `nota:close` · `nota:cancel`                                              |  ✅   |   ✅    |    —     |   —    |
+| `taller:read`                                                             |  ✅   |   ✅    |    ✅    |   —    |
+| `taller:manage`                                                           |  ✅   |   ✅    |    —     |   —    |
+| `taller:review` — decide who gets certified                               |  ✅   |   ✅    |    —     |   —    |
+| `notificacion:send` — mandar un aviso a mano                              |  ✅   |   ✅    |    —     |   —    |
+| `nota:asignar-mecanico`                                                   |  ✅   |   ✅    |    ✅    |   —    |
+| `nota:asignadas` · `nota:diagnostico` · `nota:evidencia` · `nota:comment` |  ✅   |   ✅    |    ✅    |   ✅   |
 
-**The `taller` ROLE still holds nothing.** `taller` the *entity* is a partner workshop Estación 360
-sources jobs out to; onboarding those shops as users is its own change with its own permission
-decisions. `check-roles.ts` asserts the role stays empty so that cannot drift in quietly.
+**The `taller` ROLE is a mechanic on the floor — not the partner workshop.** `taller` the _entity_
+is a shop Estación 360 sources jobs out to, and the role must never acquire anything about it
+(`taller:read`, `taller:manage`, `taller:review` are all denied to it). The role's own five keys and
+the reasoning behind each are in "Taller Mecánico: el rol por fin tiene pantalla" below;
+`check-roles.ts` pins both halves.
 
 `NOTA_TRANSICIONES` is the state machine as data. Three destinations are deliberately unreachable
 through `avanzarNota`, because each needs more than a status: `en_taller` (needs a shop and a
@@ -310,6 +320,19 @@ reason), `entregada` (records who collected it) and `cancelada` (needs a reason)
   and billed twice.
 - **Delivery names a person.** The collector must be the customer themselves or one of their
   `entregador` contacts — the same rule the cita's handover follows.
+- **Intake does NOT.** Whoever shows up with the truck is often a driver, a relative, the neighbour
+  who was free, so `entregoNombre` is free text with an optional `entregoContactoId` beside it —
+  the same shape as `cita`. Handing a vehicle OVER carries no risk of releasing it to the wrong
+  person; that rule belongs at the other end. A registered contact still gets its name snapshotted
+  (`nota_servicio_entrego_nombre_check`), so the record reads after that contact is archived.
+- **Receiving completes the cita.** The appointment's whole job was getting the vehicle here;
+  leaving it `en_proceso` meant somebody had to close it by hand later, and nobody does — the
+  "citas sin procesar" counter filled with appointments that had succeeded. A request that never
+  got an hour is stamped with the arrival time first, because `completada` is in `REQUIEREN_HORA`
+  and the database would otherwise refuse the write.
+- Receiving lands the operator **in the inspection drawer**, not on the note. The two are one act
+  at the counter, and a unit that reaches the bay with no walk-around on file is the exact thing
+  the inspection protects the shop from.
 - **Transfers are a history, not a flag.** `nota_servicio.tallerActualId` denormalizes the open
   `nota_transferencia` row, written in one transaction, with a partial unique index guaranteeing at
   most one open transfer per note. A vehicle is never at two shops at once.
@@ -320,6 +343,12 @@ Estación 360 sources the job out and is the one the customer holds responsible.
 partner's name invites them to go straight there next time, cutting out the shop that found the
 work, priced it and warranties it. So:
 
+- **A quote line is customer-facing data too.** The customer reads the conceptos on
+  `/seguimiento`, so `exigirSinTaller` refuses a description naming an active partner shop when the
+  quote is written — the same rule and the same `tallerMencionado` detector a visible comment uses,
+  which is why that helper lives in `server/talleres.ts` and not in either caller. Checked on the
+  way IN, never filtered on the way out: redacting a money document after the fact would silently
+  change what somebody was quoted.
 - **`notaParaCliente` is the only mapper that may build customer-facing note data.** It omits the
   taller entirely — name, transfer history, internal comments — and uses `NOTA_ESTADO_CLIENTE`,
   where `en_taller` reads "En proceso de reparación" like ordinary progress.
@@ -335,15 +364,27 @@ work, priced it and warranties it. So:
 ONLY way out of `en_taller` — `avanzarNota` refuses that estado outright — so the check cannot be
 skipped by advancing the status.
 
-| Verdict | Effect |
-| --- | --- |
-| `aprobado` / `con_detalles` | Transfer closes, note returns to `en_diagnostico` |
-| `rechazado` | Transfer stays **open**: the unit is still theirs, for rework |
-| `no_aplica` | Set only by cancellation, never offered in the UI |
+**The verdict and where the unit ends up are two separate answers.** `qaResultado` judges the WORK;
+`destino` says who has the vehicle afterwards. Collapsing them meant a rejection chained the truck
+to the shop that botched it — the honest response to a bad repair ("take it back, I'll finish it
+here or send it elsewhere") was unreachable without approving work nobody approved.
 
-- A rejection **must** say why — it is what gets claimed back from the shop.
+| Verdict                     | `destino`             | Effect                                                                       |
+| --------------------------- | --------------------- | ---------------------------------------------------------------------------- |
+| `aprobado` / `con_detalles` | forced `retorno`      | Transfer closes, note returns to `en_diagnostico`                            |
+| `rechazado`                 | `retrabajo` (default) | Transfer stays **open**: the unit is still theirs, for rework                |
+| `rechazado`                 | `retorno`             | Transfer **closes carrying the rejection**; note returns to `en_diagnostico` |
+| `no_aplica`                 | —                     | Set only by cancellation, never offered in the UI                            |
+
+`qaSigueEnTaller(resultado, destino)` is that rule as one pure function, and `check-notas.ts` pins
+all six combinations — the unit stays out in exactly one of them. `destino` left unsaid means
+`retrabajo` on a rejection, so an API caller written before this keeps the behaviour it had.
+
+- A rejection **must** say why — it is what gets claimed back from the shop, and it is recorded
+  against them either way. Recovering the unit is not forgiving the work.
 - **You cannot hand a unit from one partner to the next** without receiving it first. That was the
-  exact gap this step closes, so `transferirNota` refuses while the note is `en_taller`.
+  exact gap this step closes, so `transferirNota` refuses while the note is `en_taller`. Rejecting
+  with `destino: "retorno"` is how you get out of that in one step and re-send it.
 - `nota_transferencia_cerrada_qa_check` enforces it in the database: a closed transfer without a
   verdict is impossible, whatever writes to the table.
 - The odometer is taken on the way back too — shops return units with more kilometres on them.
@@ -380,12 +421,16 @@ request body limit is a few megabytes and a phone photo is routinely more.
 
 ### Dinero: cotizaciones, facturas, pagos, crédito
 
-| Permission | Admin | Gerente | Operador |
-| --- | :-: | :-: | :-: |
-| `cotizacion:read` · `create` · `authorize` | ✅ | ✅ | ✅ |
-| `cotizacion:send` | ✅ | ✅ | — |
-| `factura:read` · `pago:read` · `pago:register` | ✅ | ✅ | ✅ |
-| `factura:create` · `factura:cancel` · `cliente:credito` | ✅ | ✅ | — |
+| Permission                                              | Admin | Gerente | Operador |
+| ------------------------------------------------------- | :---: | :-----: | :------: |
+| `cotizacion:read` · `create` · `send` · `authorize`     |  ✅   |   ✅    |    ✅    |
+| `factura:read` · `pago:read` · `pago:register`          |  ✅   |   ✅    |    ✅    |
+| `factura:create` · `factura:cancel` · `cliente:credito` |  ✅   |   ✅    |    —     |
+
+`cotizacion:send` and `cotizacion:interno` stay two keys even though the same three roles hold both
+today: one is what the CUSTOMER was told, the other is what the shop is doing. The line that matters
+is not who talks to the customer — it is who creates a **receivable**, and that is still Admin and
+Gerente only.
 
 **Money is integer cents (`bigint`) wherever it is added up**, and only becomes a `Decimal` at the
 database boundary. Never a float. `centavos()` is the single place a string from a form becomes
@@ -408,9 +453,8 @@ money, and it rejects anything ambiguous rather than guessing.
   customer's limit later never rewrites what was already agreed.
 - **Over the limit is a 409** naming the overage. Admin/Gerente can force it with a reason, and the
   override is its own audit entry (`cliente.credito_override`) — the exception has to be visible.
-  The check runs *inside* the transaction, so two invoices issued at the same instant cannot both
+  The check runs _inside_ the transaction, so two invoices issued at the same instant cannot both
   slip under the same headroom.
-
 
 ### Registro de talleres — solicitud pública y certificación
 
@@ -418,11 +462,11 @@ Partner workshops apply from the public page at `/talleres`. Certification is a 
 `taller` row**, not a separate applications table — approving is a status change instead of a copy
 between two tables that can quietly disagree about who is certified.
 
-| `taller.estado` | Meaning |
-| --- | --- |
-| `solicitado` | Applied from `/talleres`, waiting for a person |
-| `aprobado` | Certified. **The only estado that may receive a vehicle** |
-| `rechazado` | Turned down. `revisionMotivo` is mandatory |
+| `taller.estado` | Meaning                                                   |
+| --------------- | --------------------------------------------------------- |
+| `solicitado`    | Applied from `/talleres`, waiting for a person            |
+| `aprobado`      | Certified. **The only estado that may receive a vehicle** |
+| `rechazado`     | Turned down. `revisionMotivo` is mandatory                |
 
 - `taller:review` (Admin, Gerente) — read the application queue and decide. Deliberately **not**
   `taller:read`: an Operador picks a shop to send a truck to, but who gets certified is a commercial
@@ -456,12 +500,12 @@ nothing.
 `NOTIFICACION_EVENTOS` in [src/lib/notificaciones.ts](src/lib/notificaciones.ts) is the catalogue,
 same shape as `audit-actions.ts`. Adding an event means adding its key there in the same change.
 
-| | |
-| --- | --- |
+|                         |                                                                          |
+| ----------------------- | ------------------------------------------------------------------------ |
 | `audiencia: "empleado"` | Staff inbox. May say anything, including which partner shop has the unit |
-| `audiencia: "cliente"` | The customer. **Never names a partner taller** |
-| `alcance: "difusion"` | Everyone holding `permiso` |
-| `alcance: "directo"` | One named recipient, decided at the emit site |
+| `audiencia: "cliente"`  | The customer. **Never names a partner taller**                           |
+| `alcance: "difusion"`   | Everyone holding `permiso`                                               |
+| `alcance: "directo"`    | One named recipient, decided at the emit site                            |
 
 **A broadcast's audience is a permission, never a role list**, so the audience of a notification can
 never be wider than the audience of the screen it links to. `check-roles.ts` asserts every
@@ -489,7 +533,7 @@ It is called from inside business operations — receiving a vehicle, registerin
 slow push service must not fail the request that took the money. Everything is caught and logged.
 
 It runs **after** the transaction commits, deliberately: a notification about a change that rolled
-back is a lie. This is the opposite of `recordAudit`, which must commit *with* its write (Rule 3) —
+back is a lie. This is the opposite of `recordAudit`, which must commit _with_ its write (Rule 3) —
 the audit row is part of the invariant, the notification is not.
 
 `avisarClienteDeNota` is the **single door for customer-facing notifications**: it pins the deep
@@ -563,7 +607,7 @@ there from an installed PWA, 16.4+) · the person said no · push not configured
 
 The bell and its drawer are **server-rendered**: the badge count comes from the layout load, the
 list is HTML, "marcar todo como leído" is a real `<form method="POST">`. The whole notification
-centre works with JavaScript off; only *turning push on* needs it, because the Push API is
+centre works with JavaScript off; only _turning push on_ needs it, because the Push API is
 JavaScript. The count refreshes on ordinary navigation — no polling, no SSE, and the shop's phones
 spend no battery on a heartbeat.
 
@@ -578,6 +622,223 @@ new hire needs no backfill and a new event key needs no migration — the defaul
 The preferences form walks the **catalogue**, not the submitted keys: an unchecked checkbox posts
 nothing, so reading only what arrived would make "turn everything off" indistinguishable from an
 empty submit.
+
+#### Un aviso SIEMPRE le llega a alguien
+
+A staff notification that resolves to nobody is worse than no notification: the shop believes it
+was told. Three ways that happens, all real:
+
+1. nobody holds the permission — a role list narrowed, an account suspended;
+2. the only person who did is the one who caused it (`excepto`);
+3. everybody who did has switched that event off.
+
+In all three, `notificar` falls back to the **Admins, ignoring their opt-out for the fallback**.
+Somebody being able to silence the whole shop by unchecking a box is exactly the failure this
+prevents. If there is not even one live Admin it logs loudly rather than dropping the message.
+
+Push is _not_ forced along with it: the fallback guarantees the message is READABLE in the inbox,
+it does not override somebody's choice about being buzzed on their phone at 9pm.
+
+**Customer notifications have no fallback.** There is nobody else it could correctly go to, and
+misdirecting it would be worse than dropping it.
+
+### Catálogo de productos y claves SAT
+
+`producto` is what the shop sells: parts, labour, consumables, sublet work. Same vocabulary as
+`cotizacion_concepto.tipo`.
+
+**SAT keys are carried from day one even though nothing is stamped yet.** Adding them later means
+going back over every line ever quoted to guess which `ClaveProdServ` it should have had, and
+nobody remembers. They cost nothing now and cannot be backfilled honestly.
+
+- `claveProdServ` is 8 digits, enforced by `producto_clave_prodserv_check`. **Claves, never
+  labels** — the same rule as `cliente.regimenFiscal`, and the same mistake that produced the
+  original `value too long for the column's type` bug.
+- [src/lib/sat-catalogos.ts](src/lib/sat-catalogos.ts) ships a **curated slice**, not the full
+  52,000-entry catalogue, and the field accepts any well-formed clave besides. The picker is a
+  shortcut, not a whitelist.
+- `controlaInventario` separates a part from an hour of labour: you cannot run out of labour, so it
+  has no stock, no layers and no movements. `producto_inventario_fisico_check` enforces it.
+- `producto:read` (Admin, Gerente, Operador) · `producto:manage` (Admin, Gerente). The counter
+  quotes from the catalogue but does not set prices — the same split as `cliente:credito`.
+
+### Inventario FIFO
+
+**Stock is layers, not an average.** Ten filters bought at $80 and ten more at $95 are not twenty
+at $87.50: the next one out costs $80 until the first ten are gone, and a margin computed any other
+way is fiction the moment prices move.
+
+- Every receipt opens an `inventario_capa`: a quantity at a cost, consumed oldest first.
+- Every issue writes **one `inventario_movimiento` per layer it touched**, each at that layer's
+  cost. A single issue of 15 units spanning three layers is three rows — which is what makes cost
+  of sale reconstructible instead of an average nobody can defend.
+- `producto.existencia` is denormalized from the open layers and written in the **same
+  transaction**, exactly like `unidad.kilometraje`. The layers and the ledger are the truth.
+- `cantidad` is always POSITIVE; `tipo` carries the direction. A signed quantity plus a type are
+  two sources of truth for one fact, and they drift.
+- **All or nothing.** A short part rolls the whole issue back rather than supplying half a job
+  without telling anybody.
+- If `existencia` says there is enough but the layers do not add up, `consumirFifo` throws a 500
+  and rolls back. That is corruption, not a business case.
+
+| Permission             | Admin | Gerente | Operador | Taller |
+| ---------------------- | :---: | :-----: | :------: | :----: |
+| `inventario:read`      |  ✅   |   ✅    |    ✅    |   —    |
+| `inventario:entrada`   |  ✅   |   ✅    |    —     |   —    |
+| `inventario:salida`    |  ✅   |   ✅    |    ✅    |   —    |
+| `inventario:ajuste`    |  ✅   |   ✅    |    —     |   —    |
+| `inventario:solicitar` |  ✅   |   ✅    |    ✅    |   ✅   |
+
+**An adjustment always says why** — `inventario_ajuste_motivo_check`. An adjustment with no reason
+is shrinkage nobody will ever explain. An increase opens a layer: stock with no cost behind it
+makes every later margin wrong. A decrease consumes layers FIFO like any other issue, then the
+movements are relabelled `ajuste` so a shrinkage never reads as a sale.
+
+#### CFDI del proveedor, opcional
+
+`inventario_entrada` optionally carries the supplier's CFDI. **The XML is stored verbatim** — the
+stamped document is what the SAT and the supplier both recognise, and re-deriving it from columns
+is impossible. `cfdiUuid` is unique, so the same invoice cannot be received into stock twice, the
+mistake that quietly doubles inventory and halves apparent cost.
+
+`leerCfdi` in [src/lib/cfdi.ts](src/lib/cfdi.ts) is a few regexes over the four attributes we use,
+not an XML parser — pure, so `check-inventario.ts` pins it. It returns null for anything that is
+not a CFDI rather than throwing: a receipt with a bad or missing XML is still a receipt. **The
+parse is a convenience, not a gate.**
+
+### Cotizaciones: dos ejes
+
+A quote has **two statuses**, and the split is the point:
+
+|                 |                                                                                     |
+| --------------- | ----------------------------------------------------------------------------------- |
+| `estado`        | what the CUSTOMER has said — borrador · enviada · autorizada · rechazada · vencida  |
+| `estadoInterno` | what the SHOP is doing — pendiente · en_proceso · completada · por_cobrar · cobrada |
+
+Squeezing both into one column means every new answer to one multiplies the states of the other,
+and "autorizada pero todavía no cobrada" — the single most common situation in the shop — cannot
+be expressed at all.
+
+- **The internal track never runs ahead of the customer.** Nothing leaves `pendiente` until they
+  authorized, enforced in `avanzarInterno` and by
+  `cotizacion_interno_requiere_autorizacion_check`.
+- **`cobrada` is arithmetic, never a button.** `sincronizarCobranza` derives it from the payments
+  on the linked invoices — the same numbers `factura.pagada` turns on — and runs **both ways**, so
+  a cancelled invoice drops it back to `por_cobrar`. `check-inventario.ts` asserts no transition
+  reaches it.
+- `por_cobrar` requires an invoice to exist: without one there is nothing to collect.
+- `cotizacion:interno` (Admin, Gerente, Operador) is separate from `cotizacion:send` — moving the
+  shop's own track is not the same as telling the customer something.
+
+**A nota can have several cotizaciones**, and always could. What is new is that each carries its
+own internal track, so "the brake job is paid and the bodywork is still being argued about" is
+expressible on one vehicle.
+
+#### El constructor, y por qué son arreglos paralelos
+
+The quote is built in a drawer on the nota, and it posts **parallel arrays** — `tipo[]`,
+`descripcion[]`, `cantidad[]`, `precioUnitario[]`, `productoId[]` — because that is what a plain
+`<form>` can send. The action zips them back into objects and calls the same `crearCotizacion` the
+API route calls, so the money rules cannot drift between the two paths.
+
+- **Every row must render all five inputs, always.** A `<select>` that disappears when the catalogue
+  is empty shifts every later row's fields by one, and the quote silently describes the wrong parts.
+- Three rows are server-rendered so the drawer works with JavaScript off; "agregar renglón" is the
+  enhancement, not the mechanism. **Blank rows are dropped, not rejected** — shipping spare rows and
+  then failing on "I only needed two" would be the form fighting the user.
+- The running total is computed in the browser with the **same** `centavos` / `totales` helpers the
+  server uses. Two implementations of IVA is how the number on screen stops matching the number
+  written.
+- **A catalogue line may leave the description blank**: `resolverProductos` fills it from the
+  product's name. Making somebody retype what the catalogue already knows is how a quote ends up
+  describing a part differently from the thing that leaves the shelf. A line with neither a
+  description nor a `productoId` is still a 400.
+
+The customer axis renders from `siguientesCliente(estado)`, so a terminal state shows no buttons
+instead of ones the server would refuse. "Enviar" is one click; rejecting opens a drawer because it
+needs its `motivo`, and authorising opens one because it has to name **who** approved.
+
+`/panel/cotizaciones` is the cross-cutting list, filterable on both axes at once — "autorizadas por
+cobrar" is a question about the shop, and asking it one note at a time is not asking it.
+
+#### Conceptos ligados al catálogo
+
+`cotizacion_concepto.productoId` is optional — a one-off line ("mandar rectificar la cabeza con el
+del torno") is a real quote line that will never be a product.
+
+**The SAT keys are COPIED onto the line**, never read through the relation. Re-classifying a
+product next year must not silently rewrite what was already quoted — the same reasoning as
+copying credit terms onto an invoice at issue.
+
+`surtirCotizacion` issues the catalogue lines FIFO. It is guarded on `cantidad - surtido` read off
+the row, so calling it twice cannot double-consume, and `surtido` is a SUM of movements rather than
+a checkbox — that is how stock and paperwork stop agreeing.
+
+### Taller Mecánico: el rol por fin tiene pantalla
+
+`taller` the **role** is a mechanic. `taller` the **entity** is a partner workshop we source jobs
+OUT to. Two different things sharing a word — and the role still administers no workshop
+(`taller:read` / `manage` / `review` are all denied to it), which `check-roles.ts` asserts.
+
+**A mechanic may now BELONG to a partner workshop** — `user.tallerId`, set from the taller screen
+through `asignarMecanicoATaller` (`taller:manage`). That is the one place the two meanings touch,
+and it grants no permission: it only widens **which notes are in scope**.
+
+- **Only a `taller` role may carry a `tallerId`.** An Operador or Gerente with one would be an
+  account holding the counter's permissions AND an outside shop's scope.
+  `user_taller_solo_rol_taller_check` refuses it in the database, whatever writes to the table.
+- `tallerId` must be declared in better-auth's `user.additionalFields`, or the column is never
+  selected and `locals.user.tallerId` is `undefined` on every request — a scope that silently
+  evaluates to "none". `input: false`, so it can never be set from a sign-up or update payload.
+- `requireUser` reads it only for a `taller` role, so a stale session cannot widen anybody's scope.
+- Accounts are still born **only** from an invitation. The crew drawer deliberately has no "create
+  the user here" shortcut: a second way to mint accounts is a second place the role decision lives.
+
+**`alcanceDeTaller(actor)` is the boundary, and it is a `where`.** One of ours sees the notes
+assigned to them; a partner shop's mechanic ALSO sees every note their workshop has held — past
+transfers included, because "what did we do to this truck last time" is what stops them redoing
+it. `misNotas`, `getNotaDeTaller` and `exigirNotaPropia` all route through it, so read scope and
+write scope cannot drift apart.
+
+**`notaParaTaller` carries no customer at all** — no name, no phone, no price — and now carries
+`motivoTaller`: what WE asked their shop to do, which is a different fact from why the vehicle came
+to Estación 360. Free-text comments are still free text; the mapper is the guarantee, not the prose
+inside it.
+
+The role holds exactly five keys, and the scope is the whole point:
+
+| Permission             | What it allows                                                          |
+| ---------------------- | ----------------------------------------------------------------------- |
+| `nota:asignadas`       | See the notes assigned to THEM. Not `nota:read` — never the whole floor |
+| `nota:diagnostico`     | Write what they found; mark their own work finished                     |
+| `nota:evidencia`       | Photograph the job                                                      |
+| `nota:comment`         | Comment, **forced internal**                                            |
+| `inventario:solicitar` | Ask for a part                                                          |
+
+- `misNotas` scopes by `mecanicoId` **in the query**, never by filtering a full list afterwards.
+  That difference has to be a different query or it is not a boundary.
+- A note that is not theirs answers **404, not 403** — probing ids must not confirm somebody else's
+  job exists.
+- **`notaParaTaller` is the mapper**, and it carries no price and no customer contact. A mechanic
+  needs the vehicle, the fault and the history; what the shop charges is not their decision. This
+  is why `producto:read` is NOT theirs: the parts picker goes through `buscarParaTaller`, a
+  different mapper with names and stock and no price at all.
+- The partner taller IS visible to a mechanic. The invisibility rule is about the customer, not
+  about staff.
+
+**`trabajoTerminadoAt` is not a nota estado.** "The work is finished" and "the car can be handed to
+the customer" are two different facts owned by two different people; collapsing them is how a
+vehicle gets promised before anybody checked it. The mechanic marks the first, the counter decides
+the second. Re-assigning a note clears it — the new mechanic has not finished anything yet.
+
+**Asking is not taking.** `solicitud_refaccion` writes no stock movement. Somebody at the counter
+fills it — which is what issues the stock, in the same transaction — or turns it down with a
+mandatory reason. The pending list is also the record of the gap between what jobs needed and what
+was on the shelf, which is the thing that tells you what to keep in stock.
+
+`/panel/taller` is their whole app, and `NAV.ocultarSi` hides it from anybody who also holds
+`nota:read` — a Gerente is not a mechanic and already has the full floor two rows down.
+
 ### Who can cancel an invitation
 
 Two permissions, deliberately:
@@ -671,24 +932,44 @@ close already exists, use it — extend it with a prop rather than forking a var
 
 Current shared components:
 
-| Component      | Use for                                                    |
-| -------------- | ---------------------------------------------------------- |
-| `Button`       | Every action. Renders `<a>` with `href`, `<button>` without |
-| `Field`        | Label + control + hint. Pass `children` for a `<select>`     |
-| `DataTable`    | Any table. Owns the scroll container and header row          |
-| `Badge`        | Status pills                                                 |
-| `PageHeader`   | Section title + description + action buttons                 |
-| `EmptyState`   | "Nothing here yet" panels                                    |
-| `Drawer`       | Anything that would otherwise have been a modal              |
-| `Icon`         | Icon lookup by serializable key, for nav data                |
-| `SatSelect`    | SAT catalog picker, filtered by customer type                |
-| `StatCard`     | Dashboard counter. Renders a link when given `href`          |
-| `Calendar`     | Agenda grid. Week and day share one component via `vista`    |
-| `EntitySearch` | Debounced type-to-search picker. Falls back to a `<select>`  |
-| `ClienteUnidadPicker` | Pick or create cliente + unidad + entregador. Both cita drawers |
-| `NotificationBell` | Bell + unread count. The button only — the inbox is its own component |
-| `NotificationDrawer` | The in-app inbox. Mounted once by the panel layout |
-| `PushToggle` | Turn browser notifications on for this device. Staff and customer |
+| Component             | Use for                                                               |
+| --------------------- | --------------------------------------------------------------------- |
+| `Button`              | Every action. Renders `<a>` with `href`, `<button>` without           |
+| `Field`               | Label + control + hint. Pass `children` for a `<select>`              |
+| `DataTable`           | Any table. Owns the scroll container and header row                   |
+| `Badge`               | Status pills                                                          |
+| `PageHeader`          | Section title + description + action buttons                          |
+| `EmptyState`          | "Nothing here yet" panels                                             |
+| `Drawer`              | Anything that would otherwise have been a modal                       |
+| `Icon`                | Icon lookup by serializable key, for nav data                         |
+| `SatSelect`           | SAT catalog picker, filtered by customer type                         |
+| `StatCard`            | Dashboard counter. Renders a link when given `href`                   |
+| `Calendar`            | Agenda grid. Week and day share one component via `vista`             |
+| `EntitySearch`        | Debounced type-to-search picker. Falls back to a `<select>`           |
+| `ClienteUnidadPicker` | Pick or create cliente + unidad + entregador. Both cita drawers       |
+| `NotificationBell`    | Bell + unread count. The button only — the inbox is its own component |
+| `NotificationDrawer`  | The in-app inbox. Mounted once by the panel layout                    |
+| `PushToggle`          | Turn browser notifications on for this device. Staff and customer     |
+| `Flash`               | What just happened. Success from `?ok=`, failure from `form.message`  |
+| `CombustibleGauge`    | The fuel gauge as a slider in eighths, not a dropdown of fractions    |
+
+### Feedback: `?ok=` en la URL, no un store
+
+Every panel action ends in `redirect(303, …)` — that is what stops a refresh from repeating a write
+— and a redirect throws away anything the action wanted to say. So the result travels in the URL
+(`conFlash(ruta, "nota.inspeccionar")` → `?ok=nota.inspeccionar`) and `Flash.svelte` reads it back
+against the registry in [src/lib/flash.ts](src/lib/flash.ts).
+
+The URL and not a store: it survives the redirect, works with JavaScript off, reloads, and is the
+same place drawers and filters already live. A store would need JS and would be empty on exactly
+the page load that is supposed to report the result.
+
+An **unregistered key still renders "Listo."** rather than nothing. A message somebody forgot to
+add is a smaller failure than silence — "nothing happened" is what the user must never be left
+thinking, and it is what the panel used to say after half its actions.
+
+New self-checks: `npm test` also runs `check-push.ts` (RFC 8291/8292 vectors) and
+`check-inventario.ts` (quantities, the two-axis quote machine, SAT key formats, CFDI parsing).
 
 Rules of thumb:
 
@@ -713,8 +994,7 @@ assembled from parts.
 Import per icon, never the barrel — the barrel drags thousands of components through Vite:
 
 ```svelte
-import UserPlus from '@lucide/svelte/icons/user-plus';   // yes
-import { UserPlus } from '@lucide/svelte';               // no
+import UserPlus from '@lucide/svelte/icons/user-plus'; // yes import {UserPlus} from '@lucide/svelte'; // no
 ```
 
 Icon names are kebab-case in the path, PascalCase as the component. Always pass
@@ -856,5 +1136,5 @@ npm run vapid                                # generate a Web Push keypair (once
 - Server-only code lives in `src/lib/server/` so SvelteKit refuses to bundle it clientward.
 - `src/lib/server/bootstrap.ts` uses relative imports only — `prisma/seed.ts` runs it under
   tsx, where `$lib` and `$env` do not resolve.
-- Comments explain *why*, not *what*. Mark deliberate shortcuts with a `ponytail:` comment
+- Comments explain _why_, not _what_. Mark deliberate shortcuts with a `ponytail:` comment
   naming the ceiling and the upgrade path.

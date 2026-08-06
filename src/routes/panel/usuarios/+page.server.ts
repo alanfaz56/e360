@@ -9,13 +9,7 @@ import {
 	publicInvitation,
 	revokeInvitation,
 } from "$lib/server/invitations";
-import {
-	UserError,
-	changeUserRole,
-	listRoleChanges,
-	listUsers,
-	setUserLockout,
-} from "$lib/server/users";
+import { UserError, changeUserRole, listRoleChanges, listUsers, setUserLockout } from "$lib/server/users";
 
 export const load: ServerLoad = async ({ locals }) => {
 	const actor = requirePermission(locals, "user:list");

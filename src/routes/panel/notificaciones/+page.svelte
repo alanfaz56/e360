@@ -7,6 +7,7 @@
 	import Icon from "$lib/components/Icon.svelte";
 	import PageHeader from "$lib/components/PageHeader.svelte";
 	import PushToggle from "$lib/components/PushToggle.svelte";
+	import Flash from "$lib/components/Flash.svelte";
 	import { eventoIcon, haceCuanto } from "$lib/notificaciones";
 	import { searchHref } from "$lib/url";
 	import { page } from "$app/state";
@@ -16,12 +17,24 @@
 
 <svelte:head><title>Avisos — Estación 360</title></svelte:head>
 
-<PageHeader title="Avisos" description="Qué te avisamos, cómo te llega y en qué dispositivos.">
+<PageHeader
+	title="Avisos"
+	description="Qué te avisamos, cómo te llega y en qué dispositivos."
+>
 	{#snippet actions()}
 		{#if data.noLeidas > 0}
-			<form method="POST" action="?/leerTodas">
-				<Button variant="outline" size="sm">
-					<CheckCheck size={16} aria-hidden="true" />
+			<form
+				method="POST"
+				action="?/leerTodas"
+			>
+				<Button
+					variant="outline"
+					size="sm"
+				>
+					<CheckCheck
+						size={16}
+						aria-hidden="true"
+					/>
 					Marcar todo como leído
 				</Button>
 			</form>
@@ -29,12 +42,13 @@
 	{/snippet}
 </PageHeader>
 
-{#if form?.message}
-	<p role="alert" class="mt-4 rounded border border-brand-300 bg-brand-50 px-3 py-2 text-sm text-brand-900">
-		{form.message}
-	</p>
-{:else if form?.guardado}
-	<p role="status" class="mt-4 rounded border border-ok bg-ok/15 px-3 py-2 text-sm text-sand-800">
+<Flash {form} />
+
+{#if form?.guardado}
+	<p
+		role="status"
+		class="mt-4 rounded border border-ok bg-ok/15 px-3 py-2 text-sm text-sand-800"
+	>
 		Preferencias guardadas.
 	</p>
 {/if}
@@ -76,7 +90,11 @@
 					>
 						<div class="flex gap-3">
 							<span class="mt-0.5 shrink-0 text-sand-500">
-								<Icon name={eventoIcon(aviso.evento)} size={18} aria-hidden="true" />
+								<Icon
+									name={eventoIcon(aviso.evento)}
+									size={18}
+									aria-hidden="true"
+								/>
 							</span>
 							<div class="min-w-0 flex-1">
 								<p class="text-sm font-medium text-sand-950">{aviso.titulo}</p>
@@ -86,12 +104,27 @@
 						</div>
 						<div class="mt-2 flex flex-wrap items-center gap-2">
 							{#if aviso.url}
-								<Button href={aviso.url} variant="ghost" size="sm">Abrir</Button>
+								<Button
+									href={aviso.url}
+									variant="ghost"
+									size="sm">Abrir</Button
+								>
 							{/if}
 							{#if !aviso.leida}
-								<form method="POST" action="?/leerUna" class="ml-auto">
-									<input type="hidden" name="id" value={aviso.id} />
-									<Button variant="ghost" size="sm">Marcar leído</Button>
+								<form
+									method="POST"
+									action="?/leerUna"
+									class="ml-auto"
+								>
+									<input
+										type="hidden"
+										name="id"
+										value={aviso.id}
+									/>
+									<Button
+										variant="ghost"
+										size="sm">Marcar leído</Button
+									>
 								</form>
 							{/if}
 						</div>
@@ -102,8 +135,10 @@
 			{#if data.totalPages > 1}
 				<div class="mt-4 flex items-center gap-2">
 					{#if data.page > 1}
-						<Button href={searchHref(page.url, { page: String(data.page - 1) })} variant="outline" size="sm"
-							>Anterior</Button
+						<Button
+							href={searchHref(page.url, { page: String(data.page - 1) })}
+							variant="outline"
+							size="sm">Anterior</Button
 						>
 					{/if}
 					<span class="text-xs text-sand-500">Página {data.page} de {data.totalPages}</span>
@@ -122,12 +157,15 @@
 	<aside class="space-y-6">
 		<section class="rounded-lg border border-sand-200 bg-white p-4">
 			<h2 class="font-display flex items-center gap-2 text-lg text-sand-950">
-				<Smartphone size={18} aria-hidden="true" />
+				<Smartphone
+					size={18}
+					aria-hidden="true"
+				/>
 				Este dispositivo
 			</h2>
 			<p class="mb-3 mt-1 text-xs leading-relaxed text-sand-600">
-				Con los avisos activados te llegan aunque no tengas la página abierta. Puedes activarlos en
-				varios teléfonos y computadoras.
+				Con los avisos activados te llegan aunque no tengas la página abierta. Puedes activarlos en varios
+				teléfonos y computadoras.
 			</p>
 			<PushToggle clavePublica={data.clavePublica} />
 
@@ -142,13 +180,23 @@
 									{#if d.fallos > 0}· {d.fallos} fallo(s){/if}
 								</span>
 							</span>
-							<form method="POST" action="?/quitarDispositivo">
-								<input type="hidden" name="id" value={d.id} />
+							<form
+								method="POST"
+								action="?/quitarDispositivo"
+							>
+								<input
+									type="hidden"
+									name="id"
+									value={d.id}
+								/>
 								<button
 									aria-label="Quitar {d.etiqueta}"
 									class="rounded-md p-2 text-sand-500 hover:bg-sand-100 hover:text-danger"
 								>
-									<Trash2 size={16} aria-hidden="true" />
+									<Trash2
+										size={16}
+										aria-hidden="true"
+									/>
 								</button>
 							</form>
 						</li>
@@ -164,7 +212,11 @@
 				<strong>Push</strong> es el aviso del navegador.
 			</p>
 
-			<form method="POST" action="?/preferencias" class="space-y-3">
+			<form
+				method="POST"
+				action="?/preferencias"
+				class="space-y-3"
+			>
 				{#each data.preferencias as p (p.evento)}
 					<div class="border-b border-sand-100 pb-3 last:border-0 last:pb-0">
 						<p class="text-sm font-medium text-sand-900">{p.label}</p>
@@ -181,7 +233,12 @@
 								En la app
 							</label>
 							<label class="flex cursor-pointer items-center gap-2 py-1.5 text-xs text-sand-700">
-								<input type="checkbox" name="push:{p.evento}" checked={p.push} class="size-4 accent-brand-600" />
+								<input
+									type="checkbox"
+									name="push:{p.evento}"
+									checked={p.push}
+									class="size-4 accent-brand-600"
+								/>
 								Push
 							</label>
 						</div>

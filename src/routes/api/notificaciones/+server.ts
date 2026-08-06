@@ -1,11 +1,7 @@
 import { error, json, type RequestHandler } from "@sveltejs/kit";
 import { ClienteError } from "$lib/server/clientes";
 import { requireUser } from "$lib/server/guard";
-import {
-	enviarAviso,
-	listarNotificaciones,
-	parseNotificacionQuery,
-} from "$lib/server/notificaciones";
+import { enviarAviso, listarNotificaciones, parseNotificacionQuery } from "$lib/server/notificaciones";
 
 /**
  * GET /api/notificaciones — YOUR inbox. Params: noLeidas=1, page, perPage.

@@ -9,9 +9,7 @@ export const GET: RequestHandler = async ({ locals, url }) => {
 
 	const onlyPending = url.searchParams.get("estado") === "pendiente";
 	const invitations = await prisma.invitation.findMany({
-		where: onlyPending
-			? { acceptedAt: null, revokedAt: null, expiresAt: { gt: new Date() } }
-			: undefined,
+		where: onlyPending ? { acceptedAt: null, revokedAt: null, expiresAt: { gt: new Date() } } : undefined,
 		orderBy: { createdAt: "desc" },
 		take: 200,
 	});
@@ -32,7 +30,11 @@ export const POST: RequestHandler = async ({ locals, request, url }) => {
 	const body = await request.json().catch(() => null);
 
 	try {
-		const { invitation, url: link, delivery } = await issueInvitation({
+		const {
+			invitation,
+			url: link,
+			delivery,
+		} = await issueInvitation({
 			actor,
 			email: body?.email,
 			role: body?.role,

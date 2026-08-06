@@ -27,11 +27,20 @@
 
 <svelte:head><title>Unidades — Estación 360</title></svelte:head>
 
-<PageHeader title="Unidades" description="Todos los vehículos registrados en el taller." />
+<PageHeader
+	title="Unidades"
+	description="Todos los vehículos registrados en el taller."
+/>
 
-<form method="GET" class="mt-6 rounded-lg border border-sand-200 bg-white p-4">
+<form
+	method="GET"
+	class="mt-6 rounded-lg border border-sand-200 bg-white p-4"
+>
 	<div class="grid gap-3 sm:grid-cols-2">
-		<Field label="Buscar" name="q">
+		<Field
+			label="Buscar"
+			name="q"
+		>
 			{#snippet children(id)}
 				<input
 					{id}
@@ -55,11 +64,17 @@
 	</div>
 	<div class="mt-4 flex items-center gap-3">
 		<Button size="sm">
-			<Search size={16} aria-hidden="true" />
+			<Search
+				size={16}
+				aria-hidden="true"
+			/>
 			Buscar
 		</Button>
 		{#if hasFilters}
-			<a href="/panel/unidades" class="text-sm font-medium text-sand-600 underline hover:text-brand-700">
+			<a
+				href="/panel/unidades"
+				class="text-sm font-medium text-sand-600 underline hover:text-brand-700"
+			>
 				Limpiar
 			</a>
 		{/if}
@@ -77,15 +92,22 @@
 				? "Ninguna unidad coincide con esa búsqueda."
 				: "Las unidades se registran desde la ficha de cada cliente."}
 		>
-			{#snippet icon()}<Car size={32} aria-hidden="true" />{/snippet}
+			{#snippet icon()}<Car
+					size={32}
+					aria-hidden="true"
+				/>{/snippet}
 		</EmptyState>
 	</div>
 {:else}
 	<div class="mt-6">
-		<DataTable columns={["Unidad", "Placas", "VIN", "Económico", "Cliente", ""]} items={data.unidades}>
+		<DataTable
+			columns={["Unidad", "Placas", "VIN", "Económico", "Cliente", ""]}
+			items={data.unidades}
+		>
 			{#snippet row(unidad)}
 				<td class="px-4 py-2.5 font-medium text-sand-950">
-					{unidad.marca} {unidad.modelo}{unidad.anio ? ` ${unidad.anio}` : ""}
+					{unidad.marca}
+					{unidad.modelo}{unidad.anio ? ` ${unidad.anio}` : ""}
 					{#if unidad.archivado}
 						<span class="ml-2"><Badge tone="neutral">archivada</Badge></span>
 					{/if}
@@ -94,30 +116,54 @@
 				<td class="px-4 py-2.5 font-mono text-xs text-sand-600">{unidad.vin ?? "—"}</td>
 				<td class="px-4 py-2.5 text-sand-600">{unidad.numeroEconomico ?? "—"}</td>
 				<td class="px-4 py-2.5">
-					<a class="text-brand-700 hover:underline" href="/panel/clientes/{unidad.clienteId}">
+					<a
+						class="text-brand-700 hover:underline"
+						href="/panel/clientes/{unidad.clienteId}"
+					>
 						{unidad.clienteNombre}
 					</a>
 				</td>
 				<td class="px-4 py-2.5 text-right">
-					<Button href="/panel/unidades/{unidad.id}" variant="ghost" size="sm">Ver</Button>
+					<Button
+						href="/panel/unidades/{unidad.id}"
+						variant="ghost"
+						size="sm">Ver</Button
+					>
 				</td>
 			{/snippet}
 		</DataTable>
 	</div>
 
 	{#if data.totalPages > 1}
-		<nav class="mt-4 flex items-center justify-between" aria-label="Paginación">
+		<nav
+			class="mt-4 flex items-center justify-between"
+			aria-label="Paginación"
+		>
 			{#if data.page > 1}
-				<Button href={searchHref(page.url, { page: String(data.page - 1) })} variant="ghost" size="sm">
-					<ChevronLeft size={16} aria-hidden="true" />
+				<Button
+					href={searchHref(page.url, { page: String(data.page - 1) })}
+					variant="ghost"
+					size="sm"
+				>
+					<ChevronLeft
+						size={16}
+						aria-hidden="true"
+					/>
 					Anterior
 				</Button>
 			{:else}<span></span>{/if}
 			<span class="text-sm text-sand-600">Página {data.page} de {data.totalPages}</span>
 			{#if data.page < data.totalPages}
-				<Button href={searchHref(page.url, { page: String(data.page + 1) })} variant="ghost" size="sm">
+				<Button
+					href={searchHref(page.url, { page: String(data.page + 1) })}
+					variant="ghost"
+					size="sm"
+				>
 					Siguiente
-					<ChevronRight size={16} aria-hidden="true" />
+					<ChevronRight
+						size={16}
+						aria-hidden="true"
+					/>
 				</Button>
 			{:else}<span></span>{/if}
 		</nav>

@@ -1,13 +1,17 @@
 import { fail, redirect, type Actions, type ServerLoad } from "@sveltejs/kit";
+import { conFlash } from "$lib/flash";
 import { can } from "$lib/roles";
 import { ClienteError } from "$lib/server/clientes";
 import { requirePermission, requireUser } from "$lib/server/guard";
 import {
 	archivarSucursal,
+	asignarMecanicoATaller,
 	createSucursal,
 	createTaller,
 	getTallerDetalle,
 	listTalleres,
+	mecanicosDeTaller,
+	mecanicosSinTaller,
 	parseTallerQuery,
 	revisarTaller,
 	setTallerArchivado,
@@ -25,9 +29,17 @@ export const load: ServerLoad = async ({ locals, url }) => {
 	const abierto = url.searchParams.get("taller");
 	const detalle = abierto ? await getTallerDetalle(abierto).catch(() => null) : null;
 
+	// The crew drawer, same lazy rule as the branch one: only fetched when it is open.
+	const verCrew = abierto !== null && url.searchParams.get("drawer") === "mecanicos";
+	const [mecanicos, disponibles] = verCrew
+		? await Promise.all([mecanicosDeTaller(abierto), can(actor.role, "taller:manage") ? mecanicosSinTaller() : []])
+		: [[], []];
+
 	return {
 		...(await listTalleres(query, actor)),
 		detalle,
+		mecanicos,
+		disponibles,
 		filtros: { q: query.q ?? "", archivados: query.archivados ?? false, estado: query.estado ?? "" },
 		puede: {
 			gestionar: can(actor.role, "taller:manage"),
@@ -104,7 +116,7 @@ export const actions: Actions = {
 		const tallerId = String(data.get("tallerId"));
 		try {
 			await createSucursal({ actor, tallerId, body });
-			redirect(303, `/panel/talleres?taller=${tallerId}&drawer=sucursales`);
+			redirect(303, conFlash(`/panel/talleres?taller=${tallerId}&drawer=sucursales`, "taller.sucursal"));
 		} catch (err) {
 			return problema(err);
 		}
@@ -116,7 +128,10 @@ export const actions: Actions = {
 		const body = Object.fromEntries(data) as Record<string, unknown>;
 		try {
 			await updateSucursal({ actor, id: String(data.get("id")), body });
-			redirect(303, `/panel/talleres?taller=${String(data.get("tallerId"))}&drawer=sucursales`);
+			redirect(
+				303,
+				conFlash(`/panel/talleres?taller=${String(data.get("tallerId"))}&drawer=sucursales`, "taller.sucursal"),
+			);
 		} catch (err) {
 			return problema(err);
 		}
@@ -131,7 +146,33 @@ export const actions: Actions = {
 				id: String(data.get("id")),
 				archivado: data.get("archivado") === "1",
 			});
-			redirect(303, `/panel/talleres?taller=${String(data.get("tallerId"))}&drawer=sucursales`);
+			redirect(
+				303,
+				conFlash(`/panel/talleres?taller=${String(data.get("tallerId"))}&drawer=sucursales`, "taller.sucursal"),
+			);
+		} catch (err) {
+			return problema(err);
+		}
+	},
+
+	/**
+	 * Put one of the shop's own people on its crew, or take them off (`quitar=1`).
+	 *
+	 * Same shared function the API route calls. Only a Taller Mecánico may belong to a workshop —
+	 * checked there and again by a CHECK constraint, because this is what decides how much of a
+	 * job somebody outside the company can open.
+	 */
+	mecanico: async ({ locals, request }) => {
+		const actor = requireUser(locals);
+		const data = await request.formData();
+		const tallerId = String(data.get("tallerId"));
+		try {
+			await asignarMecanicoATaller({
+				actor,
+				userId: data.get("userId"),
+				tallerId: data.get("quitar") === "1" ? null : tallerId,
+			});
+			redirect(303, conFlash(`/panel/talleres?taller=${tallerId}&drawer=mecanicos`, "taller.mecanico"));
 		} catch (err) {
 			return problema(err);
 		}

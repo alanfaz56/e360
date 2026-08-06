@@ -34,7 +34,7 @@ export type EventoDef = {
 	alcance: Alcance;
 	/** Required for `difusion`; the fan-out is `everyone who can(role, permiso)`. */
 	permiso?: Permission;
-	icon: "calendar-days" | "car" | "clipboard-list" | "wrench" | "contact" | "list" | "scroll-text";
+	icon: "calendar-days" | "car" | "clipboard-list" | "wrench" | "contact" | "list" | "scroll-text" | "package";
 	/**
 	 * Keeps the OS notification on screen until it is dismissed, instead of auto-hiding.
 	 * Reserved for things that cost money or block a vehicle if they are missed.
@@ -111,6 +111,47 @@ export const NOTIFICACION_EVENTOS = {
 		alcance: "difusion",
 		permiso: "taller:review",
 		icon: "wrench",
+	},
+	refaccion_solicitada: {
+		label: "Un mecánico pide una refacción",
+		descripcion: "Hay que surtirla del inventario o decirle que no hay.",
+		audiencia: "empleado",
+		alcance: "difusion",
+		permiso: "inventario:salida",
+		icon: "package",
+		prioritario: true,
+	},
+	refaccion_resuelta: {
+		label: "Respondieron mi solicitud de refacción",
+		descripcion: "Ya está lista para recoger, o no hay.",
+		audiencia: "empleado",
+		alcance: "directo",
+		icon: "package",
+	},
+	nota_asignada: {
+		label: "Me asignaron una unidad",
+		descripcion: "Una nota de servicio quedó a tu nombre.",
+		audiencia: "empleado",
+		alcance: "directo",
+		icon: "clipboard-list",
+		prioritario: true,
+	},
+	trabajo_terminado: {
+		label: "Un mecánico terminó su trabajo",
+		descripcion: "La unidad ya se puede revisar y entregar.",
+		audiencia: "empleado",
+		alcance: "difusion",
+		permiso: "nota:advance",
+		icon: "clipboard-list",
+		prioritario: true,
+	},
+	stock_bajo: {
+		label: "Se acabó una refacción",
+		descripcion: "Una pieza llegó a cero o bajó de su mínimo.",
+		audiencia: "empleado",
+		alcance: "difusion",
+		permiso: "inventario:entrada",
+		icon: "package",
 	},
 	aviso_manual: {
 		label: "Aviso del equipo",
@@ -200,8 +241,7 @@ export type NotificacionEvento = keyof typeof NOTIFICACION_EVENTOS;
 
 export const NOTIFICACION_EVENTO_KEYS = Object.keys(NOTIFICACION_EVENTOS) as NotificacionEvento[];
 
-export const isEvento = (v: unknown): v is NotificacionEvento =>
-	typeof v === "string" && v in NOTIFICACION_EVENTOS;
+export const isEvento = (v: unknown): v is NotificacionEvento => typeof v === "string" && v in NOTIFICACION_EVENTOS;
 
 /** Events a person can switch on and off. Customer events are not in the preferences screen. */
 export const EVENTOS_EMPLEADO = NOTIFICACION_EVENTO_KEYS.filter(

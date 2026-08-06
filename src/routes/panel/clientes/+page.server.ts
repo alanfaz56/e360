@@ -1,4 +1,5 @@
 import { fail, redirect, type Actions, type ServerLoad } from "@sveltejs/kit";
+import { conFlash } from "$lib/flash";
 import { can } from "$lib/roles";
 import { requirePermission, requireUser } from "$lib/server/guard";
 import {
@@ -31,7 +32,7 @@ export const actions: Actions = {
 
 		try {
 			const cliente = await createCliente({ actor, body });
-			redirect(303, `/panel/clientes/${cliente.id}`);
+			redirect(303, conFlash(`/panel/clientes/${cliente.id}`, "cliente.crear"));
 		} catch (err) {
 			if (err instanceof ClienteError) return fail(err.status, { message: err.message });
 			throw err;

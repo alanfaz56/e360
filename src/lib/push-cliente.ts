@@ -44,9 +44,7 @@ export function requiereInstalacionEnIOS(): boolean {
 
 /** base64url VAPID key → the Uint8Array `pushManager.subscribe` wants. */
 function claveABytes(base64url: string): Uint8Array<ArrayBuffer> {
-	const base64 = (base64url + "=".repeat((4 - (base64url.length % 4)) % 4))
-		.replace(/-/g, "+")
-		.replace(/_/g, "/");
+	const base64 = (base64url + "=".repeat((4 - (base64url.length % 4)) % 4)).replace(/-/g, "+").replace(/_/g, "/");
 	const bin = atob(base64);
 	// Allocated over a plain ArrayBuffer on purpose: `applicationServerKey` wants a BufferSource
 	// backed by one, and `Uint8Array.from` widens to ArrayBufferLike (which includes SharedArrayBuffer).
@@ -55,26 +53,49 @@ function claveABytes(base64url: string): Uint8Array<ArrayBuffer> {
 	return bytes;
 }
 
+/** Was this subscription created with the key we are about to use? */
+function mismaClave(sub: PushSubscription, clave: Uint8Array): boolean {
+	const previa = sub.options?.applicationServerKey;
+	// Older browsers do not expose `options`. Assume it matches rather than churning a working
+	// subscription on every activation — a rotation is rare, a re-subscribe loop would not be.
+	if (!previa) return true;
+	const a = new Uint8Array(previa);
+	return a.length === clave.length && a.every((b, i) => b === clave[i]);
+}
+
 const b64 = (buf: ArrayBuffer | null): string =>
-	buf ? btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "") : "";
+	buf
+		? btoa(String.fromCharCode(...new Uint8Array(buf)))
+				.replace(/\+/g, "-")
+				.replace(/\//g, "_")
+				.replace(/=+$/, "")
+		: "";
 
 /** "Chrome en Android" — what a person will recognise in their device list. */
 export function etiquetaDelNavegador(): string {
 	const ua = navigator.userAgent;
-	const navegador =
-		/Edg\//.test(ua) ? "Edge"
-		: /OPR\//.test(ua) ? "Opera"
-		: /Chrome\//.test(ua) ? "Chrome"
-		: /Firefox\//.test(ua) ? "Firefox"
-		: /Safari\//.test(ua) ? "Safari"
-		: "Navegador";
-	const sistema =
-		/Android/.test(ua) ? "Android"
-		: /iP(hone|ad|od)/.test(ua) ? "iOS"
-		: /Windows/.test(ua) ? "Windows"
-		: /Mac OS/.test(ua) ? "Mac"
-		: /Linux/.test(ua) ? "Linux"
-		: "";
+	const navegador = /Edg\//.test(ua)
+		? "Edge"
+		: /OPR\//.test(ua)
+			? "Opera"
+			: /Chrome\//.test(ua)
+				? "Chrome"
+				: /Firefox\//.test(ua)
+					? "Firefox"
+					: /Safari\//.test(ua)
+						? "Safari"
+						: "Navegador";
+	const sistema = /Android/.test(ua)
+		? "Android"
+		: /iP(hone|ad|od)/.test(ua)
+			? "iOS"
+			: /Windows/.test(ua)
+				? "Windows"
+				: /Mac OS/.test(ua)
+					? "Mac"
+					: /Linux/.test(ua)
+						? "Linux"
+						: "";
 	return sistema ? `${navegador} en ${sistema}` : navegador;
 }
 
@@ -134,14 +155,23 @@ export async function activar(clavePublica: string, urlAlta = "/api/push"): Prom
 
 	try {
 		const reg = await registrar();
-		// An existing subscription made with a DIFFERENT key cannot be reused — rotating VAPID keys
-		// invalidates every old one, and re-subscribing over it is the only way back.
-		const previa = await reg.pushManager.getSubscription();
+		const clave = claveABytes(clavePublica);
+
+		// An existing subscription made with a DIFFERENT key cannot be reused: rotating the VAPID
+		// pair invalidates every old one, and `subscribe` throws InvalidStateError rather than
+		// replacing it. Reusing it blindly is worse than the throw — the device would look
+		// subscribed and every push to it would be rejected by the push service, silently.
+		let previa = await reg.pushManager.getSubscription();
+		if (previa && !mismaClave(previa, clave)) {
+			await previa.unsubscribe().catch(() => {});
+			previa = null;
+		}
+
 		const sub =
 			previa ??
 			(await reg.pushManager.subscribe({
 				userVisibleOnly: true, // required by Chrome; silent push is not allowed
-				applicationServerKey: claveABytes(clavePublica),
+				applicationServerKey: clave,
 			}));
 
 		const res = await fetch(urlAlta, {
@@ -164,11 +194,49 @@ export async function activar(clavePublica: string, urlAlta = "/api/push"): Prom
 
 		return { estado: "activo" };
 	} catch (err) {
-		return { estado: "inactivo", mensaje: err instanceof Error ? err.message : "No se pudo activar." };
+		return { estado: "inactivo", mensaje: explicarFalla(err) };
 	}
 }
 
-/** Turn push off on this device: unsubscribe locally AND drop the row, so nothing is orphaned. */
+/**
+ * Turn the browser's own subscribe error into something a customer can act on.
+ *
+ * `pushManager.subscribe` fails with raw English strings from deep inside the browser, and the
+ * most common one — "Registration failed - push service error" — is not about this site at all:
+ * the browser could not register with ITS OWN push service (FCM for Chrome). Nothing on the server
+ * changes that, so telling somebody "no pudimos registrar el dispositivo" sends them looking in the
+ * wrong place. Chromium builds without Google's API keys, Brave with Google push messaging turned
+ * off, and networks that block `fcm.googleapis.com` all land here.
+ */
+function explicarFalla(err: unknown): string {
+	const crudo = err instanceof Error ? err.message : "";
+
+	if (/push service error|Registration failed/i.test(crudo)) {
+		return (
+			"Tu navegador no pudo conectarse con su servicio de avisos. Suele pasar en Brave o Chromium " +
+			"con los servicios de Google apagados, o en redes que los bloquean. Los avisos te siguen " +
+			"llegando al abrir esta página."
+		);
+	}
+	// A subscription made with a previous VAPID key blocks a new one with a different key.
+	if (/different applicationServerKey|already exists/i.test(crudo)) {
+		return "Este dispositivo tenía un registro viejo. Desactiva y vuelve a activar los avisos.";
+	}
+	if (/permission/i.test(crudo)) {
+		return "El navegador no dio permiso para mostrar avisos.";
+	}
+	return crudo || "No se pudo activar.";
+}
+
+/**
+ * Turn push off on this device: unsubscribe locally AND drop the row, so nothing is orphaned.
+ *
+ * Nothing in the UI calls this — `PushToggle` only ever turns push ON, and a device is removed from
+ * the panel's device list instead. Kept because doing only half of it is the failure mode: dropping
+ * the row without unsubscribing leaves a browser subscription that reports "activo" and receives
+ * nothing, and unsubscribing without dropping the row leaves us pushing at a dead endpoint until
+ * the service answers 410.
+ */
 export async function desactivar(urlBaja = "/api/push"): Promise<Resultado> {
 	if (!soportaPush()) return { estado: "no-soportado" };
 
@@ -177,9 +245,7 @@ export async function desactivar(urlBaja = "/api/push"): Promise<Resultado> {
 	if (!sub) return { estado: "inactivo" };
 
 	const sep = urlBaja.includes("?") ? "&" : "?";
-	await fetch(`${urlBaja}${sep}endpoint=${encodeURIComponent(sub.endpoint)}`, { method: "DELETE" }).catch(
-		() => {},
-	);
+	await fetch(`${urlBaja}${sep}endpoint=${encodeURIComponent(sub.endpoint)}`, { method: "DELETE" }).catch(() => {});
 	await sub.unsubscribe().catch(() => {});
 	return { estado: "inactivo" };
 }
