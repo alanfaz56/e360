@@ -100,3 +100,62 @@ export const franjaLabel = (v: string | null) =>
 
 /** Default duration of an appointment when nobody says otherwise. */
 export const DURACION_MINUTOS = 60;
+
+/**
+ * Why an appointment counts as overdue. Two different failures, and they cost different things:
+ *
+ * - `sin_atender` — somebody asked for a date, that date came and went, and nobody ever confirmed
+ *   it. This is a customer who raised their hand and got silence: the most expensive kind of
+ *   miss, because the sale was already half made.
+ * - `sin_procesar` — a confirmed slot whose hour passed with the appointment still sitting in
+ *   `confirmada`. Either the vehicle never showed and nobody recorded it, or it did and nobody
+ *   moved the appointment along. Both need a phone call.
+ *
+ * Neither is a state the appointment is IN — they are derived from the clock, so an appointment
+ * stops being overdue the moment somebody acts on it. Nothing to migrate, nothing to sweep.
+ */
+export const MOTIVOS_VENCIDA = {
+	sin_atender: {
+		label: "Solicitud sin atender",
+		descripcion: "Pasó el día que pidió el cliente y nunca se confirmó",
+		tone: "danger",
+	},
+	sin_procesar: {
+		label: "Cita sin procesar",
+		descripcion: "Pasó su hora y sigue en confirmada: nadie la recibió ni la cerró",
+		tone: "warn",
+	},
+} as const satisfies Record<string, { label: string; descripcion: string; tone: Tone }>;
+
+export type MotivoVencida = keyof typeof MOTIVOS_VENCIDA;
+export const MOTIVO_VENCIDA_KEYS = Object.keys(MOTIVOS_VENCIDA) as MotivoVencida[];
+export const motivoVencidaLabel = (v: string) =>
+	v in MOTIVOS_VENCIDA ? MOTIVOS_VENCIDA[v as MotivoVencida].label : v;
+
+/**
+ * Grace after the slot ends before a confirmed appointment reads as unprocessed. A car running
+ * twenty minutes late is not a failure; still open two hours later is.
+ */
+export const GRACIA_MINUTOS = 120;
+
+/**
+ * Which overdue bucket an appointment falls in, if any.
+ *
+ * Pure and clock-driven on purpose: nothing is stored, so there is no sweeper job to run and no
+ * stale flag to clean up — the moment somebody acts on the appointment it stops being overdue.
+ * `hoyEnZona` is passed in rather than computed here so this stays free of the timezone module
+ * and trivially testable.
+ */
+export function motivoVencida(
+	c: { estado: string; fecha: string; inicio: string | null },
+	ahora: Date,
+	hoyEnZona: string,
+): MotivoVencida | null {
+	if (c.estado === "solicitada") return c.fecha < hoyEnZona ? "sin_atender" : null;
+	if (c.estado === "confirmada" && c.inicio) {
+		return new Date(c.inicio).getTime() < ahora.getTime() - GRACIA_MINUTOS * 60_000
+			? "sin_procesar"
+			: null;
+	}
+	return null;
+}

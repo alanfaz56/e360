@@ -9,6 +9,8 @@
 	import Car from "@lucide/svelte/icons/car";
 	import CalendarDays from "@lucide/svelte/icons/calendar-days";
 	import List from "@lucide/svelte/icons/list";
+	import ClipboardList from "@lucide/svelte/icons/clipboard-list";
+	import Wrench from "@lucide/svelte/icons/wrench";
 	import type { NavItem } from "$lib/nav";
 
 	const ICONS = {
@@ -18,6 +20,8 @@
 		"scroll-text": ScrollText,
 		"calendar-days": CalendarDays,
 		list: List,
+		"clipboard-list": ClipboardList,
+		wrench: Wrench,
 	};
 
 	let { name, ...rest }: { name: NavItem["icon"]; [key: string]: unknown } = $props();

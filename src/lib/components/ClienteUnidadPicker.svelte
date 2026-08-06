@@ -342,7 +342,7 @@
 
 	{#if mostrarCrearUnidad}
 		<div class="mt-3 space-y-3">
-			<div class="grid grid-cols-2 gap-3">
+			<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
 				<Field label="Marca" name="marca" required={hydrated && creandoUnidad} value={prefill.marca ?? ""} />
 				<Field label="Modelo" name="modelo" required={hydrated && creandoUnidad} value={prefill.modelo ?? ""} />
 				<Field label="Placas" name="placas" value={prefill.placas ?? ""} />

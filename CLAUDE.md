@@ -283,6 +283,301 @@ scheduled.
 is not nullish — so `v("tipo") ?? DEFAULT` silently never applies the default and leaves the form
 with nothing selected. Use `||` for these. This shipped as a real bug on the public form.
 
+### Notas de servicio
+
+A `cita` is a promise; a **nota de servicio** is the vehicle physically being here. It opens from
+an appointment on arrival ("Recibir unidad") or standalone for a walk-in, and it is the spine
+everything else hangs off: inspection, evidence, comments, transfers, quotes, invoices, payments.
+
+| Permission | Admin | Gerente | Operador | Taller |
+| --- | :-: | :-: | :-: | :-: |
+| `nota:read` · `create` · `inspect` · `advance` · `transfer` · `comment` | ✅ | ✅ | ✅ | — |
+| `nota:close` · `nota:cancel` | ✅ | ✅ | — | — |
+| `taller:read` | ✅ | ✅ | ✅ | — |
+| `taller:manage` | ✅ | ✅ | — | — |
+| `taller:review` — decide who gets certified | ✅ | ✅ | — | — |
+| `notificacion:send` — mandar un aviso a mano | ✅ | ✅ | — | — |
+
+**The `taller` ROLE still holds nothing.** `taller` the *entity* is a partner workshop Estación 360
+sources jobs out to; onboarding those shops as users is its own change with its own permission
+decisions. `check-roles.ts` asserts the role stays empty so that cannot drift in quietly.
+
+`NOTA_TRANSICIONES` is the state machine as data. Three destinations are deliberately unreachable
+through `avanzarNota`, because each needs more than a status: `en_taller` (needs a shop and a
+reason), `entregada` (records who collected it) and `cancelada` (needs a reason).
+
+- **One open note per unit.** A second live note for the same truck is how work gets done twice
+  and billed twice.
+- **Delivery names a person.** The collector must be the customer themselves or one of their
+  `entregador` contacts — the same rule the cita's handover follows.
+- **Transfers are a history, not a flag.** `nota_servicio.tallerActualId` denormalizes the open
+  `nota_transferencia` row, written in one transaction, with a partial unique index guaranteeing at
+  most one open transfer per note. A vehicle is never at two shops at once.
+
+#### El taller aliado es invisible para el cliente
+
+Estación 360 sources the job out and is the one the customer holds responsible. Handing them the
+partner's name invites them to go straight there next time, cutting out the shop that found the
+work, priced it and warranties it. So:
+
+- **`notaParaCliente` is the only mapper that may build customer-facing note data.** It omits the
+  taller entirely — name, transfer history, internal comments — and uses `NOTA_ESTADO_CLIENTE`,
+  where `en_taller` reads "En proceso de reparación" like ordinary progress.
+- **A comment marked visible to the customer is customer-facing data**, so `comentarNota` refuses
+  one that names an active partner shop, matching on the full name or any distinctive word in it.
+  It catches the honest slip — pasting "ya lo mandamos a El Sahuaro" into the wrong box — not a
+  determined leak, which is a people problem.
+- Internal comments may name the taller freely: that is the shop's own record.
+
+#### QA al recibir del taller
+
+**Nothing comes back from a partner shop without somebody signing off.** `recibirDeTaller` is the
+ONLY way out of `en_taller` — `avanzarNota` refuses that estado outright — so the check cannot be
+skipped by advancing the status.
+
+| Verdict | Effect |
+| --- | --- |
+| `aprobado` / `con_detalles` | Transfer closes, note returns to `en_diagnostico` |
+| `rechazado` | Transfer stays **open**: the unit is still theirs, for rework |
+| `no_aplica` | Set only by cancellation, never offered in the UI |
+
+- A rejection **must** say why — it is what gets claimed back from the shop.
+- **You cannot hand a unit from one partner to the next** without receiving it first. That was the
+  exact gap this step closes, so `transferirNota` refuses while the note is `en_taller`.
+- `nota_transferencia_cerrada_qa_check` enforces it in the database: a closed transfer without a
+  verdict is impossible, whatever writes to the table.
+- The odometer is taken on the way back too — shops return units with more kilometres on them.
+
+### Kilometraje: every intake is a data point
+
+Recording the odometer writes `unidad.kilometraje` **and** a `unidad_kilometraje` row in the same
+transaction. The denormalized value keeps the unit list free of subqueries; the history is what
+makes "how much has this truck run between visits" and "how often does it come in" answerable —
+`origen: 'nota'` readings are exactly the shop visits.
+
+Registering a unit with an odometer also writes an `origen: 'alta'` reading. Without it the curve
+only starts at the first visit and there is nothing to measure the first interval against.
+
+**A reading below the previous one is refused** (409, naming both numbers) unless it is explicitly
+flagged a correction. A correction is stored and audited but does **not** move `unidad.kilometraje`
+backwards. A typo here silently poisons every usage figure that follows.
+
+### Evidencia: Cloudflare R2, presigned, direct
+
+Uploads are two-step: the server signs a short-lived PUT, the browser sends the file **straight to
+R2**, then the server records it. Photos never pass through the backend, because a serverless
+request body limit is a few megabytes and a phone photo is routinely more.
+
+- SigV4 is hand-rolled in [src/lib/sigv4.ts](src/lib/sigv4.ts) — pure, no `$env`, no SDK — and
+  `scripts/check-r2.ts` pins it to **AWS's published test vector**. Hand-rolled crypto is only
+  defensible when something else checks the answer.
+- The object **key is generated server-side** and validated by prefix on the way back in. A
+  caller-chosen key could overwrite another note's evidence.
+- The content type is checked **before** anything is signed. `image/svg+xml` and `text/html` are
+  refused: a bucket that serves them is an XSS.
+- Rows store the KEY, never a signed URL — a stored signature expires and rots into a broken image.
+- No keys configured → 503. It fails closed rather than pretending to store things.
+
+### Dinero: cotizaciones, facturas, pagos, crédito
+
+| Permission | Admin | Gerente | Operador |
+| --- | :-: | :-: | :-: |
+| `cotizacion:read` · `create` · `authorize` | ✅ | ✅ | ✅ |
+| `cotizacion:send` | ✅ | ✅ | — |
+| `factura:read` · `pago:read` · `pago:register` | ✅ | ✅ | ✅ |
+| `factura:create` · `factura:cancel` · `cliente:credito` | ✅ | ✅ | — |
+
+**Money is integer cents (`bigint`) wherever it is added up**, and only becomes a `Decimal` at the
+database boundary. Never a float. `centavos()` is the single place a string from a form becomes
+money, and it rejects anything ambiguous rather than guessing.
+
+- **Totals are always recomputed** from the line items. A total sent by a client is a number nobody
+  checked — and `cotizacion_montos_check` / `factura_montos_check` enforce `total = subtotal + iva`
+  in the database too.
+- **IVA is computed on the rounded subtotal**, not per line, so a CFDI adds up the way the SAT
+  expects and the total never disagrees with the sum of its own lines by a cent.
+- Money leaves the API through `.toFixed(2)`, never `.toString()` — Decimal drops trailing zeros,
+  so `5050.00` would serialize as `"5050"` and an integrator would silently disagree.
+- A quote is editable only while `borrador`. Once the customer has seen it, changing the numbers
+  underneath them is what the state machine exists to prevent — reject it and make a new one.
+- **Who authorized is a `cliente_contacto` holding `autorizador`.** An organización cannot approve
+  its own quote; that is the entire reason the role exists.
+- `factura.pagada` is reached by **arithmetic**, never by a button. Overpayment is refused, and a
+  cancellation is refused once payments exist — that case is a credit note.
+- **Credit terms are copied onto the invoice** at issue (`diasCredito`, `vence`), so changing the
+  customer's limit later never rewrites what was already agreed.
+- **Over the limit is a 409** naming the overage. Admin/Gerente can force it with a reason, and the
+  override is its own audit entry (`cliente.credito_override`) — the exception has to be visible.
+  The check runs *inside* the transaction, so two invoices issued at the same instant cannot both
+  slip under the same headroom.
+
+
+### Registro de talleres — solicitud pública y certificación
+
+Partner workshops apply from the public page at `/talleres`. Certification is a **status on the one
+`taller` row**, not a separate applications table — approving is a status change instead of a copy
+between two tables that can quietly disagree about who is certified.
+
+| `taller.estado` | Meaning |
+| --- | --- |
+| `solicitado` | Applied from `/talleres`, waiting for a person |
+| `aprobado` | Certified. **The only estado that may receive a vehicle** |
+| `rechazado` | Turned down. `revisionMotivo` is mandatory |
+
+- `taller:review` (Admin, Gerente) — read the application queue and decide. Deliberately **not**
+  `taller:read`: an Operador picks a shop to send a truck to, but who gets certified is a commercial
+  decision and the application carries the shop's RFC and the private notes written while judging it.
+  `listTalleres` enforces this on the **query**, not the UI — without the key, `?estado=solicitado`
+  still returns the certified registry.
+- `transferirNota` refuses any taller that is not `aprobado`. The gate is on the write, not on which
+  options got rendered, so a shop that merely applied can never end up holding a customer's vehicle.
+- Rejecting a shop that still holds one of our units is refused: receive it back first.
+- `solicitarTaller` is anonymous, Turnstile-gated, and builds the row **field by field from a
+  whitelist**, forcing `origen`/`estado`/`revisado*`. Never spread the body — an
+  `{ estado: "aprobado" }` in the payload would certify the applicant itself. It returns
+  `{ nombre, estado }` only, with no id.
+- Staff creating a taller by hand get `estado: 'aprobado'`: typing it in **is** the decision.
+
+**Sucursales.** A workshop has branches, each with its own named contact (`contactoNombre`,
+`contactoPuesto`, `contactoTelefono`, `contactoEmail`) — a phone number with nobody to ask for is
+not a contact. The head office is a sucursal too (`esPrincipal`), so "where is this shop" has one
+answer shape. `taller_sucursal_principal_unica` is a partial unique index allowing at most one live
+principal, so promoting a second without demoting the first **fails the write** — always go through
+`despromoverPrincipal` inside the same transaction. Archiving the principal leaves the shop without
+one rather than silently promoting another: which branch is the head office is a decision.
+
+### Notificaciones
+
+Two channels, one system of record. **The `notificacion` row is the truth; Web Push is a courtesy
+on top of it.** A shop with no VAPID keys configured still has a fully working notification centre —
+this is the one integration that degrades instead of failing closed, because a notification gates
+nothing.
+
+`NOTIFICACION_EVENTOS` in [src/lib/notificaciones.ts](src/lib/notificaciones.ts) is the catalogue,
+same shape as `audit-actions.ts`. Adding an event means adding its key there in the same change.
+
+| | |
+| --- | --- |
+| `audiencia: "empleado"` | Staff inbox. May say anything, including which partner shop has the unit |
+| `audiencia: "cliente"` | The customer. **Never names a partner taller** |
+| `alcance: "difusion"` | Everyone holding `permiso` |
+| `alcance: "directo"` | One named recipient, decided at the emit site |
+
+**A broadcast's audience is a permission, never a role list**, so the audience of a notification can
+never be wider than the audience of the screen it links to. `check-roles.ts` asserts every
+`difusion` event points at a key that actually exists — a typo would silently mean "nobody".
+
+**Customer events are prefixed `cliente_`, and the prefix must match the audience** — asserted in
+`check-push.ts`. That is what makes a miswired emit obvious in review, because `cliente_*` copy is
+the only copy that must never name a taller.
+
+#### Permissions
+
+- **Reading your own inbox, clearing it, and managing your own devices carry NO permission key.**
+  They are inherent to having an account, so they go through `requireUser`, not `requirePermission`.
+  That is also what keeps `permissionsFor('taller')` empty — a `notificacion:read` key would put a
+  permission on the `taller` role for the first time, which is a decision nobody has made.
+  `check-roles.ts` asserts no other `notificacion:*` key ever appears.
+- `notificacion:send` (Admin, Gerente) — pushing a message **at** somebody, by hand.
+
+There is deliberately no "read anyone's inbox" capability. A notification is a message to a person;
+oversight is what the audit trail is for.
+
+#### notificar() never throws
+
+It is called from inside business operations — receiving a vehicle, registering a payment — and a
+slow push service must not fail the request that took the money. Everything is caught and logged.
+
+It runs **after** the transaction commits, deliberately: a notification about a change that rolled
+back is a lie. This is the opposite of `recordAudit`, which must commit *with* its write (Rule 3) —
+the audit row is part of the invariant, the notification is not.
+
+`avisarClienteDeNota` is the **single door for customer-facing notifications**: it pins the deep
+link to `/seguimiento/<token>` and constrains the event key to the `cliente_*` half of the
+catalogue. Never call `notificar` with a `clienteId` directly from a note flow.
+
+#### Web Push: hand-rolled, pinned to the RFC
+
+[src/lib/webpush.ts](src/lib/webpush.ts) implements RFC 8291 (`aes128gcm` payload encryption) and
+RFC 8292 (VAPID) on `node:crypto` — no SDK, same reasoning as `sigv4.ts`. Pure: no `$env`, no
+database, no fetch, so it runs under tsx.
+
+Hand-rolled crypto is only defensible when something else checks the answer, so
+`scripts/check-push.ts` does two things:
+
+1. pins `cifrarPayload` to the **published test vector in RFC 8291 §5**, and
+2. **decrypts it back the way a browser does**, from the receiver's private key, with a
+   reimplementation written from the RFC rather than by reusing the library. A test that calls the
+   same helpers it is testing only proves the code agrees with itself.
+
+Details that are easy to get wrong and are asserted:
+
+- ES256 must be raw `r||s` (`dsaEncoding: "ieee-p1363"`). Node defaults to DER, which every push
+  service rejects.
+- `aud` is the endpoint's **origin**, not the URL, so a token for FCM is not valid at Mozilla.
+- salt and the ephemeral key are fresh on **every** message; reusing them breaks the scheme.
+
+Delivery lives in [src/lib/server/push.ts](src/lib/server/push.ts). A **404 or 410** from the push
+service means the subscription is dead — the row is deleted on the spot, which is what keeps the
+device list honest. Anything else increments `fallos`. `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY` come
+from `npm run vapid`; **rotating them invalidates every existing subscription.**
+
+#### El cliente no tiene cuenta: /seguimiento/<token>
+
+There is no public registration, so a customer subscription cannot hang off a session. Every
+`nota_servicio` gets a 256-bit `seguimientoToken` at intake, handed over by WhatsApp from the note
+detail screen.
+
+- **The token IS the credential.** The page sends `X-Robots-Tag: noindex` and
+  `Cache-Control: no-store`, and `/seguimiento/` is disallowed in `robots.txt`.
+- The subscription is filed against the **cliente**, not the note, so it keeps working on their next
+  visit instead of dying with the job.
+- Everything rendered there comes from `seguimientoPorToken`, which builds through `notaParaCliente`
+  and filters comments to `interno: false`. **The partner taller is absent by construction, not by
+  remembering to omit it.**
+- The customer endpoints are a **separate route group** (`/api/seguimiento/[token]`) from the staff
+  ones, rather than `/api/push` accepting an optional token. Both call the same shared functions, so
+  the rules cannot drift — but mixing anonymous token auth into staff endpoints is how one bug turns
+  into somebody reading a staff inbox.
+
+#### Service worker
+
+`src/service-worker.ts` handles **push and notificationclick only**. It caches nothing: offline
+caching of an authenticated panel is its own decision with its own failure mode (a stale page
+showing a vehicle as still in the shop), and "we added a service worker for notifications" is not
+consent for it. `build` and `files` are intentionally untouched.
+
+Register with `{ type: dev ? "module" : "classic" }` — SvelteKit emits an ES module in dev and a
+classic script in the build, and getting it wrong is a silent registration failure.
+
+#### Pedir permiso es una decisión de UX, no un detalle
+
+**Only ever prompt from a user gesture.** Chrome ignores `Notification.requestPermission()` outside
+one, and a prompt on page load is the fastest way to get permanently blocked — the browser remembers
+the "no" and nothing in the page can ask again. `PushToggle.svelte` explains what the notifications
+are for first; the OS prompt only appears after a tap.
+
+Four failure modes, four different messages, because "nothing happened" is otherwise the normal Web
+Push experience: unsupported browser · iOS needing the home-screen install (Web Push only works
+there from an installed PWA, 16.4+) · the person said no · push not configured on the server.
+
+The bell and its drawer are **server-rendered**: the badge count comes from the layout load, the
+list is HTML, "marcar todo como leído" is a real `<form method="POST">`. The whole notification
+centre works with JavaScript off; only *turning push on* needs it, because the Push API is
+JavaScript. The count refreshes on ordinary navigation — no polling, no SSE, and the shop's phones
+spend no battery on a heartbeat.
+
+`NotificationBell` is the button and `NotificationDrawer` is the inbox, split because the bell
+renders at two breakpoints and two mounted drawers would double the DOM and the Escape handler.
+
+#### Preferencias: sólo se guardan las excepciones
+
+An absent `notificacion_preferencia` row means both channels on. Only writing the opt-outs means a
+new hire needs no backfill and a new event key needs no migration — the default is always current.
+
+The preferences form walks the **catalogue**, not the submitted keys: an unchecked checkbox posts
+nothing, so reading only what arrived would make "turn everything off" indistinguishable from an
+empty submit.
 ### Who can cancel an invitation
 
 Two permissions, deliberately:
@@ -391,6 +686,9 @@ Current shared components:
 | `Calendar`     | Agenda grid. Week and day share one component via `vista`    |
 | `EntitySearch` | Debounced type-to-search picker. Falls back to a `<select>`  |
 | `ClienteUnidadPicker` | Pick or create cliente + unidad + entregador. Both cita drawers |
+| `NotificationBell` | Bell + unread count. The button only — the inbox is its own component |
+| `NotificationDrawer` | The in-app inbox. Mounted once by the panel layout |
+| `PushToggle` | Turn browser notifications on for this device. Staff and customer |
 
 Rules of thumb:
 
@@ -457,6 +755,30 @@ been a modal is a drawer sliding in from the **right**. Use
 left on phones (also URL state, `?menu=1`). Sidebar entries come from
 [src/lib/nav.ts](src/lib/nav.ts) and are filtered server-side by permission, so a role
 never receives a link to a screen it cannot open.
+
+### Mobile first, always
+
+**The phone is the primary target, not the fallback.** An Operador uses this standing next to a
+truck in the bay or in a customer's driveway on a recolección — the desk is where the work gets
+written up afterwards. A screen that only makes sense at 1440px is a screen that fails where the
+job actually happens.
+
+- **Write the phone layout first, then widen with `sm:` / `md:` / `lg:`.** Tailwind is mobile-first
+  by default: unprefixed classes are the small screen. `grid-cols-1 sm:grid-cols-2 lg:grid-cols-4`
+  is right; `grid-cols-4 max-lg:grid-cols-1` is the same thing written backwards and will drift.
+- **Design at 360px.** Every screen has to work there before it is considered done — that is a
+  cheap Android in a mechanic's pocket, not an iPhone Pro.
+- **Tap targets stay finger-sized.** Minimum ~44px of touch area on anything interactive. Buttons
+  and links never shrink below `size="sm"` on phones, and rows of icon-only actions need spacing.
+- **Tables scroll, pages never do.** `DataTable` owns the horizontal scroll container for exactly
+  this reason. The page body must never scroll sideways; wide content scrolls inside its own box.
+- **Prefer stacked cards to cramped columns.** Below `sm`, a four-column stat row becomes four
+  readable cards, not four unreadable slivers.
+- **Drawers take the full width on phones**, with a scrim — already handled by `Drawer.svelte`.
+- **Test the thumb, not just the viewport.** The primary action belongs where a thumb reaches:
+  bottom of the form, not floating top-right.
+- `capture="environment"` on file inputs so the camera opens directly — evidence gets photographed
+  in the bay, not uploaded later from a laptop.
 
 ## Rule 7 — Speed and compatibility
 
@@ -525,6 +847,7 @@ npm run format                               # prettier
 npx prisma migrate dev --name <change>       # new DDL migration
 npx prisma migrate deploy                    # apply migrations
 npx prisma db seed                           # bootstrap the primary admin
+npm run vapid                                # generate a Web Push keypair (once per environment)
 ```
 
 ## Conventions

@@ -3,6 +3,7 @@
 	import CalendarPlus from "@lucide/svelte/icons/calendar-plus";
 	import Search from "@lucide/svelte/icons/search";
 	import Truck from "@lucide/svelte/icons/truck";
+	import ClipboardList from "@lucide/svelte/icons/clipboard-list";
 	import UserCheck from "@lucide/svelte/icons/user-check";
 	import ChevronLeft from "@lucide/svelte/icons/chevron-left";
 	import ChevronRight from "@lucide/svelte/icons/chevron-right";
@@ -12,7 +13,8 @@
 	import EmptyState from "$lib/components/EmptyState.svelte";
 	import Field from "$lib/components/Field.svelte";
 	import PageHeader from "$lib/components/PageHeader.svelte";
-	import { citaEstadoTone, franjaLabel } from "$lib/citas";
+	import TriangleAlert from "@lucide/svelte/icons/triangle-alert";
+	import { citaEstadoTone, franjaLabel, motivoVencidaLabel } from "$lib/citas";
 	import { fechaLarga, horaCorta } from "$lib/agenda";
 	import { searchHref } from "$lib/url";
 	import { page } from "$app/state";
@@ -22,7 +24,7 @@
 	const INPUT =
 		"mt-1 w-full rounded-md border border-sand-300 bg-white px-3 py-2 text-sm focus:border-brand-600 focus:outline-none";
 
-	const hayFiltros = $derived(Object.values(data.filtros).some(Boolean) || data.mias);
+	const hayFiltros = $derived(Object.values(data.filtros).some(Boolean) || data.mias || data.vencidas);
 	const from = $derived(data.total === 0 ? 0 : (data.page - 1) * data.perPage + 1);
 	const to = $derived(Math.min(data.page * data.perPage, data.total));
 
@@ -73,13 +75,22 @@
 	<Field label="Desde" name="desde" type="date" value={data.filtros.desde} />
 	<Field label="Hasta" name="hasta" type="date" value={data.filtros.hasta} />
 
-	<!-- Carried through the GET form so "solo las mías" survives a filter submit. -->
+	<!-- Carried through the GET form so the toggles survive a filter submit. -->
 	{#if data.mias}<input type="hidden" name="mias" value="1" />{/if}
+	{#if data.vencidas}<input type="hidden" name="vencidas" value="1" />{/if}
 
 	<div class="flex flex-wrap items-end gap-2 sm:col-span-2 lg:col-span-5">
 		<Button size="sm">
 			<Search size={16} aria-hidden="true" />
 			Filtrar
+		</Button>
+		<Button
+			href={searchHref(page.url, { vencidas: data.vencidas ? null : "1", page: null })}
+			variant={data.vencidas ? "primary" : "ghost"}
+			size="sm"
+		>
+			<TriangleAlert size={16} aria-hidden="true" />
+			Vencidas
 		</Button>
 		<Button
 			href={searchHref(page.url, { mias: data.mias ? null : "1", page: null })}
@@ -137,11 +148,28 @@
 					{#if cita.tipo === "recoleccion"}
 						<Badge tone="brand"><Truck size={11} class="inline" aria-hidden="true" /> Recolección</Badge>
 					{/if}
+					{#if cita.notaFolio}
+						<Badge tone="ok">Nota #{cita.notaFolio}</Badge>
+					{/if}
+					{#if cita.motivoVencida}
+						<Badge tone={cita.motivoVencida === "sin_atender" ? "danger" : "warn"}>
+							{motivoVencidaLabel(cita.motivoVencida)}
+						</Badge>
+					{/if}
 				</span>
 			</td>
 			<td class="px-4 py-2.5 text-sand-600">{cita.asignadoNombre ?? "—"}</td>
 			<td class="px-4 py-2.5 text-right">
-				<Button href="/panel/citas/{cita.id}" variant="ghost" size="sm">Ver</Button>
+				<!-- Once the unit arrived, the note is where the work lives — go straight there
+				     instead of making the counter open the cita and click again. -->
+				{#if cita.notaId}
+					<Button href="/panel/notas/{cita.notaId}" variant="ghost" size="sm">
+						<ClipboardList size={15} aria-hidden="true" />
+						Nota de servicio
+					</Button>
+				{:else}
+					<Button href="/panel/citas/{cita.id}" variant="ghost" size="sm">Ver</Button>
+				{/if}
 			</td>
 		{/snippet}
 	</DataTable>

@@ -8,6 +8,7 @@
 	import ChevronRight from "@lucide/svelte/icons/chevron-right";
 	import TriangleAlert from "@lucide/svelte/icons/triangle-alert";
 	import LinkIcon from "@lucide/svelte/icons/link";
+	import ClipboardList from "@lucide/svelte/icons/clipboard-list";
 	import Badge from "$lib/components/Badge.svelte";
 	import Button from "$lib/components/Button.svelte";
 	import Drawer from "$lib/components/Drawer.svelte";
@@ -88,6 +89,18 @@
 					Vincular para confirmar
 				</Button>
 			{/if}
+		{/if}
+		<!-- The vehicle physically arriving is the moment a nota de servicio exists. -->
+		{#if data.notaId}
+			<Button href="/panel/notas/{data.notaId}" variant="outline">
+				<ClipboardList size={18} aria-hidden="true" />
+				Ver nota de servicio
+			</Button>
+		{:else if data.puede.recibir && c.vinculada && c.estado !== "cancelada" && c.estado !== "completada"}
+			<Button href={searchHref(page.url, { drawer: "recibir" })}>
+				<ClipboardList size={18} aria-hidden="true" />
+				Recibir unidad
+			</Button>
 		{/if}
 		{#if data.puede.editar}
 			<Button href={searchHref(page.url, { drawer: "editar" })} variant="outline">
@@ -325,6 +338,34 @@
 	{/if}
 </div>
 
+{#if drawer === "recibir" && data.puede.recibir}
+	<Drawer
+		title="Recibir unidad"
+		description="Abre la nota de servicio. El kilometraje se guarda también en el historial de la unidad."
+		closeHref={closeDrawer}
+	>
+		<form method="POST" action="?/recibir" class="space-y-4">
+			<p class="rounded border border-sand-200 bg-sand-50 p-3 text-sm text-sand-700">
+				<strong>{c.clienteNombre}</strong><br />
+				{c.unidadEtiqueta}
+			</p>
+			<Field
+				label="Kilometraje de entrada"
+				name="kilometraje"
+				type="number"
+				min="0"
+				hint="Opcional aquí, pero se pide en la inspección."
+			/>
+			<label class="flex items-center gap-2 text-sm text-sand-700">
+				<input type="checkbox" name="forzarKilometraje" value="1" class="size-4 accent-brand-600" />
+				Es una corrección (menor al último registrado)
+			</label>
+			<Field label="Observaciones" name="observaciones" />
+			<Button full>Abrir nota de servicio</Button>
+		</form>
+	</Drawer>
+{/if}
+
 {#if drawer === "vincular" && data.puede.vincular}
 	<Drawer
 		title="Vincular cliente y unidad"
@@ -392,7 +433,7 @@
 			<Field label="Teléfono" name="telefono" type="tel" required value={c.telefono} />
 			<Field label="Correo" name="email" type="email" value={c.email ?? ""} />
 
-			<div class="grid grid-cols-2 gap-3">
+			<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
 				<Field label="Marca" name="marca" value={c.marca ?? ""} />
 				<Field label="Modelo" name="modelo" value={c.modelo ?? ""} />
 				<Field label="Placas" name="placas" value={c.placas ?? ""} />
@@ -405,7 +446,7 @@
 				{/snippet}
 			</Field>
 
-			<div class="grid grid-cols-2 gap-3">
+			<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
 				<Field label="Inicio" name="inicio" type="datetime-local" value={paraInput(c.inicio)} />
 				<Field label="Fin" name="fin" type="datetime-local" value={paraInput(c.fin)} />
 			</div>

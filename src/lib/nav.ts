@@ -11,7 +11,15 @@ import type { Permission } from "./roles";
 export type NavItem = {
 	href: string;
 	label: string;
-	icon: "users" | "contact" | "car" | "scroll-text" | "calendar-days" | "list";
+	icon:
+		| "users"
+		| "contact"
+		| "car"
+		| "scroll-text"
+		| "calendar-days"
+		| "list"
+		| "clipboard-list"
+		| "wrench";
 	permission: Permission;
 };
 
@@ -20,8 +28,10 @@ export const NAV: readonly NavItem[] = [
 	// to the first section they can open, so this being first changes nothing for them.
 	{ href: "/panel", label: "Agenda", icon: "calendar-days", permission: "cita:read" },
 	{ href: "/panel/citas", label: "Citas", icon: "list", permission: "cita:read" },
+	{ href: "/panel/notas", label: "Notas de servicio", icon: "clipboard-list", permission: "nota:read" },
 	{ href: "/panel/clientes", label: "Clientes", icon: "contact", permission: "cliente:read" },
 	{ href: "/panel/unidades", label: "Unidades", icon: "car", permission: "unidad:read" },
+	{ href: "/panel/talleres", label: "Talleres aliados", icon: "wrench", permission: "taller:read" },
 	{ href: "/panel/usuarios", label: "Usuarios", icon: "users", permission: "user:list" },
 	{ href: "/panel/auditoria", label: "Auditoría", icon: "scroll-text", permission: "audit:read" },
 ];

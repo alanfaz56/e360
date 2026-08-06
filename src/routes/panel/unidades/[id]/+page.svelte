@@ -10,6 +10,8 @@
 	import Drawer from "$lib/components/Drawer.svelte";
 	import Field from "$lib/components/Field.svelte";
 	import PageHeader from "$lib/components/PageHeader.svelte";
+	import { notaEstadoTone, origenKilometrajeLabel } from "$lib/notas";
+	import { contactoRoleLabel } from "$lib/contacto-roles";
 	import { searchHref } from "$lib/url";
 	import { page } from "$app/state";
 
@@ -108,6 +110,178 @@
 			<td class="px-4 py-2.5 text-sand-600">{p.motivo ?? "—"}</td>
 		{/snippet}
 	</DataTable>
+</div>
+
+<!--
+	The vehicle's file. Mobile-first: everything stacks in one column on a phone and only splits
+	from `lg`, because this is read standing next to the truck as often as at a desk.
+-->
+<div class="mt-10 grid grid-cols-1 gap-6 lg:grid-cols-2">
+	<!-- Kilometraje -->
+	<section>
+		<h2 class="font-display text-xl text-sand-950">Kilometraje</h2>
+		{#if data.kilometraje.lecturas.length === 0}
+			<p class="mt-2 text-sm text-sand-500">Sin lecturas registradas.</p>
+		{:else}
+			<div class="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+				<div class="rounded border border-sand-200 bg-white p-2">
+					<p class="text-xs text-sand-500">Actual</p>
+					<p class="font-display text-lg text-sand-950">
+						{data.kilometraje.resumen.actual?.toLocaleString("es-MX") ?? "—"}
+					</p>
+				</div>
+				<div class="rounded border border-sand-200 bg-white p-2">
+					<p class="text-xs text-sand-500">Visitas</p>
+					<p class="font-display text-lg text-sand-950">{data.kilometraje.resumen.visitas}</p>
+				</div>
+				<div class="rounded border border-sand-200 bg-white p-2">
+					<p class="text-xs text-sand-500">Recorrido</p>
+					<p class="font-display text-lg text-sand-950">
+						{data.kilometraje.resumen.totalRecorrido.toLocaleString("es-MX")}
+					</p>
+				</div>
+				<div class="rounded border border-sand-200 bg-white p-2">
+					<p class="text-xs text-sand-500">Km/día</p>
+					<p class="font-display text-lg text-sand-950">
+						{data.kilometraje.resumen.promedioKmPorDia ?? "—"}
+					</p>
+				</div>
+			</div>
+
+			<ul class="mt-3 space-y-1.5 text-sm">
+				{#each data.kilometraje.lecturas.slice(0, 12) as l (l.id)}
+					<li class="flex flex-wrap items-baseline gap-x-2 rounded border border-sand-200 bg-white px-2 py-1.5">
+						<span class="font-medium text-sand-950">{l.kilometraje.toLocaleString("es-MX")} km</span>
+						<span class="text-xs text-sand-500">{new Date(l.medidoAt).toLocaleDateString("es-MX")}</span>
+						{#if l.correccion}<Badge tone="warn">corrección</Badge>{/if}
+						{#if l.notaFolio}
+							<a class="text-xs text-brand-700 hover:underline" href="/panel/notas/{l.notaId}">
+								Nota #{l.notaFolio}
+							</a>
+						{:else}
+							<span class="text-xs text-sand-500">{origenKilometrajeLabel(l.origen)}</span>
+						{/if}
+						{#if l.recorrido !== null && l.recorrido > 0}
+							<span class="ml-auto text-xs text-sand-600">
+								+{l.recorrido.toLocaleString("es-MX")} km
+								{#if l.dias}en {l.dias} d{/if}
+								{#if l.kmPorDia}· {l.kmPorDia}/día{/if}
+							</span>
+						{/if}
+					</li>
+				{/each}
+			</ul>
+		{/if}
+	</section>
+
+	<!-- Talleres aliados -->
+	{#if data.puede.verNotas && data.historial}
+		<section>
+			<h2 class="font-display text-xl text-sand-950">Talleres que la han atendido</h2>
+			{#if data.historial.talleres.length === 0}
+				<p class="mt-2 text-sm text-sand-500">Nunca se ha mandado a un taller aliado.</p>
+			{:else}
+				<p class="mt-1 text-sm text-sand-600">
+					{data.historial.resumen.talleresDistintos} taller(es)
+					{#if data.historial.resumen.rechazos > 0}
+						· <span class="text-danger">{data.historial.resumen.rechazos} rechazo(s) de calidad</span>
+					{/if}
+				</p>
+				<ul class="mt-2 space-y-2 text-sm">
+					{#each data.historial.talleres as t (t.id)}
+						<li class="rounded border border-sand-200 bg-white p-2">
+							<span class="flex flex-wrap items-center gap-2">
+								<span class="font-medium text-sand-950">{t.nombre}</span>
+								<Badge tone="neutral">{t.visitas} envío(s)</Badge>
+								{#if t.rechazos > 0}<Badge tone="danger">{t.rechazos} rechazado(s)</Badge>{/if}
+							</span>
+							{#if t.especialidades}
+								<span class="block text-xs text-sand-500">{t.especialidades}</span>
+							{/if}
+							<span class="mt-1 block text-xs text-sand-600">{t.motivos.join(" · ")}</span>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+		</section>
+	{/if}
+
+	<!-- Notas de servicio -->
+	{#if data.puede.verNotas && data.historial}
+		<section>
+			<h2 class="font-display text-xl text-sand-950">Notas de servicio</h2>
+			{#if data.historial.notas.length === 0}
+				<p class="mt-2 text-sm text-sand-500">Esta unidad nunca ha entrado al taller.</p>
+			{:else}
+				<p class="mt-1 text-sm text-sand-600">
+					{data.historial.resumen.notas} en total · {data.historial.resumen.abiertas} abierta(s)
+				</p>
+				<ul class="mt-2 space-y-2 text-sm">
+					{#each data.historial.notas as n (n.id)}
+						<li class="rounded border border-sand-200 bg-white p-2">
+							<span class="flex flex-wrap items-center gap-2">
+								<a class="font-medium text-brand-700 hover:underline" href="/panel/notas/{n.id}">
+									Nota #{n.folio}
+								</a>
+								<Badge tone={notaEstadoTone(n.estado)}>{n.estadoLabel}</Badge>
+								{#if n.talleres > 0}<Badge tone="neutral">{n.talleres} taller(es)</Badge>{/if}
+							</span>
+							<span class="block text-xs text-sand-500">
+								{new Date(n.recibidaAt).toLocaleDateString("es-MX")}
+								{#if n.kilometraje}· {n.kilometraje.toLocaleString("es-MX")} km{/if}
+								{#if n.clienteNombre}· {n.clienteNombre}{/if}
+							</span>
+							<span class="mt-1 block text-sand-700">{n.motivo}</span>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+		</section>
+	{/if}
+
+	<!-- Personas -->
+	<section>
+		<h2 class="font-display text-xl text-sand-950">Personas involucradas</h2>
+
+		<h3 class="mt-2 text-xs font-medium uppercase tracking-wide text-sand-500">Del cliente</h3>
+		{#if data.contactos.length === 0}
+			<p class="mt-1 text-sm text-sand-500">Sin contactos autorizados para esta unidad.</p>
+		{:else}
+			<ul class="mt-1 space-y-1.5 text-sm">
+				{#each data.contactos as c (c.id)}
+					<li class="flex flex-wrap items-center gap-2 rounded border border-sand-200 bg-white px-2 py-1.5">
+						<span class="font-medium text-sand-950">{c.nombre}</span>
+						{#each c.roles as rol (rol)}
+							<Badge tone={rol === "entregador" || rol === "autorizador" ? "brand" : "neutral"}>
+								{contactoRoleLabel(rol)}
+							</Badge>
+						{/each}
+						{#if c.alcanceUnidades === "especificas"}
+							<Badge tone="warn">solo unidades específicas</Badge>
+						{/if}
+						{#if c.telefono}
+							<a class="ml-auto text-xs text-brand-700 hover:underline" href="tel:{c.telefono}">
+								{c.telefono}
+							</a>
+						{/if}
+					</li>
+				{/each}
+			</ul>
+		{/if}
+
+		{#if data.puede.verNotas && data.historial && data.historial.personas.length > 0}
+			<h3 class="mt-4 text-xs font-medium uppercase tracking-wide text-sand-500">Del taller</h3>
+			<ul class="mt-1 space-y-1.5 text-sm">
+				{#each data.historial.personas as p (p.papel + p.nombre)}
+					<li class="flex flex-wrap items-center gap-2 rounded border border-sand-200 bg-white px-2 py-1.5">
+						<span class="font-medium text-sand-950">{p.nombre}</span>
+						<span class="text-xs text-sand-500">{p.papel}</span>
+						<span class="ml-auto text-xs text-sand-600">{p.veces}×</span>
+					</li>
+				{/each}
+			</ul>
+		{/if}
+	</section>
 </div>
 
 {#if drawer === "editar" && data.puede.editar}

@@ -90,6 +90,51 @@ export const PERMISSIONS = {
 	// Moving an appointment forward through its estados. Narrower than it looks: an Operador
 	// holds it only for appointments assigned to them, and only forward — see `avanzarCita`.
 	"cita:advance": ["admin", "gerente", "operador"],
+
+	// --- Notas de servicio -------------------------------------------------------------------
+	// The Operador receives the vehicle, inspects it and routes the job. Closing and cancelling
+	// stay with Admin/Gerente, the same split as cita:cancel.
+	"nota:read": ["admin", "gerente", "operador"],
+	"nota:create": ["admin", "gerente", "operador"],
+	"nota:inspect": ["admin", "gerente", "operador"],
+	"nota:advance": ["admin", "gerente", "operador"],
+	"nota:transfer": ["admin", "gerente", "operador"],
+	"nota:comment": ["admin", "gerente", "operador"],
+	"nota:close": ["admin", "gerente"],
+	"nota:cancel": ["admin", "gerente"],
+
+	// Partner workshops Estación 360 sources jobs for. The `taller` ROLE still holds nothing —
+	// onboarding those shops as users is its own change, with its own permission decisions.
+	"taller:read": ["admin", "gerente", "operador"],
+	"taller:manage": ["admin", "gerente"],
+	// Reading and deciding the applications that arrive from the public /talleres form.
+	// Deliberately NOT `taller:read`: an Operador picks from the approved registry, but who gets
+	// certified as a partner is a commercial decision, and the application carries the shop's RFC
+	// and the private notes written while deciding.
+	"taller:review": ["admin", "gerente"],
+
+	// --- Notificaciones ------------------------------------------------------------------------
+	// Reading YOUR OWN inbox, marking it read and managing your own devices needs no key: it is
+	// inherent to having an account, so it goes through `requireUser`, not `requirePermission`.
+	// That is also what keeps `permissionsFor('taller')` empty — see check-roles.ts.
+	// This key is only for pushing a message AT somebody else, by hand or as a broadcast.
+	"notificacion:send": ["admin", "gerente"],
+
+	// --- Dinero ------------------------------------------------------------------------------
+	// Operador drafts and records the customer's answer; pricing decisions and anything that
+	// creates a receivable stay with Admin/Gerente.
+	"cotizacion:read": ["admin", "gerente", "operador"],
+	"cotizacion:create": ["admin", "gerente", "operador"],
+	"cotizacion:send": ["admin", "gerente"],
+	"cotizacion:authorize": ["admin", "gerente", "operador"],
+	"factura:read": ["admin", "gerente", "operador"],
+	"factura:create": ["admin", "gerente"],
+	"factura:cancel": ["admin", "gerente"],
+	"pago:read": ["admin", "gerente", "operador"],
+	"pago:register": ["admin", "gerente", "operador"],
+	// Credit terms and the limit itself. Also what lets somebody override an over-limit sale,
+	// which is always recorded with a reason — see `asegurarCredito`.
+	"cliente:credito": ["admin", "gerente"],
 } as const satisfies Record<string, readonly Role[]>;
 
 export type Permission = keyof typeof PERMISSIONS;

@@ -3,6 +3,8 @@
 	import X from "@lucide/svelte/icons/x";
 	import LogOut from "@lucide/svelte/icons/log-out";
 	import Icon from "$lib/components/Icon.svelte";
+	import NotificationBell from "$lib/components/NotificationBell.svelte";
+	import NotificationDrawer from "$lib/components/NotificationDrawer.svelte";
 	import { searchHref } from "$lib/url";
 	import { page } from "$app/state";
 
@@ -28,6 +30,10 @@
 			<Menu size={22} aria-hidden="true" />
 		</a>
 		<span class="font-display text-lg text-sand-950">ESTACIÓN <span class="text-brand-600">360</span></span>
+		<!-- Thumb-reachable on a phone: top-right of the bar the operator is already holding. -->
+		<div class="ml-auto">
+			<NotificationBell noLeidas={data.noLeidas} />
+		</div>
 	</header>
 
 	<!-- Off-canvas scrim (phones only) -->
@@ -80,8 +86,17 @@
 		</nav>
 
 		<div class="border-t border-sand-200 p-3">
-			<p class="truncate px-3 text-sm font-medium text-sand-950">{data.actor.name}</p>
-			<p class="px-3 text-xs text-sand-500">{data.actor.roleLabel}</p>
+			<div class="flex items-center gap-2">
+				<div class="min-w-0 flex-1">
+					<p class="truncate px-3 text-sm font-medium text-sand-950">{data.actor.name}</p>
+					<p class="px-3 text-xs text-sand-500">{data.actor.roleLabel}</p>
+				</div>
+				<!-- Desktop copy of the bell. Only the button is duplicated; the drawer is mounted
+				     once, below, so there is never a second copy of the inbox in the DOM. -->
+				<span class="hidden md:block">
+					<NotificationBell noLeidas={data.noLeidas} />
+				</span>
+			</div>
 			<form method="POST" action="/logout" class="mt-2">
 				<button
 					class="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-sand-700 transition-colors hover:bg-sand-100 hover:text-brand-700"
@@ -98,4 +113,7 @@
 			{@render children()}
 		</main>
 	</div>
+
+	<!-- One inbox for both breakpoints. -->
+	<NotificationDrawer noLeidas={data.noLeidas} avisos={data.avisos} />
 </div>

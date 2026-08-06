@@ -7,6 +7,7 @@
  */
 import assert from "node:assert/strict";
 import {
+	PERMISSIONS,
 	ROLES,
 	can,
 	canAssignRole,
@@ -18,6 +19,7 @@ import {
 	isRole,
 } from "../src/lib/roles.js";
 import { esRolDeAutoridad } from "../src/lib/contacto-roles.js";
+import { NOTIFICACION_EVENTOS, NOTIFICACION_EVENTO_KEYS } from "../src/lib/notificaciones.js";
 
 // Deny by default: unknown roles and unknown permissions grant nothing.
 assert.equal(can(null, "invitation:create"), false);
@@ -139,8 +141,66 @@ assert.deepEqual(permissionsFor("operador"), [
 	"cita:read",
 	"cita:create",
 	"cita:advance",
+	"nota:read",
+	"nota:create",
+	"nota:inspect",
+	"nota:advance",
+	"nota:transfer",
+	"nota:comment",
+	"taller:read",
+	"cotizacion:read",
+	"cotizacion:create",
+	"cotizacion:authorize",
+	"factura:read",
+	"pago:read",
+	"pago:register",
 ]);
 assert.deepEqual(permissionsFor("taller"), []);
+
+// --- Notas de servicio -------------------------------------------------------------------------
+// The Operador receives the vehicle, inspects it and routes the job to a partner shop.
+for (const key of ["nota:read", "nota:create", "nota:inspect", "nota:advance", "nota:transfer", "nota:comment"] as const) {
+	for (const role of ["admin", "gerente", "operador"] as const) {
+		assert.equal(can(role, key), true, `${role} debe tener ${key}`);
+	}
+}
+// Closing and cancelling stay with Admin/Gerente, the same split as cita:cancel.
+for (const key of ["nota:close", "nota:cancel"] as const) {
+	assert.equal(can("admin", key), true);
+	assert.equal(can("gerente", key), true);
+	assert.equal(can("operador", key), false, `operador no debe tener ${key}`);
+}
+
+// Partner workshops are onboarded by management; the counter only reads the list.
+assert.equal(can("operador", "taller:read"), true);
+assert.equal(can("operador", "taller:manage"), false);
+assert.equal(can("gerente", "taller:manage"), true);
+
+// --- Dinero ------------------------------------------------------------------------------------
+// Operador drafts and records the customer's answer; anything that creates a receivable, sets a
+// price commitment, or touches credit terms is Admin/Gerente.
+assert.equal(can("operador", "cotizacion:create"), true);
+assert.equal(can("operador", "cotizacion:authorize"), true);
+assert.equal(can("operador", "cotizacion:send"), false, "enviar una cotización es decisión comercial");
+assert.equal(can("operador", "pago:register"), true, "el operador cobra en el mostrador");
+assert.equal(can("operador", "factura:create"), false);
+assert.equal(can("operador", "factura:cancel"), false);
+assert.equal(can("operador", "cliente:credito"), false);
+assert.equal(can("gerente", "factura:create"), true);
+assert.equal(can("gerente", "cliente:credito"), true);
+
+// THE ROLE `taller` STILL HOLDS NOTHING. Partner shops become users in their own change, with
+// their own permission decisions — this assertion is what keeps that from drifting in quietly.
+for (const key of [
+	"nota:read",
+	"nota:advance",
+	"taller:read",
+	"cotizacion:read",
+	"factura:read",
+	"pago:read",
+] as const) {
+	assert.equal(can("taller", key), false, `taller no debe tener ${key} todavía`);
+}
 
 // Role ceiling: strictly below your own, never at or above it.
 for (const role of ROLES) {
@@ -182,6 +242,57 @@ for (const role of ROLES.filter((r) => r !== "admin")) {
 assert.equal(can("admin", "audit:read"), true);
 for (const role of ROLES.filter((r) => r !== "admin")) {
 	assert.equal(can(role, "audit:read"), false, `${role} must not read the audit trail`);
+}
+
+
+// --- Registro de talleres ----------------------------------------------------------------------
+// Deciding who becomes a certified partner is commercial, and the application carries the shop's
+// RFC and the private notes written while judging it. `taller:read` (which an Operador holds, to
+// pick a shop to send a truck to) deliberately does NOT come with it.
+assert.equal(can("admin", "taller:review"), true);
+assert.equal(can("gerente", "taller:review"), true);
+assert.equal(can("operador", "taller:review"), false, "un Operador no revisa solicitudes de taller");
+assert.equal(can("taller", "taller:review"), false);
+assert.equal(can("operador", "taller:read"), true, "el Operador sí elige a qué taller mandar la unidad");
+
+// --- Notificaciones ----------------------------------------------------------------------------
+// Pushing a message AT somebody is a permission; reading your OWN inbox is not one, and must not
+// become one — a `notificacion:read` key would put a permission on the `taller` role for the
+// first time, and nobody has made that decision.
+assert.equal(can("admin", "notificacion:send"), true);
+assert.equal(can("gerente", "notificacion:send"), true);
+assert.equal(can("operador", "notificacion:send"), false);
+assert.equal(can("taller", "notificacion:send"), false);
+assert.equal(
+	Object.keys(PERMISSIONS).some((k) => k.startsWith("notificacion:") && k !== "notificacion:send"),
+	false,
+	"la bandeja propia no lleva permiso: va por requireUser, no por requirePermission",
+);
+
+// The whole point of the two rules above: the `taller` ROLE still holds nothing at all. `taller`
+// the ENTITY is a partner workshop; onboarding those shops as users is its own change with its
+// own permission decisions.
+assert.deepEqual(permissionsFor("taller"), [], "el rol taller sigue sin permisos");
+
+// --- Eventos de notificación -------------------------------------------------------------------
+// Every broadcast event fans out to "everyone holding this permission", so the audience of a
+// notification can never be wider than the audience of the screen it links to. A typo'd key here
+// would silently mean "nobody" (deny by default) — assert they all resolve.
+for (const evento of NOTIFICACION_EVENTO_KEYS) {
+	const def = NOTIFICACION_EVENTOS[evento] as { alcance: string; permiso?: string };
+	if (def.alcance !== "difusion") continue;
+	assert.ok(def.permiso, `${evento}: difusión sin permiso`);
+	assert.ok(
+		def.permiso! in PERMISSIONS,
+		`${evento} apunta a ${def.permiso}, que no está en el registro de permisos`,
+	);
+}
+
+// Customer-facing events never fan out by permission — a customer holds none.
+for (const evento of NOTIFICACION_EVENTO_KEYS) {
+	const def = NOTIFICACION_EVENTOS[evento] as { audiencia: string; alcance: string };
+	if (def.audiencia !== "cliente") continue;
+	assert.equal(def.alcance, "directo", `${evento}: un aviso al cliente siempre tiene destinatario`);
 }
 
 console.log("check-roles: OK");

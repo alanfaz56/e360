@@ -16,6 +16,7 @@ export const load: ServerLoad = async ({ locals, url }) => {
 	return {
 		...(await listCitas(query)),
 		mias,
+		vencidas: query.vencidas ?? false,
 		filtros: {
 			q: query.q ?? "",
 			estado: query.estado ?? "",

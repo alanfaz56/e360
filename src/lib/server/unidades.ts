@@ -4,6 +4,7 @@ import prisma from "$lib/prisma";
 import { can } from "$lib/roles";
 import { recordAudit } from "./audit";
 import { ClienteError, getCliente, trim } from "./clientes";
+import { registrarKilometraje } from "./notas";
 import { pageMeta, parsePageParams, skipFor, type PageParams } from "./paginate";
 import type { Actor } from "./guard";
 
@@ -269,6 +270,17 @@ export async function createUnidad(input: {
 				motivo: "Alta de la unidad",
 			},
 		});
+		// The odometer at registration is the FIRST point on the mileage curve. Without it the
+		// unit's history only starts at its first visit, and "how much has it run since we knew
+		// it" has nothing to measure from.
+		if (row.kilometraje !== null) {
+			await registrarKilometraje(tx, {
+				actor: input.actor,
+				unidadId: row.id,
+				kilometraje: row.kilometraje,
+				origen: "alta",
+			});
+		}
 		await recordAudit(tx, {
 			action: "unidad.create",
 			actor: input.actor,

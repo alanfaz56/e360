@@ -3,6 +3,7 @@ import prisma from "$lib/prisma";
 import { can } from "$lib/roles";
 import { requirePermission, requireUser } from "$lib/server/guard";
 import { ClienteError } from "$lib/server/clientes";
+import { historialKilometraje, historialUnidad } from "$lib/server/notas";
 import {
 	getUnidad,
 	listPropietarios,
@@ -25,9 +26,32 @@ export const load: ServerLoad = async ({ locals, params }) => {
 
 	const puedeTransferir = can(actor.role, "unidad:transfer");
 
+	const [propietarios, historial, kilometraje, contactos] = await Promise.all([
+		listPropietarios(unidad.id),
+		can(actor.role, "nota:read") ? historialUnidad(unidad.id) : null,
+		historialKilometraje(unidad.id),
+		// The customer's own people who may act on THIS vehicle: everyone with a customer-wide
+		// scope, plus anyone authorised for this unit specifically.
+		prisma.cliente_contacto.findMany({
+			where: {
+				clienteId: unidad.clienteId,
+				archivedAt: null,
+				OR: [
+					{ alcanceUnidades: "todas" },
+					{ unidadesAutorizadas: { some: { unidadId: unidad.id } } },
+				],
+			},
+			orderBy: { nombre: "asc" },
+			select: { id: true, nombre: true, telefono: true, roles: true, alcanceUnidades: true },
+		}),
+	]);
+
 	return {
 		unidad: publicUnidad(unidad),
-		propietarios: await listPropietarios(unidad.id),
+		propietarios,
+		historial,
+		kilometraje,
+		contactos,
 		// Only loaded when the transfer drawer could actually be used.
 		clientes: puedeTransferir
 			? (
@@ -43,6 +67,7 @@ export const load: ServerLoad = async ({ locals, params }) => {
 			editar: can(actor.role, "unidad:update"),
 			archivar: can(actor.role, "unidad:archive"),
 			transferir: puedeTransferir,
+			verNotas: can(actor.role, "nota:read"),
 		},
 	};
 };

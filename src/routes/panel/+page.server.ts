@@ -5,6 +5,7 @@ import { can } from "$lib/roles";
 import { CitaError, agenda, crearCita, resumenAgenda } from "$lib/server/citas";
 import { listClientes } from "$lib/server/clientes";
 import { listUnidades } from "$lib/server/unidades";
+import { kpisPara } from "$lib/server/kpis";
 import { requireUser } from "$lib/server/guard";
 import { listUsers } from "$lib/server/users";
 
@@ -29,9 +30,10 @@ export const load: ServerLoad = async ({ locals, url }) => {
 	// Resolved from the session, never from the URL — "mine" has to mean the caller.
 	const mias = url.searchParams.get("mias") === "1";
 
-	const [datos, resumen] = await Promise.all([
+	const [datos, resumen, bloques] = await Promise.all([
 		agenda(vista, fecha, mias ? actor.id : null),
 		resumenAgenda(),
+		kpisPara(actor),
 	]);
 
 	// Only fetched when the actor could actually assign somebody — one less query, and the
@@ -76,6 +78,7 @@ export const load: ServerLoad = async ({ locals, url }) => {
 		siguiente: sumarDias(fecha, vista === "dia" ? 1 : 7),
 		hoy: hoy(),
 		mias,
+		bloques,
 		clientes,
 		unidades,
 		puede: {

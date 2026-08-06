@@ -28,6 +28,21 @@ model user {
   auditLogs       audit_log[]  @relation("auditActor")
   citasAsignadas  cita[]       @relation("citaAsignada")
 
+  notasRecibidas    nota_servicio[]      @relation("notaRecibidaPor")
+  evidenciasSubidas nota_evidencia[]     @relation("evidenciaSubidaPor")
+  comentarios       nota_comentario[]    @relation("comentarioAutor")
+  transferencias    nota_transferencia[] @relation("transferenciaEnviadaPor")
+  qaTransferencias  nota_transferencia[] @relation("transferenciaQaPor")
+  lecturasKm        unidad_kilometraje[] @relation("kilometrajeRegistradoPor")
+  cotizaciones      cotizacion[]         @relation("cotizacionCreadaPor")
+  facturas          factura[]            @relation("facturaCreadaPor")
+  pagos             pago[]               @relation("pagoRegistradoPor")
+
+  notificaciones      notificacion[]             @relation("notificacionDestinatario")
+  suscripcionesPush   push_suscripcion[]         @relation("pushSuscripcion")
+  preferenciasAviso   notificacion_preferencia[] @relation("notificacionPreferencia")
+  talleresRevisados   taller[]                   @relation("tallerRevisadoPor")
+
   @@map("user")
 }
 
@@ -160,6 +175,11 @@ model cliente {
   codigoPostal  String? @db.VarChar(5)
   usoCfdi       String? @db.VarChar(8)
 
+  /// Credit terms. `limiteCredito` null means no credit at all — the customer pays on delivery.
+  /// Money is Decimal, never Float: a peso that drifts by a cent is a peso somebody argues about.
+  limiteCredito Decimal? @db.Decimal(12, 2)
+  diasCredito   Int?
+
   archivedAt DateTime?
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
@@ -168,6 +188,12 @@ model cliente {
   unidades    unidad[]
   propiedades unidad_propietario[]
   citas       cita[]
+  /// Not `notas` — that name is already the free-text field above.
+  notasServicio nota_servicio[]
+  facturas      factura[]
+
+  notificaciones    notificacion[]     @relation("notificacionCliente")
+  suscripcionesPush push_suscripcion[] @relation("pushSuscripcionCliente")
 
   @@index([nombreCompleto])
   @@index([rfc])
@@ -201,6 +227,8 @@ model cliente_contacto {
 
   unidadesAutorizadas contacto_unidad[]
   citasComoEntregador cita[]
+  notasEntregadas     nota_servicio[] @relation("notaEntregadaA")
+  cotizacionesAutorizadas cotizacion[] @relation("cotizacionAutorizadaPor")
 
   @@index([clienteId])
   @@index([archivedAt])
@@ -250,6 +278,8 @@ model unidad {
   propietarios unidad_propietario[]
   autorizados  contacto_unidad[]
   citas        cita[]
+  notasServicio nota_servicio[]
+  lecturasKm    unidad_kilometraje[]
 
   @@index([clienteId])
   @@index([placas])
@@ -353,8 +383,410 @@ model cita {
   @@index([telefono])
   /// The calendar's hot query: everything in this week, in order. Declared here as well as in
   /// the citas migration so Prisma stops proposing to drop it on every future diff.
+  /// The service note opened when the vehicle actually arrived. At most one per appointment.
+  nota nota_servicio?
+
   @@index([fecha, inicio])
+  /// Declared here, not only in SQL: an index that exists in the database but not in the schema
+  /// is one Prisma proposes to DROP on the next diff — which is exactly how this one was lost
+  /// once already. Same reason as [fecha, inicio] above.
+  @@index([entregadorId])
   @@map("cita")
+}
+
+/// A partner workshop. Estación 360 receives the vehicle and sources the job out to one of these.
+///
+/// External only, by decision: internal work needs no transfer. These will eventually be
+/// onboarded as users of the `taller` role — that link does not exist yet, deliberately.
+model taller {
+  id       String  @id
+  nombre   String  @db.VarChar(160)
+  telefono String? @db.VarChar(32)
+  email    String? @db.VarChar(255)
+  contacto String? @db.VarChar(120)
+  direccion String? @db.VarChar(500)
+  /// Free text for now: "hojalatería, pintura, transmisiones".
+  especialidades String? @db.VarChar(500)
+  notas          String?
+
+  /// Where the row came from: `panel` (staff added it) or `publico` (they applied at /talleres).
+  origen String @default("panel") @db.VarChar(16)
+
+  /// solicitado | aprobado | rechazado.
+  ///
+  /// Certification, as a status on the one registry rather than a separate applications table —
+  /// approving is then a status change, not a copy between tables that can disagree.
+  /// **Only `aprobado` may receive a vehicle**; `transferirNota` enforces it.
+  estado String @default("aprobado") @db.VarChar(16)
+
+  /// What they told us when they applied. Kept verbatim even after approval, same reasoning as
+  /// the free-text fields on `cita`: the record shows what was actually claimed.
+  rfc          String? @db.VarChar(13)
+  ciudad       String? @db.VarChar(80)
+  sitioWeb     String? @db.VarChar(255)
+  anosOperando Int?
+  empleados    Int?
+
+  revisadoPorId  String?
+  revisadoPor    user?     @relation("tallerRevisadoPor", fields: [revisadoPorId], references: [id], onDelete: SetNull)
+  revisadoAt     DateTime?
+  /// Mandatory on a rejection — enforced by `taller_rechazo_motivo_check`. It is what gets read
+  /// back to the shop, so "no" is never just silence.
+  revisionMotivo String?   @db.VarChar(500)
+
+  archivedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  notas_recibidas nota_servicio[]
+  transferencias  nota_transferencia[]
+  sucursales      taller_sucursal[]
+
+  @@index([nombre])
+  @@index([archivedAt])
+  @@index([estado])
+  @@map("taller")
+}
+
+/// The service note: what exists once the vehicle is physically at the shop.
+///
+/// Opened from a cita on arrival ("Recibir unidad") or standalone for a walk-in. Carries the
+/// intake inspection, the evidence, the comments, and everything commercial that follows.
+///
+/// `clienteId` is stored AT INTAKE and never follows a later ownership transfer — the vehicle
+/// keeps one continuous service history, but each job stays billed to whoever owned it that day.
+model nota_servicio {
+  id    String @id
+  folio Int    @unique @default(autoincrement())
+
+  /// Where it came from. SetNull so deleting a request never erases the work that followed.
+  citaId String?       @unique
+  cita   cita?         @relation(fields: [citaId], references: [id], onDelete: SetNull)
+  clienteId String
+  cliente   cliente    @relation(fields: [clienteId], references: [id], onDelete: Restrict)
+  unidadId  String
+  unidad    unidad     @relation(fields: [unidadId], references: [id], onDelete: Restrict)
+
+  /// recibida | en_diagnostico | en_taller | lista | entregada | cancelada
+  estado String @default("recibida") @db.VarChar(20)
+
+  /// Who took the vehicle in. Kept even if that account is later removed.
+  recibidaPorId String?
+  recibidaPor   user?    @relation("notaRecibidaPor", fields: [recibidaPorId], references: [id], onDelete: SetNull)
+  recibidaAt    DateTime @default(now())
+
+  /// Intake inspection. Nullable because the note is created the moment the vehicle arrives and
+  /// the walk-around takes a few minutes; `inspeccionAt` is what says it was actually done.
+  kilometraje        Int?
+  combustibleOctavos Int?
+  /// Damage and condition as found, in the operator's words.
+  condicion    String?
+  inspeccionAt DateTime?
+
+  motivo       String
+  diagnostico  String?
+  observaciones String?
+
+  /// The partner shop currently holding the vehicle. Denormalized from the open row in
+  /// nota_transferencia, exactly like unidad.clienteId — both are written in one transaction.
+  tallerActualId String?
+  tallerActual   taller? @relation(fields: [tallerActualId], references: [id], onDelete: SetNull)
+
+  entregadaAt DateTime?
+  /// Who physically collected the unit. Must be the customer or one of its `entregador` contacts.
+  entregadaAContactoId String?
+  entregadaAContacto   cliente_contacto? @relation("notaEntregadaA", fields: [entregadaAContactoId], references: [id], onDelete: SetNull)
+
+  canceladoMotivo String? @db.VarChar(255)
+
+  /// Opaque follow-along token, 256 bits, base64url. Handed to the customer by WhatsApp as
+  /// /seguimiento/<token>.
+  ///
+  /// This is how somebody with no account reads their vehicle's status and turns on push — the
+  /// app has no public registration, so there is no session to hang a customer subscription off.
+  /// Nullable so it can be revoked without losing the note, and unguessable so it is its own gate.
+  seguimientoToken String? @unique @db.VarChar(64)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  inventario     nota_inventario[]
+  evidencias     nota_evidencia[]
+  comentarios    nota_comentario[]
+  transferencias nota_transferencia[]
+  cotizaciones   cotizacion[]
+  facturas       factura[]
+  lecturas       unidad_kilometraje[]
+
+  @@index([estado])
+  @@index([clienteId])
+  @@index([unidadId])
+  @@index([tallerActualId])
+  @@index([recibidaAt])
+  @@map("nota_servicio")
+}
+
+/// What was in the vehicle when it came in. A fixed catalogue (INVENTARIO_ITEMS) so the same
+/// things get checked every time — a missing jack is noticed on delivery, not argued about.
+model nota_inventario {
+  notaId String
+  nota   nota_servicio @relation(fields: [notaId], references: [id], onDelete: Cascade)
+  /// Key from INVENTARIO_ITEMS in src/lib/notas.ts.
+  item     String  @db.VarChar(40)
+  presente Boolean
+  notas    String? @db.VarChar(255)
+
+  @@id([notaId, item])
+  @@map("nota_inventario")
+}
+
+/// Photos and documents backing the note, stored in Cloudflare R2.
+///
+/// The row holds the object KEY, never a signed URL: signatures expire, and a stored one would
+/// rot into a broken image. The public URL is derived at read time.
+model nota_evidencia {
+  id     String        @id
+  notaId String
+  nota   nota_servicio @relation(fields: [notaId], references: [id], onDelete: Cascade)
+
+  /// foto | documento
+  tipo String @db.VarChar(16)
+  /// Key from FOTO_CATEGORIAS, e.g. `frente`, `tablero`, `dano`.
+  categoria   String  @db.VarChar(32)
+  /// R2 object key. Generated server-side — never taken from the client.
+  clave       String  @unique @db.VarChar(500)
+  nombre      String  @db.VarChar(255)
+  contentType String  @db.VarChar(120)
+  bytes       Int?
+  descripcion String? @db.VarChar(500)
+
+  subidaPorId String?
+  subidaPor   user?    @relation("evidenciaSubidaPor", fields: [subidaPorId], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+
+  @@index([notaId])
+  @@index([categoria])
+  @@map("nota_evidencia")
+}
+
+/// Running commentary on the job. `interno` never leaves the shop; the rest is what gets read
+/// back to the customer, so the distinction is stored rather than remembered.
+model nota_comentario {
+  id     String        @id
+  notaId String
+  nota   nota_servicio @relation(fields: [notaId], references: [id], onDelete: Cascade)
+
+  texto   String
+  interno Boolean @default(true)
+
+  autorId String?
+  autor   user?    @relation("comentarioAutor", fields: [autorId], references: [id], onDelete: SetNull)
+  /// Snapshot, so the trail still reads correctly after the account is gone.
+  autorEmail String   @db.VarChar(255)
+  createdAt  DateTime @default(now())
+
+  @@index([notaId, createdAt])
+  @@map("nota_comentario")
+}
+
+/// History of the vehicle going out to partner shops and coming back. The open row (`hasta` null)
+/// is the current holder and must match nota_servicio.tallerActualId.
+model nota_transferencia {
+  id       String        @id
+  notaId   String
+  nota     nota_servicio @relation(fields: [notaId], references: [id], onDelete: Cascade)
+  tallerId String
+  taller   taller        @relation(fields: [tallerId], references: [id], onDelete: Restrict)
+
+  motivo   String   @db.VarChar(500)
+  desde    DateTime @default(now())
+  hasta    DateTime?
+  /// What the partner shop reported back when the unit returned.
+  resultado String?
+
+  /// QA on receipt. Nothing comes back from an external shop without somebody signing off:
+  /// Estación 360 is who the customer holds responsible for the repair, so accepting the work
+  /// back is a decision with a name on it. `aprobado | con_detalles | rechazado`.
+  qaResultado String?   @db.VarChar(16)
+  qaNotas     String?
+  qaAt        DateTime?
+  qaPorId     String?
+  qaPor       user?     @relation("transferenciaQaPor", fields: [qaPorId], references: [id], onDelete: SetNull)
+
+  enviadaPorId String?
+  enviadaPor   user?   @relation("transferenciaEnviadaPor", fields: [enviadaPorId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([notaId])
+  @@index([tallerId])
+  /// Created by the QA migration, so it is declared here with its original name — an index the
+  /// database has and the schema does not is drift, and the next `migrate diff` drops it.
+  @@index([qaResultado], map: "nota_transferencia_qa_idx")
+  @@map("nota_transferencia")
+}
+
+/// Odometer readings over time.
+///
+/// Every intake writes one, which is what makes "how much has this truck run between visits" and
+/// "how often does it come in" answerable from the same table. `unidad.kilometraje` is the latest
+/// reading, denormalized so the unit list does not need a subquery — both written together.
+model unidad_kilometraje {
+  id       String @id
+  unidadId String
+  unidad   unidad @relation(fields: [unidadId], references: [id], onDelete: Cascade)
+
+  kilometraje Int
+  /// nota | alta | manual — see ORIGENES_KILOMETRAJE.
+  origen   String   @db.VarChar(16)
+  medidoAt DateTime @default(now())
+
+  notaId String?
+  nota   nota_servicio? @relation(fields: [notaId], references: [id], onDelete: SetNull)
+
+  registradoPorId String?
+  registradoPor   user?   @relation("kilometrajeRegistradoPor", fields: [registradoPorId], references: [id], onDelete: SetNull)
+  /// Set when somebody knowingly recorded a reading below the previous one.
+  correccion Boolean @default(false)
+  notas      String? @db.VarChar(255)
+
+  createdAt DateTime @default(now())
+
+  @@index([unidadId, medidoAt])
+  @@index([notaId])
+  /// The reporting query: "what has this unit run between visits", newest first. Declared here
+  /// as well as in SQL so Prisma stops proposing to drop it — see the note on cita.entregadorId.
+  @@index([unidadId, medidoAt(sort: Desc), kilometraje], map: "unidad_kilometraje_reporte_idx")
+  @@map("unidad_kilometraje")
+}
+
+/// A quote for the work. Editable only while `borrador`: once the customer has seen it, changing
+/// the numbers underneath them is exactly what the estado machine prevents.
+model cotizacion {
+  id     String        @id
+  folio  Int           @unique @default(autoincrement())
+  notaId String
+  nota   nota_servicio @relation(fields: [notaId], references: [id], onDelete: Cascade)
+
+  /// borrador | enviada | autorizada | rechazada | vencida
+  estado String @default("borrador") @db.VarChar(16)
+
+  /// Totals in pesos. Recomputed from the line items on every write — never trusted from input.
+  subtotal Decimal @default(0) @db.Decimal(12, 2)
+  iva      Decimal @default(0) @db.Decimal(12, 2)
+  total    Decimal @default(0) @db.Decimal(12, 2)
+
+  vigenciaHasta DateTime?
+  notas         String?
+
+  enviadaAt DateTime?
+  /// WHO on the customer's side approved it — a contact holding `autorizador`, or null when the
+  /// customer is a persona approving their own work.
+  autorizadaPorContactoId String?
+  autorizadaPorContacto   cliente_contacto? @relation("cotizacionAutorizadaPor", fields: [autorizadaPorContactoId], references: [id], onDelete: SetNull)
+  /// How the approval arrived: teléfono, WhatsApp, en persona.
+  autorizadaMedio String?   @db.VarChar(60)
+  autorizadaAt    DateTime?
+  rechazadaMotivo String?   @db.VarChar(500)
+
+  creadaPorId String?
+  creadaPor   user?    @relation("cotizacionCreadaPor", fields: [creadaPorId], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  conceptos cotizacion_concepto[]
+  facturas  factura[]
+
+  @@index([notaId])
+  @@index([estado])
+  @@map("cotizacion")
+}
+
+model cotizacion_concepto {
+  id           String     @id
+  cotizacionId String
+  cotizacion   cotizacion @relation(fields: [cotizacionId], references: [id], onDelete: Cascade)
+
+  /// refaccion | mano_obra | insumo | externo
+  tipo        String  @db.VarChar(16)
+  descripcion String  @db.VarChar(500)
+  /// Fractional on purpose: 1.5 hours of labour is a real line.
+  cantidad       Decimal @db.Decimal(10, 2)
+  precioUnitario Decimal @db.Decimal(12, 2)
+  importe        Decimal @db.Decimal(12, 2)
+  orden          Int     @default(0)
+
+  @@index([cotizacionId, orden])
+  @@map("cotizacion_concepto")
+}
+
+/// An invoice. `credito` is the only condition that consumes the customer's limit, and the due
+/// date is derived from their `diasCredito` at the moment it is issued.
+model factura {
+  id     String  @id
+  folio  Int     @unique @default(autoincrement())
+  notaId String?
+  nota   nota_servicio? @relation(fields: [notaId], references: [id], onDelete: SetNull)
+  /// Who it is billed to. Restrict: a customer with invoices is never hard-deleted.
+  clienteId String
+  cliente   cliente @relation(fields: [clienteId], references: [id], onDelete: Restrict)
+  cotizacionId String?
+  cotizacion   cotizacion? @relation(fields: [cotizacionId], references: [id], onDelete: SetNull)
+
+  /// borrador | emitida | pagada | cancelada
+  estado String @default("borrador") @db.VarChar(16)
+  /// contado | credito
+  condicionPago String @default("contado") @db.VarChar(16)
+  diasCredito   Int?
+  vence         DateTime?
+
+  subtotal Decimal @default(0) @db.Decimal(12, 2)
+  iva      Decimal @default(0) @db.Decimal(12, 2)
+  total    Decimal @default(0) @db.Decimal(12, 2)
+
+  /// CFDI stamping data, filled in once a PAC is wired up.
+  uuid         String? @unique @db.VarChar(36)
+  serie        String? @db.VarChar(25)
+  emitidaAt    DateTime?
+  canceladaAt  DateTime?
+  canceladoMotivo String? @db.VarChar(255)
+  notas        String?
+
+  creadaPorId String?
+  creadaPor   user?    @relation("facturaCreadaPor", fields: [creadaPorId], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  pagos pago[]
+
+  @@index([clienteId])
+  @@index([estado])
+  @@index([vence])
+  @@map("factura")
+}
+
+/// A payment against an invoice. Partial by design: the invoice is `pagada` when the payments
+/// cover it, never by somebody flipping a status by hand.
+model pago {
+  id        String  @id
+  facturaId String
+  factura   factura @relation(fields: [facturaId], references: [id], onDelete: Restrict)
+
+  monto  Decimal @db.Decimal(12, 2)
+  /// efectivo | tarjeta | transferencia | cheque | otro
+  metodo     String  @db.VarChar(16)
+  referencia String? @db.VarChar(120)
+  notas      String? @db.VarChar(500)
+
+  pagadoAt DateTime @default(now())
+
+  registradoPorId String?
+  registradoPor   user?    @relation("pagoRegistradoPor", fields: [registradoPorId], references: [id], onDelete: SetNull)
+  createdAt       DateTime @default(now())
+
+  @@index([facturaId])
+  @@index([pagadoAt])
+  @@map("pago")
 }
 
 model configurations {
@@ -366,4 +798,136 @@ model configurations {
   @@id([id, key])
   @@index([key])
   @@map("configurations")
+}
+
+// ============================================================================================
+// Notificaciones
+// ============================================================================================
+
+/// One notification, for one recipient.
+///
+/// The recipient is EITHER a `user` (staff) or a `cliente` (customer) — never both, never
+/// neither. Enforced by `notificacion_destinatario_check`, because a row addressed to nobody is
+/// a notification that silently vanishes, and one addressed to both would leak staff-only copy
+/// to a customer.
+///
+/// The row is written even when push delivery fails or is switched off: the in-app inbox is the
+/// system of record, push is a courtesy on top of it.
+model notificacion {
+  id String @id
+
+  userId String?
+  user   user?   @relation("notificacionDestinatario", fields: [userId], references: [id], onDelete: Cascade)
+  /// Customer-facing copy. NEVER names a partner taller — see notaParaCliente in server/notas.ts.
+  clienteId String?
+  cliente   cliente? @relation("notificacionCliente", fields: [clienteId], references: [id], onDelete: Cascade)
+
+  /// Key from NOTIFICACION_EVENTOS in src/lib/notificaciones.ts.
+  evento String @db.VarChar(48)
+  titulo String @db.VarChar(120)
+  cuerpo String @db.VarChar(500)
+  /// Deep link. Staff links point into /panel; customer links into /seguimiento/<token>.
+  url String? @db.VarChar(500)
+
+  /// What it is about, so a screen can show only its own notifications.
+  entidad   String? @db.VarChar(32)
+  entidadId String?
+
+  leidaAt   DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, leidaAt])
+  @@index([clienteId, createdAt])
+  @@index([entidad, entidadId])
+  @@map("notificacion")
+}
+
+/// A Web Push subscription: one browser on one device.
+///
+/// Same either/or as `notificacion` — a subscription belongs to a staff user or to a customer.
+/// Customers subscribe from /seguimiento/<token>, which is how a person with no account gets
+/// push at all.
+///
+/// `fallos` counts consecutive delivery failures. A 404/410 from the push service means the
+/// subscription is dead and the row is deleted outright; anything else just increments.
+model push_suscripcion {
+  id String @id
+
+  userId String?
+  user   user?   @relation("pushSuscripcion", fields: [userId], references: [id], onDelete: Cascade)
+  clienteId String?
+  cliente   cliente? @relation("pushSuscripcionCliente", fields: [clienteId], references: [id], onDelete: Cascade)
+
+  /// The push service URL. Unique: re-subscribing the same browser updates the row instead of
+  /// piling up duplicates that would each deliver the same notification.
+  endpoint String @unique @db.VarChar(500)
+  /// RFC 8291 keys, base64url, exactly as the browser hands them over.
+  p256dh String @db.VarChar(255)
+  auth   String @db.VarChar(64)
+
+  /// What the person will recognise in the device list: "Chrome en Android".
+  etiqueta  String? @db.VarChar(80)
+  userAgent String? @db.VarChar(255)
+
+  fallos        Int       @default(0)
+  ultimoEnvioAt DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([userId])
+  @@index([clienteId])
+  @@map("push_suscripcion")
+}
+
+/// A staff member's opt-OUT for one event.
+///
+/// Absent row means "both channels on". Only writing the exceptions means a new user needs no
+/// backfill and a new event key needs no migration — the default is always current.
+model notificacion_preferencia {
+  userId String
+  user   user   @relation("notificacionPreferencia", fields: [userId], references: [id], onDelete: Cascade)
+  /// Key from NOTIFICACION_EVENTOS.
+  evento String @db.VarChar(48)
+
+  enApp Boolean @default(true)
+  push  Boolean @default(true)
+
+  updatedAt DateTime @updatedAt
+
+  @@id([userId, evento])
+  @@map("notificacion_preferencia")
+}
+
+// ============================================================================================
+// Registro de talleres
+// ============================================================================================
+
+/// A branch of a partner workshop, with its own contact person.
+///
+/// The head office is a sucursal too (`esPrincipal`), so "where is this shop" has exactly one
+/// answer shape. A partial unique index allows at most one principal per taller.
+model taller_sucursal {
+  id       String @id
+  tallerId String
+  taller   taller @relation(fields: [tallerId], references: [id], onDelete: Cascade)
+
+  nombre    String  @db.VarChar(160)
+  direccion String? @db.VarChar(500)
+  ciudad    String? @db.VarChar(80)
+  telefono  String? @db.VarChar(32)
+
+  /// The named person at this branch. A phone number without a person to ask for is not a contact.
+  contactoNombre   String? @db.VarChar(120)
+  contactoPuesto   String? @db.VarChar(80)
+  contactoTelefono String? @db.VarChar(32)
+  contactoEmail    String? @db.VarChar(255)
+
+  esPrincipal Boolean @default(false)
+
+  archivedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([tallerId])
+  @@map("taller_sucursal")
 }

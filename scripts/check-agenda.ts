@@ -21,8 +21,12 @@ import {
 	CITA_ESTADO_KEYS,
 	CITA_TIPO_KEYS,
 	CITA_TIPO_DEFAULT,
+	GRACIA_MINUTOS,
+	MOTIVO_VENCIDA_KEYS,
 	TRANSICIONES,
 	FRANJAS,
+	motivoVencida,
+	motivoVencidaLabel,
 	REQUIEREN_HORA,
 	requiereHora,
 	puedeTransicionar,
@@ -219,6 +223,54 @@ assert.equal(isFranja("noche"), false);
 
 // Franjas must not overlap, or "mañana" and "tarde" would suggest the same hour.
 assert.equal(FRANJAS.manana.hasta, FRANJAS.tarde.desde);
+
+// --- Citas vencidas ----------------------------------------------------------------------------
+// Two different lost sales, and the distinction matters: a request nobody ever confirmed is a
+// customer who raised their hand and got silence; a confirmed slot nobody processed is a car that
+// may have shown up to nothing. Both are derived from the clock, never stored — so an appointment
+// stops being overdue the moment somebody acts on it.
+{
+	const ahora = new Date("2026-08-05T15:00:00-07:00");
+	const ayer = "2026-08-04";
+	const hoyMismo = fechaEnZona(ahora);
+
+	// A request whose day has passed and was never confirmed.
+	assert.equal(motivoVencida({ estado: "solicitada", fecha: ayer, inicio: null }, ahora, hoyMismo), "sin_atender");
+	// Today's request is not late yet — the day is not over.
+	assert.equal(motivoVencida({ estado: "solicitada", fecha: hoyMismo, inicio: null }, ahora, hoyMismo), null);
+	// Neither is a future one.
+	assert.equal(motivoVencida({ estado: "solicitada", fecha: "2026-08-09", inicio: null }, ahora, hoyMismo), null);
+
+	// A confirmed slot well past its hour, still sitting in `confirmada`.
+	const hace3h = new Date(ahora.getTime() - 3 * 3600_000).toISOString();
+	assert.equal(motivoVencida({ estado: "confirmada", fecha: hoyMismo, inicio: hace3h }, ahora, hoyMismo), "sin_procesar");
+
+	// GRACE: a car running late is not a failure. Inside the window, nothing is flagged.
+	const hace30m = new Date(ahora.getTime() - 30 * 60_000).toISOString();
+	assert.equal(motivoVencida({ estado: "confirmada", fecha: hoyMismo, inicio: hace30m }, ahora, hoyMismo), null);
+	assert.equal(GRACIA_MINUTOS, 120);
+	// Exactly at the boundary is still fine; one minute past it is not.
+	const justo = new Date(ahora.getTime() - GRACIA_MINUTOS * 60_000).toISOString();
+	const pasado = new Date(ahora.getTime() - (GRACIA_MINUTOS + 1) * 60_000).toISOString();
+	assert.equal(motivoVencida({ estado: "confirmada", fecha: hoyMismo, inicio: justo }, ahora, hoyMismo), null);
+	assert.equal(motivoVencida({ estado: "confirmada", fecha: hoyMismo, inicio: pasado }, ahora, hoyMismo), "sin_procesar");
+
+	// An appointment somebody ACTED on is never overdue, however old it is. This is the whole
+	// point of deriving it: no sweeper job, no stale flag to clean up.
+	for (const estado of ["en_proceso", "completada", "cancelada", "no_asistio"] as const) {
+		assert.equal(
+			motivoVencida({ estado, fecha: "2020-01-01", inicio: "2020-01-01T10:00:00Z" }, ahora),
+			null,
+			`${estado} nunca cuenta como vencida`,
+		);
+	}
+	// A confirmed appointment with no hour cannot be judged late (the DB forbids it anyway).
+	assert.equal(motivoVencida({ estado: "confirmada", fecha: ayer, inicio: null }, ahora, hoyMismo), null);
+
+	assert.deepEqual(MOTIVO_VENCIDA_KEYS, ["sin_atender", "sin_procesar"]);
+	assert.equal(motivoVencidaLabel("sin_atender"), "Solicitud sin atender");
+	assert.equal(motivoVencidaLabel("inventado"), "inventado");
+}
 
 // Recolección is a core part of what the shop sells, so it leads the picker and is the default.
 // Key order drives the UI, so a reorder here silently changes what customers pick first.

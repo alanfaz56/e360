@@ -178,7 +178,12 @@
 <footer class="bg-sand-950 text-sand-400">
 	<div class="mx-auto flex max-w-6xl flex-col gap-4 px-4 py-10 sm:flex-row sm:items-center">
 		<p class="font-display text-lg text-white">ESTACIÓN <span class="text-brand-500">360</span></p>
-		<p class="text-sm sm:ml-auto">
+		<!-- Talleres are recruited, not advertised to customers: the entrance belongs in the footer,
+		     where somebody looking for it will find it, not competing with "agenda tu cita". -->
+		<a class="text-sm font-medium hover:text-white sm:ml-auto" href="/talleres">
+			¿Tienes un taller? Trabaja con nosotros
+		</a>
+		<p class="text-sm">
 			Hermosillo, Sonora · <a class="hover:text-white" href="https://www.estacion360.com"
 				>estacion360.com</a
 			>

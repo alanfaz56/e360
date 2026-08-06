@@ -64,23 +64,30 @@
 	</p>
 {/if}
 
-<div class="mb-6 grid gap-3 sm:grid-cols-3">
-	<StatCard label="Citas hoy" value={data.resumen.citasHoy} icon="calendar-days" href={searchHref(page.url, { vista: "dia", fecha: data.hoy })} />
-	<StatCard
-		label="Solicitudes por confirmar"
-		value={data.resumen.solicitudes}
-		href="/panel/citas?estado=solicitada"
-		tone={data.resumen.solicitudes > 0 ? "warn" : "neutral"}
-		hint={data.resumen.solicitudes > 0 ? "Llegaron del formulario público" : "Nada pendiente"}
-	/>
-	<StatCard
-		label="Recolecciones hoy"
-		value={data.resumen.recoleccionesHoy}
-		icon="car"
-		tone="brand"
-		href="/panel/citas?tipo=recoleccion&desde={data.hoy}&hasta={data.hoy}"
-	/>
-</div>
+<!--
+	KPIs by role. Each block only exists if the caller can already open its data, so nobody sees
+	a number they cannot click through to.
+
+	Mobile-first: one column on a phone (where the counter actually stands), two from `sm`, four
+	from `lg`. Never the other way round.
+-->
+{#each data.bloques as bloque (bloque.titulo)}
+	<section class="mb-5">
+		<h2 class="mb-2 text-xs font-medium uppercase tracking-wide text-sand-500">{bloque.titulo}</h2>
+		<div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+			{#each bloque.kpis as kpi (kpi.clave)}
+				<StatCard
+					label={kpi.label}
+					value={kpi.valor}
+					hint={kpi.hint ?? undefined}
+					href={kpi.href ?? undefined}
+					icon={kpi.icon}
+					tone={kpi.tone ?? "neutral"}
+				/>
+			{/each}
+		</div>
+	</section>
+{/each}
 
 <!-- Calendar navigation. Plain links: the whole view is URL state, so it works with JS off. -->
 <div class="mb-3 flex flex-wrap items-center gap-2">
@@ -155,7 +162,7 @@
 				{/snippet}
 			</Field>
 
-			<div class="grid grid-cols-2 gap-3">
+			<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
 				<Field label="Inicio" name="inicio" type="datetime-local" required value={v("inicio")} />
 				<Field label="Fin" name="fin" type="datetime-local" value={v("fin")} hint="Opcional: 1 h." />
 			</div>

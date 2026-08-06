@@ -50,6 +50,14 @@ const ID = {
 	propietario: "5eed0000-0000-4000-8000-000000000031",
 	cita: "5eed0000-0000-4000-8000-000000000041",
 	citaConocida: "5eed0000-0000-4000-8000-000000000042",
+	citaAsignada: "5eed0000-0000-4000-8000-000000000043",
+	taller: "5eed0000-0000-4000-8000-000000000051",
+	tallerDos: "5eed0000-0000-4000-8000-000000000052",
+	tallerSolicitado: "5eed0000-0000-4000-8000-000000000053",
+	sucursalUno: "5eed0000-0000-4000-8000-000000000071",
+	sucursalDos: "5eed0000-0000-4000-8000-000000000072",
+	sucursalSolicitada: "5eed0000-0000-4000-8000-000000000073",
+	lecturaAlta: "5eed0000-0000-4000-8000-000000000061",
 };
 
 const prisma = createPrisma(process.env.DATABASE_URL);
@@ -212,6 +220,18 @@ async function seedUnidad() {
 		await tx.unidad_propietario.create({
 			data: { id: ID.propietario, unidadId: ID.unidad, clienteId: ID.cliente, motivo: "Alta inicial" },
 		});
+		// The odometer at registration is the first point on the mileage curve — without it the
+		// history only starts at the first visit and there is nothing to measure usage against.
+		await tx.unidad_kilometraje.create({
+			data: {
+				id: ID.lecturaAlta,
+				unidadId: ID.unidad,
+				kilometraje: 148320,
+				origen: "alta",
+				// Backdated so the demo shows a real interval instead of everything on one day.
+				medidoAt: new Date(Date.now() - 120 * 86_400_000),
+			},
+		});
 	});
 
 	await audit("unidad.create", ID.unidad, "Freightliner M2 106 · SN-4471-A", "Unidad de demostración (ECO-114)");
@@ -309,6 +329,217 @@ async function seedCitaDeUnidadConocida() {
 	console.log(`  creada: cita #${cita.folio} de una unidad ya registrada, sin vincular (${fecha}, tarde)`);
 }
 
+/**
+ * Partner workshops. Estación 360 receives the vehicle and sources the job out to one of these,
+ * so a note cannot be transferred anywhere until at least one exists.
+ */
+async function seedTalleres() {
+	const talleres = [
+		{
+			id: ID.taller,
+			nombre: "Hojalatería y Pintura El Sahuaro",
+			contacto: "Ramón Quintero",
+			telefono: "6623015566",
+			email: "contacto@elsahuaro.test",
+			direccion: "Calle Yáñez 210, Col. Centenario, Hermosillo",
+			especialidades: "Hojalatería, pintura, pulido",
+			notas: "Entregan en 3 a 5 días. Cotizan por WhatsApp.",
+		},
+		{
+			id: ID.tallerDos,
+			nombre: "Transmisiones del Norte",
+			contacto: "Elena Bracamontes",
+			telefono: "6623027788",
+			email: "taller@transmisionesdelnorte.test",
+			direccion: "Blvd. Progreso 88, Parque Industrial, Hermosillo",
+			especialidades: "Transmisiones automáticas, diferenciales",
+			notas: "Especialistas en camión mediano.",
+		},
+	];
+
+	for (const taller of talleres) {
+		if (await prisma.taller.findUnique({ where: { id: taller.id }, select: { id: true } })) {
+			console.log(`  ya existe: ${taller.nombre}`);
+			continue;
+		}
+		// Added by staff, so already certified — `createTaller` makes the same decision.
+		await prisma.taller.create({ data: { ...taller, origen: "panel", estado: "aprobado" } });
+		await audit("taller.create", taller.id, taller.nombre, `Taller aliado de demostración: ${taller.nombre}`);
+		console.log(`  creado: ${taller.nombre}`);
+	}
+
+	// Branches, so the head-office rule and the per-branch contact are exercisable. Only one
+	// principal per taller — `taller_sucursal_principal_unica` would reject a second.
+	const sucursales = [
+		{
+			id: ID.sucursalUno,
+			tallerId: ID.taller,
+			nombre: "Matriz Centenario",
+			direccion: "Calle Yáñez 210, Col. Centenario, Hermosillo",
+			ciudad: "Hermosillo",
+			telefono: "6623015566",
+			contactoNombre: "Ramón Quintero",
+			contactoPuesto: "Dueño",
+			contactoTelefono: "6623015566",
+			esPrincipal: true,
+		},
+		{
+			id: ID.sucursalDos,
+			tallerId: ID.taller,
+			nombre: "Sucursal Norte",
+			direccion: "Blvd. Solidaridad 1450, Hermosillo",
+			ciudad: "Hermosillo",
+			telefono: "6623015599",
+			contactoNombre: "Lucía Preciado",
+			contactoPuesto: "Encargada de taller",
+			contactoTelefono: "6623015599",
+			esPrincipal: false,
+		},
+	];
+
+	for (const sucursal of sucursales) {
+		if (await prisma.taller_sucursal.findUnique({ where: { id: sucursal.id }, select: { id: true } })) continue;
+		// The migration backfills a "Matriz" for every workshop already on file, so on an existing
+		// database there IS one and `taller_sucursal_principal_unica` would reject a second. Demote
+		// it first — the same thing `despromoverPrincipal` does in the app.
+		if (sucursal.esPrincipal) {
+			await prisma.taller_sucursal.updateMany({
+				where: { tallerId: sucursal.tallerId, esPrincipal: true, archivedAt: null },
+				data: { esPrincipal: false },
+			});
+		}
+		await prisma.taller_sucursal.create({ data: sucursal });
+		await audit("sucursal.create", sucursal.id, sucursal.nombre, `Sucursal de demostración: ${sucursal.nombre}`);
+		console.log(`  creada sucursal: ${sucursal.nombre}`);
+	}
+
+	// One UNREVIEWED application, so the /talleres → certify flow has something to act on out of
+	// the box — the same reason the seed ships an unconfirmed public cita.
+	if (!(await prisma.taller.findUnique({ where: { id: ID.tallerSolicitado }, select: { id: true } }))) {
+		const solicitado = await prisma.taller.create({
+			data: {
+				id: ID.tallerSolicitado,
+				nombre: "Servicio Diésel La Cuesta",
+				contacto: "Job Villaescusa",
+				telefono: "6623044321",
+				email: "contacto@dieselacuesta.test",
+				direccion: "Carretera a Bahía de Kino km 4, Hermosillo",
+				ciudad: "Hermosillo",
+				especialidades: "Diésel, inyección, turbos",
+				notas: "Nos encontraron por un cliente. Trabajan camión pesado.",
+				anosOperando: 12,
+				empleados: 6,
+				origen: "publico",
+				estado: "solicitado",
+			},
+		});
+		await prisma.taller_sucursal.create({
+			data: {
+				id: ID.sucursalSolicitada,
+				tallerId: solicitado.id,
+				nombre: "Matriz",
+				direccion: solicitado.direccion,
+				ciudad: solicitado.ciudad,
+				telefono: solicitado.telefono,
+				contactoNombre: solicitado.contacto,
+				contactoTelefono: solicitado.telefono,
+				contactoEmail: solicitado.email,
+				esPrincipal: true,
+			},
+		});
+		await audit(
+			"taller.solicitud",
+			solicitado.id,
+			solicitado.nombre,
+			`Solicitud de certificación de demostración: ${solicitado.nombre}`,
+		);
+		console.log(`  creada solicitud por revisar: ${solicitado.nombre}`);
+	}
+}
+
+/**
+ * A confirmed pickup ASSIGNED to the demo Operador, ready to be received.
+ *
+ * This is the one that exercises the whole operator flow end to end: it is already linked to the
+ * fleet customer and its truck, so "Recibir unidad" opens a nota de servicio in one press — and
+ * from there the inspection, the evidence, the transfer to a partner shop and the delivery.
+ */
+async function seedCitaAsignada() {
+	if (await prisma.cita.findUnique({ where: { id: ID.citaAsignada }, select: { id: true } })) {
+		console.log("  ya existe: la cita asignada al operador");
+		return;
+	}
+
+	const operador = await prisma.user.findUnique({
+		where: { email: "operador@estacion360.test" },
+		select: { id: true },
+	});
+	if (!operador) {
+		console.log("  omitida: no existe el operador de demostración");
+		return;
+	}
+
+	const fecha = hoy();
+	const cita = await prisma.cita.create({
+		data: {
+			id: ID.citaAsignada,
+			origen: "panel",
+			estado: "confirmada",
+			tipo: "recoleccion",
+			fecha: enZona(fecha),
+			// 09:00 shop time. Confirmed appointments must carry a real hour (CHECK constraint).
+			inicio: enZona(fecha, "09:00"),
+			fin: enZona(fecha, "10:00"),
+			nombre: "Jorge Villalobos",
+			telefono: "6621002032",
+			email: "jvillalobos@transportesdeldesierto.test",
+			marca: "Freightliner",
+			modelo: "M2 106",
+			anio: 2021,
+			placas: "SN-4471-A",
+			motivo: "Ruido en la suspensión trasera y servicio mayor. Va a necesitar hojalatería en la caja.",
+			direccionRecoleccion: "Blvd. Solidaridad 455, Col. Palo Verde, Hermosillo",
+			clienteId: ID.cliente,
+			unidadId: ID.unidad,
+			entregadorId: ID.contactoEntregador,
+			asignadoId: operador.id,
+		},
+	});
+
+	await audit(
+		"cita.create",
+		cita.id,
+		`#${cita.folio} · ${cita.nombre} · Freightliner M2 106`,
+		`Cita de demostración asignada al operador para hoy ${fecha}, lista para recibir`,
+	);
+	console.log(`  creada: cita #${cita.folio} asignada a Omar Operador (hoy ${fecha}, 09:00, recolección)`);
+}
+
+/** Credit terms on the fleet customer, so the invoicing and limit rules have something to act on. */
+async function seedCredito() {
+	const cliente = await prisma.cliente.findUnique({
+		where: { id: ID.cliente },
+		select: { limiteCredito: true },
+	});
+	if (!cliente) return;
+	if (cliente.limiteCredito !== null) {
+		console.log("  ya existe: el crédito del cliente de demostración");
+		return;
+	}
+
+	await prisma.cliente.update({
+		where: { id: ID.cliente },
+		data: { limiteCredito: "50000.00", diasCredito: 30 },
+	});
+	await audit(
+		"cliente.credito",
+		ID.cliente,
+		"Transportes del Desierto SA de CV",
+		"Crédito de demostración: $50,000.00 a 30 días",
+	);
+	console.log("  creado: crédito de $50,000.00 a 30 días");
+}
+
 async function main() {
 	await seedAdmin();
 
@@ -333,9 +564,18 @@ async function main() {
 	// Two unlinked requests on purpose: one for a vehicle nobody has seen before (register it),
 	// and one for a vehicle already on file (pick the suggestion). They are the two halves of
 	// what the vincular drawer is for.
+	console.log("\nCrédito del cliente:");
+	await seedCredito();
+
+	console.log("\nTalleres aliados:");
+	await seedTalleres();
+
 	console.log("\nCitas de demostración (ninguna vinculada todavía):");
 	await seedCita();
 	await seedCitaDeUnidadConocida();
+
+	console.log("\nCita lista para recibir:");
+	await seedCitaAsignada();
 }
 
 main()

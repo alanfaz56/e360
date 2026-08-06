@@ -5,20 +5,25 @@ import { can } from "$lib/roles";
 import {
 	DURACION_MINUTOS,
 	FRANJAS,
+	GRACIA_MINUTOS,
 	citaEstadoLabel,
 	citaTipoLabel,
 	isCitaEstado,
 	isCitaTipo,
 	isFranja,
+	motivoVencida,
 	puedeTransicionar,
 	requiereHora,
 	type CitaEstado,
 	type CitaTipo,
+	type MotivoVencida,
 } from "$lib/citas";
 import {
 	acomodar,
 	enZona,
 	fechaEnZona,
+	fechaLarga,
+	horaEnZona,
 	hoy,
 	parseFecha,
 	rangoVista,
@@ -27,6 +32,7 @@ import {
 } from "$lib/agenda";
 import { recordAudit } from "./audit";
 import { ClienteError, createCliente, getCliente, trim } from "./clientes";
+import { notificar } from "./notificaciones";
 import { createUnidad } from "./unidades";
 import { pageMeta, parsePageParams, skipFor, type PageParams } from "./paginate";
 import { verifyTurnstile } from "./turnstile";
@@ -82,6 +88,7 @@ type CitaRow = {
 	unidad?: { marca: string; modelo: string; placas: string | null } | null;
 	asignado?: { name: string; email: string; role: string | null } | null;
 	entregador?: { nombre: string; telefono: string | null; roles: string[] } | null;
+	nota?: { id: string; folio: number; estado: string } | null;
 };
 
 /** Shape returned by the API. Explicit mapper — never spread a Prisma row (Rule 4). */
@@ -127,6 +134,17 @@ export const publicCita = (c: CitaRow) => ({
 	etiqueta: citaLabel(c),
 	// A confirmable appointment needs a real customer and a real vehicle on file.
 	vinculada: c.clienteId !== null && c.unidadId !== null,
+	// The service note opened when the unit actually arrived, if it already did.
+	notaId: c.nota?.id ?? null,
+	notaFolio: c.nota?.folio ?? null,
+	notaEstado: c.nota?.estado ?? null,
+	// Derived from the clock, not stored: an appointment stops being overdue the moment
+	// somebody acts on it.
+	motivoVencida: motivoVencidaDe({
+		estado: c.estado,
+		fecha: c.fecha.toISOString().slice(0, 10),
+		inicio: c.inicio?.toISOString() ?? null,
+	}),
 	createdAt: c.createdAt.toISOString(),
 });
 
@@ -137,6 +155,9 @@ const INCLUDE = {
 	unidad: { select: { marca: true, modelo: true, placas: true } },
 	asignado: { select: { name: true, email: true, role: true } },
 	entregador: { select: { nombre: true, telefono: true, roles: true } },
+	// At most one per appointment. Lets the list jump straight to the note once the unit arrived,
+	// instead of making the counter search for it by plate.
+	nota: { select: { id: true, folio: true, estado: true } },
 } satisfies Prisma.citaInclude;
 
 // --- Reading ---------------------------------------------------------------------------------
@@ -149,7 +170,35 @@ export type CitaQuery = {
 	asignadoId?: string | null;
 	clienteId?: string | null;
 	q?: string | null;
+	vencidas?: boolean;
 } & Partial<PageParams>;
+
+/**
+ * The `WHERE` for overdue appointments — derived from the clock, never stored.
+ *
+ * Two buckets, because they are two different lost sales: a request nobody ever confirmed, and a
+ * confirmed slot whose hour passed with nothing recorded against it. An appointment leaves this
+ * list the moment somebody acts on it, which is the point.
+ */
+/** Asked for a day that has already passed, still never confirmed. */
+export const whereSinAtender = (): Prisma.citaWhereInput => ({
+	estado: "solicitada",
+	fecha: { lt: enZona(hoy()) },
+});
+
+/** Confirmed, its slot is well past, and nobody moved it along. */
+export const whereSinProcesar = (ahora = new Date()): Prisma.citaWhereInput => ({
+	estado: "confirmada",
+	inicio: { not: null, lt: new Date(ahora.getTime() - GRACIA_MINUTOS * 60_000) },
+});
+
+export function whereVencidas(ahora = new Date()): Prisma.citaWhereInput {
+	return { OR: [whereSinAtender(), whereSinProcesar(ahora)] };
+}
+
+/** Which bucket a row falls in. The rule itself is pure — see `motivoVencida` in $lib/citas. */
+const motivoVencidaDe = (c: { estado: string; fecha: string; inicio: string | null }) =>
+	motivoVencida(c, new Date(), hoy());
 
 /**
  * `mias=1` is resolved against the CALLER, never against an id in the URL — otherwise it would
@@ -164,6 +213,7 @@ export function parseCitaQuery(params: URLSearchParams, actorId?: string): CitaQ
 		asignadoId: params.get("mias") === "1" && actorId ? actorId : params.get("asignadoId"),
 		clienteId: params.get("clienteId"),
 		q: params.get("q"),
+		vencidas: params.get("vencidas") === "1",
 		...parsePageParams(params),
 	};
 }
@@ -174,6 +224,7 @@ function whereFor(query: CitaQuery): Prisma.citaWhereInput {
 	const folio = query.q ? Number(query.q.replace("#", "")) : NaN;
 
 	return {
+		...(query.vencidas ? whereVencidas() : {}),
 		...(desde || hasta
 			? {
 					fecha: {
@@ -443,6 +494,18 @@ export async function solicitarCita(input: {
 		after: { fecha, franja, tipo, telefono: cita.telefono },
 	});
 
+	// A request nobody sees is a lost sale — this is the same failure `citas vencidas` reports
+	// after the fact, told to somebody while it can still be acted on.
+	await notificar({
+		evento: "cita_solicitada",
+		destino: { difusion: true },
+		titulo: "Nueva solicitud de cita",
+		cuerpo: `${cita.nombre} · ${fecha} ${FRANJAS[franja].label.toLowerCase()} — ${cita.motivo}`,
+		url: `/panel/citas/${cita.id}`,
+		entidad: "cita",
+		entidadId: cita.id,
+	});
+
 	return cita;
 }
 
@@ -521,7 +584,34 @@ export async function crearCita(input: { actor: Actor; body: Record<string, unkn
 		after: { inicio: inicio.toISOString(), fin: fin.toISOString(), tipo, clienteId, unidadId, asignadoId },
 	});
 
+	await avisarAsignado(cita, input.actor.id);
+
 	return cita;
+}
+
+/**
+ * Tell somebody a vehicle is now theirs to handle.
+ *
+ * `directo`, not `difusion`: "you have to go collect a truck at 3" is only actionable for the one
+ * person it landed on, and broadcasting it to the whole counter is how people learn to ignore
+ * notifications. Nobody is ever notified of their own assignment.
+ */
+async function avisarAsignado(
+	cita: { id: string; folio: number; asignadoId: string | null; tipo: string; inicio: Date | null; nombre: string },
+	actorId: string,
+) {
+	if (!cita.asignadoId) return;
+	const cuando = cita.inicio ? ` · ${horaEnZona(cita.inicio)}` : "";
+	await notificar({
+		evento: "cita_asignada",
+		destino: { userId: cita.asignadoId },
+		titulo: cita.tipo === "recoleccion" ? "Te toca una recolección" : "Te asignaron una cita",
+		cuerpo: `Cita #${cita.folio}${cuando} — ${cita.nombre}`,
+		url: `/panel/citas/${cita.id}`,
+		entidad: "cita",
+		entidadId: cita.id,
+		excepto: actorId,
+	});
 }
 
 /** Customer / unit links, validated: a unit must belong to the customer it is filed under. */
@@ -869,6 +959,22 @@ export async function confirmarCita(input: { actor: Actor; id: string; body: Rec
 		after: { estado: "confirmada", inicio: inicio.toISOString(), fin: fin.toISOString() },
 	});
 
+	// A cita has no tracking token — those belong to service notes — so this lands in the customer's
+	// inbox with no deep link, and reaches their phone only if they already turned push on during a
+	// previous visit. That is the honest ceiling of "notify a customer who has no account".
+	if (cita.clienteId) {
+		await notificar({
+			evento: "cliente_cita_confirmada",
+			destino: { clienteId: cita.clienteId },
+			titulo: "Tu cita quedó confirmada",
+			cuerpo: `${fechaLarga(fechaEnZona(inicio))} a las ${horaEnZona(inicio)}. Cita #${cita.folio}.`,
+			entidad: "cita",
+			entidadId: cita.id,
+		});
+	}
+
+	await avisarAsignado(cita, input.actor.id);
+
 	return cita;
 }
 
@@ -896,6 +1002,8 @@ export async function asignarCita(input: { actor: Actor; id: string; asignadoId:
 		before: { asignadoId: current.asignadoId, asignado: current.asignado?.email ?? null },
 		after: { asignadoId, asignado: cita.asignado?.email ?? null },
 	});
+
+	await avisarAsignado(cita, input.actor.id);
 
 	return cita;
 }

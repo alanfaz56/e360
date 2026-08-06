@@ -16,13 +16,15 @@
 		hint?: string;
 		icon?: NavItem["icon"];
 		href?: string;
-		tone?: "neutral" | "brand" | "warn";
+		tone?: "neutral" | "brand" | "warn" | "ok" | "danger";
 	} = $props();
 
 	const TONES = {
 		neutral: "text-sand-950",
 		brand: "text-brand-600",
 		warn: "text-accent-500",
+		ok: "text-ok",
+		danger: "text-danger",
 	};
 
 	const Tag = $derived(href ? "a" : "div");

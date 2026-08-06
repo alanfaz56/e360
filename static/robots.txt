@@ -1,3 +1,8 @@
 # allow crawling everything by default
 User-agent: *
 Disallow:
+
+# Customer tracking links. The token in the URL is the credential, so these must never be
+# crawled or indexed. The pages also send `X-Robots-Tag: noindex` and `Cache-Control: no-store`
+# — this is the belt to that pair of braces, for crawlers that only read robots.txt.
+Disallow: /seguimiento/
