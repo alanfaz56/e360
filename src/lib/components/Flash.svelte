@@ -23,6 +23,7 @@
 	import CircleCheck from "@lucide/svelte/icons/circle-check";
 	import TriangleAlert from "@lucide/svelte/icons/triangle-alert";
 	import X from "@lucide/svelte/icons/x";
+	import { untrack } from "svelte";
 	import { flashMensaje } from "$lib/flash";
 	import { toasts } from "$lib/toasts.svelte";
 	import { searchHref } from "$lib/url";
@@ -35,13 +36,28 @@
 	const cerrar = $derived(searchHref(page.url, { ok: null }));
 
 	// $effect never runs during SSR, so the server always emits the inline panel and the browser
-	// takes over from there. The effect re-runs when the message changes, which is what makes a
-	// second failed submit raise a second toast instead of going unnoticed.
+	// takes over from there.
 	let hidratado = $state(false);
 	$effect(() => {
 		hidratado = true;
-		if (error) toasts.error(error);
-		else if (exito) toasts.mostrar(exito, "ok");
+
+		// Depend on the FORM OBJECT and the URL, never on the toast store.
+		//
+		// This bit is load-bearing and was a real bug: `toasts.mostrar` READS the list (to collapse
+		// duplicates), so without `untrack` the list became a dependency of this effect — and
+		// dismissing a toast changed the list, re-ran the effect, and put the toast straight back.
+		// The close button looked broken because it was being undone a frame later.
+		//
+		// Depending on `form` itself rather than on the message string also means two identical
+		// failures in a row are two pieces of news: comparing strings would swallow the second,
+		// because `$derived` does not re-notify when a value is equal to what it already was.
+		void form;
+		void page.url.search;
+
+		untrack(() => {
+			if (error) toasts.error(error);
+			else if (exito) toasts.mostrar(exito, "ok");
+		});
 	});
 </script>
 

@@ -17,6 +17,7 @@ import {
 	type SolicitudTimbrado,
 } from "$lib/facturacion";
 import { pesos } from "$lib/comercial";
+import { soloTexto } from "$lib/errores";
 import { ClienteError } from "../clientes";
 import type { ConfigPac, DatosReceptor, Documento, ProveedorTimbrado } from "./tipos";
 
@@ -58,6 +59,15 @@ type Envoltura = {
 };
 
 /**
+ * Decode the body as UTF-8, whatever the response claims.
+ *
+ * `res.text()` honours the charset in `Content-Type`, and this API sometimes declares one that is
+ * not what it sent — which is how "facturación" reached a screen as "facturaciÃ³n". Their JSON is
+ * UTF-8 in practice, so it is decoded as UTF-8 and the header is ignored.
+ */
+const leerUtf8 = (buf: ArrayBuffer) => new TextDecoder("utf-8").decode(buf);
+
+/**
  * One request, with the whole error contract in one place.
  *
  * Their envelope is `{ response: "success" | "error", message }` on some endpoints and
@@ -66,7 +76,7 @@ type Envoltura = {
  */
 async function pedir(cfg: ConfigPac, ruta: string, init: RequestInit = {}): Promise<Envoltura> {
 	const res = await llamar(cfg, ruta, init);
-	const texto = await res.text();
+	const texto = leerUtf8(await res.arrayBuffer());
 
 	let cuerpo: Envoltura;
 	try {
@@ -121,11 +131,16 @@ async function llamar(cfg: ConfigPac, ruta: string, init: RequestInit): Promise<
  */
 function mensajeDeError(cuerpo: Envoltura): string {
 	const m = cuerpo.message;
-	if (typeof m === "string" && m.trim()) return m.trim();
+	// `soloTexto` on every path: their messages are written for their own web UI and arrive with
+	// markup in them. Escaped, the tags show on screen; unescaped, they would be an injection point
+	// in every screen that reports a failure.
+	if (typeof m === "string" && m.trim()) return soloTexto(m);
 	if (m && typeof m === "object") {
 		const partes = Object.values(m as Record<string, unknown>)
 			.flatMap((v) => (Array.isArray(v) ? v : [v]))
-			.filter((v): v is string => typeof v === "string" && v.trim() !== "");
+			.filter((v): v is string => typeof v === "string" && v.trim() !== "")
+			.map(soloTexto)
+			.filter(Boolean);
 		if (partes.length > 0) return partes.join(" ");
 	}
 	return "El proveedor de timbrado rechazó la operación.";
@@ -143,6 +158,44 @@ const primerTexto = (...valores: unknown[]): string | null => {
 const comoObjeto = (v: unknown): Record<string, unknown> =>
 	v && typeof v === "object" ? (v as Record<string, unknown>) : {};
 
+/** Their two success flags. Some endpoints set `status`, some set `response`, some set both. */
+const exito = (cuerpo: Envoltura) => cuerpo.status === "success" || cuerpo.response === "success";
+
+/**
+ * A request whose failure is an ANSWER, not an exception.
+ *
+ * For lookups, where "no existe" is the ordinary case and arrives as HTTP 200 with an error
+ * envelope. Returns null only when the call could not be made at all.
+ */
+async function intentar(cfg: ConfigPac, ruta: string): Promise<Envoltura | null> {
+	try {
+		const res = await llamar(cfg, ruta, { method: "GET" });
+		return JSON.parse(leerUtf8(await res.arrayBuffer())) as Envoltura;
+	} catch (err) {
+		console.error(`[factura.com] consulta a ${ruta} no se pudo leer`, err);
+		return null;
+	}
+}
+
+/**
+ * The client's UID, wherever this API decided to put it on that endpoint.
+ *
+ * `GET /clients/{rfc}` answers `Data: {…UID}`, `GET /clients/rfc/{rfc}` answers `Data: [{…UID}]`,
+ * `GET /clients` answers `data: [...]`, and the create answers `Data: {…UID}`. Four shapes for one
+ * id, so it is read once here rather than at each call site.
+ */
+function uidDeCliente(cuerpo: Envoltura): string | null {
+	const candidatos: unknown[] = [cuerpo.UID, cuerpo.uid];
+	for (const contenedor of [cuerpo.Data, cuerpo.data]) {
+		if (Array.isArray(contenedor)) {
+			for (const fila of contenedor) candidatos.push(comoObjeto(fila).UID, comoObjeto(fila).uid);
+		} else if (contenedor) {
+			candidatos.push(comoObjeto(contenedor).UID, comoObjeto(contenedor).uid);
+		}
+	}
+	return primerTexto(...candidatos);
+}
+
 export const facturaCom: ProveedorTimbrado = {
 	clave: "factura_com",
 	label: "factura.com",
@@ -150,26 +203,23 @@ export const facturaCom: ProveedorTimbrado = {
 	/**
 	 * Look the receptor up by RFC first, create only if absent.
 	 *
-	 * Lookup-then-create rather than create-and-ignore-the-conflict: their create endpoint answers
-	 * a validation error for a duplicate RFC, and telling those apart from a genuinely bad RFC by
-	 * string-matching the message is exactly the kind of thing that breaks when they reword it.
+	 * **"Not registered yet" does NOT arrive as a 404.** This API answers HTTP 200 with
+	 * `{"status":"error","message":"El cliente no existe"}`, which is why the lookup goes through
+	 * `intentar` — a call that hands back the envelope instead of throwing on it. Treating that as
+	 * a failure is what produced "El cliente no existe" on the stamping screen: the normal path,
+	 * reported as a breakdown.
+	 *
+	 * It is deliberately NOT matched on their wording. Any unsuccessful lookup falls through to the
+	 * create, and if the real cause was bad credentials or a malformed RFC, the create fails too
+	 * and surfaces THAT — so nothing is silently swallowed and nothing depends on a string they
+	 * are free to reword.
 	 */
 	async asegurarReceptor(cfg, datos, idExistente) {
 		if (idExistente) return idExistente;
 
-		// A 404 here means "not registered yet", which is the normal path, not a failure.
-		const encontrado = await pedir(cfg, RUTAS.clientePorRfc(datos.rfc)).catch((err) => {
-			if (err instanceof ClienteError && err.status === 404) return null;
-			throw err;
-		});
-
-		if (encontrado) {
-			const uid = primerTexto(
-				encontrado.UID,
-				encontrado.uid,
-				comoObjeto(encontrado.Data).UID,
-				comoObjeto(encontrado.data).uid,
-			);
+		const encontrado = await intentar(cfg, RUTAS.clientePorRfc(datos.rfc));
+		if (encontrado && exito(encontrado)) {
+			const uid = uidDeCliente(encontrado);
 			if (uid) return uid;
 		}
 
@@ -181,11 +231,19 @@ export const facturaCom: ProveedorTimbrado = {
 				codpos: datos.codigoPostal,
 				regimen: datos.regimenFiscal,
 				usocfdi: datos.usoCfdi,
+				// Everything else is optional over there, and a receptor with an address reads like a
+				// real customer on the CFDI instead of a row somebody automated into existence.
 				...(datos.email ? { email: datos.email } : {}),
+				...(datos.calle ? { calle: datos.calle } : {}),
+				...(datos.numero ? { numero_exterior: datos.numero } : {}),
+				...(datos.colonia ? { colonia: datos.colonia } : {}),
+				...(datos.ciudad ? { ciudad: datos.ciudad } : {}),
+				...(datos.estado ? { estado: datos.estado } : {}),
+				pais: "MX",
 			}),
 		});
 
-		const uid = primerTexto(creado.UID, creado.uid, comoObjeto(creado.Data).UID, comoObjeto(creado.data).uid);
+		const uid = uidDeCliente(creado);
 		if (!uid) {
 			console.error(
 				"[factura.com] alta de cliente sin UID en la respuesta",

@@ -90,6 +90,7 @@ export const AUDIT_ACTIONS = {
 	"factura.cancel": "Factura cancelada",
 	"factura.timbrar": "Factura timbrada ante el SAT",
 	"factura.cancelar_sat": "Cancelación solicitada al SAT",
+	"cliente.pac_link": "Cliente vinculado con el proveedor de timbrado",
 
 	// Ajustes del sistema. The entry records WHICH settings moved and, for a secret, only whether
 	// one now exists — never a value, never a hint. The audit trail must never become a way to

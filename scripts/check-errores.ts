@@ -12,6 +12,8 @@ import {
 	conReferencia,
 	mensajeDeExcepcion,
 	mensajePorEstado,
+	repararMojibake,
+	soloTexto,
 } from "../src/lib/errores.js";
 
 const SECRETO =
@@ -77,6 +79,34 @@ for (const status of [500, 502, 503, 504]) {
 assert.equal(mensajePorEstado(400, "No pudimos guardar."), "No pudimos guardar.");
 assert.equal(mensajePorEstado(418, "No pudimos guardar."), "No pudimos guardar.");
 assert.match(mensajePorEstado(404, "No pudimos abrirlo."), /No encontramos/);
+
+// --- Un mensaje de un tercero se vuelve texto plano ---------------------------------------------
+// Their errors are written for their own web UI and arrive with markup in them. Escaped, the tags
+// show on screen; unescaped they would be an injection point in every screen that reports a
+// failure. So the tags come off before the message is ever stored or shown.
+{
+	const conHtml = "<strong>No puedes facturar 2</strong>, necesitas agregar los archivos";
+	const salida = soloTexto(conHtml);
+	assert.equal(salida, "No puedes facturar 2, necesitas agregar los archivos");
+	assert.ok(!salida.includes("<"), "ninguna etiqueta sobrevive");
+}
+assert.equal(soloTexto("<script>alert(1)</script>hola"), "alert(1)hola", "el contenido queda, inerte");
+assert.equal(soloTexto("a<br>b"), "a b");
+assert.equal(soloTexto("Ca&amp;Co &lt;x&gt;"), "Ca&Co <x>");
+assert.equal(soloTexto("  espacios   de   sobra  "), "espacios de sobra");
+assert.equal(soloTexto("sin cambios"), "sin cambios");
+
+// --- Mojibake -----------------------------------------------------------------------------------
+// Some services encode their text as UTF-8 twice, so the bytes that arrive already spell the
+// mojibake and decoding them correctly cannot help. This reads each character back as one byte.
+assert.equal(repararMojibake("facturaciÃ³n"), "facturación");
+assert.equal(repararMojibake("aÃ±o mÃ¡s caro"), "año más caro");
+// And it must NEVER corrupt text that was fine to begin with.
+for (const limpio of ["facturación", "año", "plain ascii", "", "Ñandú ¿qué?", "50 % más"]) {
+	assert.equal(repararMojibake(limpio), limpio, `no debe tocar "${limpio}"`);
+}
+// Text that merely contains Ã without being double-encoded is left alone.
+assert.equal(repararMojibake("Ã"), "Ã");
 
 // --- The reference is what makes a report actionable -------------------------------------------
 // Without it "algo falló" is unfindable in a log, and the user has nothing to read out on the phone.

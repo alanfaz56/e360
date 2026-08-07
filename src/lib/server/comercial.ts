@@ -24,6 +24,7 @@ import {
 	totales,
 	type CotizacionEstado,
 } from "$lib/comercial";
+import { enZona, parseFecha, sumarDias } from "$lib/agenda";
 import { consumirFifo } from "./inventario";
 import { recordAudit } from "./audit";
 import { ClienteError, trim } from "./clientes";
@@ -114,13 +115,20 @@ export async function getCotizacion(id: string) {
 }
 
 export async function listCotizaciones(
-	query: { notaId?: string | null; estado?: string | null; estadoInterno?: string | null } & Partial<PageParams>,
+	query: {
+		notaId?: string | null;
+		estado?: string | null;
+		estadoInterno?: string | null;
+		desde?: string | null;
+		hasta?: string | null;
+	} & Partial<PageParams>,
 ) {
 	const paging = { page: query.page ?? 1, perPage: query.perPage ?? 25 };
 	const where: Prisma.cotizacionWhereInput = {
 		...(query.notaId ? { notaId: query.notaId } : {}),
 		...(isCotizacionEstado(query.estado) ? { estado: query.estado } : {}),
 		...(isCotizacionInterno(query.estadoInterno) ? { estadoInterno: query.estadoInterno } : {}),
+		...rangoCreado(query.desde, query.hasta),
 	};
 
 	const [total, rows] = await Promise.all([
@@ -135,6 +143,93 @@ export async function listCotizaciones(
 	]);
 	return { cotizaciones: rows.map(publicCotizacion), ...pageMeta(total, paging) };
 }
+
+/**
+ * A `createdAt` range from two shop-local calendar days, both inclusive.
+ *
+ * `hasta` covers the WHOLE day: a filter that ends at midnight silently drops everything quoted
+ * that afternoon, which is the day somebody is most likely to be asking about.
+ */
+export function rangoCreado(desde: string | null | undefined, hasta: string | null | undefined) {
+	const d = parseFecha(desde);
+	const h = parseFecha(hasta);
+	if (!d && !h) return {};
+	return {
+		createdAt: {
+			...(d ? { gte: enZona(d) } : {}),
+			// Start of the next day, exclusive — the honest way to say "through the end of `hasta`"
+			// without depending on how many milliseconds a timestamp column keeps.
+			...(h ? { lt: enZona(sumarDias(h, 1)) } : {}),
+		},
+	};
+}
+
+/**
+ * The money picture for a period: what was quoted, what the customer approved, what got invoiced
+ * and what has actually been collected.
+ *
+ * Four different questions the shop asks about the same window, and they are counted from four
+ * different places on purpose — a quote being `cobrada` is derived from payments, so counting it
+ * as "collected" would be counting the same fact twice through a flag instead of through money.
+ */
+export async function resumenDinero(desde: string | null, hasta: string | null) {
+	const rango = rangoCreado(desde, hasta);
+
+	const [cotizaciones, facturas, pagos] = await Promise.all([
+		prisma.cotizacion.findMany({ where: rango, select: { estado: true, total: true } }),
+		prisma.factura.findMany({
+			where: { ...rango, estado: { not: "cancelada" } },
+			select: { total: true, vence: true, estado: true, uuid: true, pagos: { select: { monto: true } } },
+		}),
+		// Payments are counted by when the MONEY arrived, not by when the invoice was issued: "how
+		// much came in this month" is not "how much of what we billed this month came in".
+		prisma.pago.findMany({
+			where: rangoPagado(desde, hasta),
+			select: { monto: true },
+		}),
+	]);
+
+	const sumar = (xs: { total?: unknown; monto?: unknown }[], campo: "total" | "monto") =>
+		xs.reduce((s, x) => s + aCentavos(x[campo] as never), 0n);
+
+	let porCobrar = 0n;
+	let vencido = 0n;
+	const ahora = new Date();
+	for (const f of facturas) {
+		const saldo = aCentavos(f.total) - sumar(f.pagos, "monto");
+		if (saldo <= 0n) continue;
+		porCobrar += saldo;
+		if (f.vence && f.vence < ahora) vencido += saldo;
+	}
+
+	const autorizadas = cotizaciones.filter((c) => c.estado === "autorizada");
+
+	return {
+		cotizado: pesos(sumar(cotizaciones, "total")),
+		cotizadas: cotizaciones.length,
+		autorizado: pesos(sumar(autorizadas, "total")),
+		autorizadas: autorizadas.length,
+		facturado: pesos(sumar(facturas, "total")),
+		facturas: facturas.length,
+		timbradas: facturas.filter((f) => f.uuid !== null).length,
+		cobrado: pesos(sumar(pagos, "monto")),
+		pagos: pagos.length,
+		porCobrar: pesos(porCobrar),
+		vencido: pesos(vencido),
+	};
+}
+
+const rangoPagado = (desde: string | null | undefined, hasta: string | null | undefined) => {
+	const d = parseFecha(desde);
+	const h = parseFecha(hasta);
+	if (!d && !h) return {};
+	return {
+		pagadoAt: {
+			...(d ? { gte: enZona(d) } : {}),
+			...(h ? { lt: enZona(sumarDias(h, 1)) } : {}),
+		},
+	};
+};
 
 /** Line items from the request, validated. Amounts are recomputed, never taken on trust. */
 function leerConceptos(value: unknown) {
@@ -720,6 +815,8 @@ export async function listFacturas(
 		notaId?: string | null;
 		estado?: string | null;
 		vencidas?: boolean;
+		desde?: string | null;
+		hasta?: string | null;
 	} & Partial<PageParams>,
 ) {
 	const paging = { page: query.page ?? 1, perPage: query.perPage ?? 25 };
@@ -728,6 +825,7 @@ export async function listFacturas(
 		...(query.notaId ? { notaId: query.notaId } : {}),
 		...(query.estado ? { estado: query.estado } : {}),
 		...(query.vencidas ? { estado: "emitida", vence: { lt: new Date() } } : {}),
+		...rangoCreado(query.desde, query.hasta),
 	};
 
 	const [total, rows] = await Promise.all([

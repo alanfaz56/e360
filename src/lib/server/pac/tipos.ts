@@ -37,6 +37,12 @@ export type DatosReceptor = {
 	regimenFiscal: string;
 	usoCfdi: string;
 	email: string | null;
+	/** Optional everywhere. A receptor with an address reads like a real customer on the CFDI. */
+	calle: string | null;
+	numero: string | null;
+	colonia: string | null;
+	ciudad: string | null;
+	estado: string | null;
 };
 
 export type Documento = {

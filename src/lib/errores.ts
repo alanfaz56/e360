@@ -41,6 +41,60 @@ export function mensajePorEstado(status: number, alternativa: string): string {
 }
 
 /**
+ * Undo double-encoded UTF-8 — "facturaciÃ³n" back into "facturación".
+ *
+ * Some services encode their text as UTF-8 twice, so the bytes that arrive already spell the
+ * mojibake and decoding them correctly cannot help: `ó` (C3 B3) went out as `Ã³` (C3 83 C2 B3).
+ * The fix is to read each character back as one byte and decode THAT as UTF-8.
+ *
+ * Two guards, because running this on clean text would corrupt it:
+ *
+ * - Only when the tell-tale `Ã`/`Â` + continuation-byte pair is present.
+ * - `fatal: true`, so text that was not actually double-encoded throws and is left alone.
+ */
+export function repararMojibake(texto: string): string {
+	// U+00C3 (Ã) or U+00C2 (Â) followed by a UTF-8 continuation byte read as latin-1. Written
+	// as escapes so the pattern cannot itself be mangled by an editor re-saving this file.
+	if (!/[ÃÂ][-¿]/.test(texto)) return texto;
+	// A character above 255 means this is not a latin-1-shaped string, so the premise does not hold.
+	for (const ch of texto) if (ch.codePointAt(0)! > 0xff) return texto;
+
+	try {
+		const bytes = Uint8Array.from(texto, (c) => c.charCodeAt(0));
+		return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+	} catch {
+		return texto;
+	}
+}
+
+/**
+ * A message from an outside service, reduced to plain text.
+ *
+ * Third parties write their errors for their own web UI, so they arrive with markup in them —
+ * factura.com answers things like `<strong>No puedes facturar 2</strong>, necesitas agregar…`.
+ * Rendered escaped that shows the tags to the user; rendered with `{@html}` it would be an
+ * injection point in every screen that reports a failure. Neither is acceptable, so the tags come
+ * off here, once, before the message is ever stored or shown.
+ *
+ * Not a general HTML parser and not trying to be — this is a sanitizer whose output is text, so
+ * anything it fails to recognise stays harmlessly literal.
+ */
+export function soloTexto(mensaje: string): string {
+	return repararMojibake(mensaje)
+		.replace(/<br\s*\/?>/gi, " ")
+		.replace(/<\/(p|div|li|h[1-6])>/gi, " ")
+		.replace(/<[^>]*>/g, "")
+		.replace(/&nbsp;/gi, " ")
+		.replace(/&amp;/gi, "&")
+		.replace(/&lt;/gi, "<")
+		.replace(/&gt;/gi, ">")
+		.replace(/&quot;/gi, '"')
+		.replace(/&#0?39;|&apos;/gi, "'")
+		.replace(/\s+/g, " ")
+		.trim();
+}
+
+/**
  * A thrown value turned into something a person can read. **Never `err.message`** unless the error
  * says its message is safe to show.
  */

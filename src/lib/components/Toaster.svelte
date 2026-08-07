@@ -2,9 +2,13 @@
 	Where every toast lands. Mounted ONCE, by the root layout, so the public pages and the panel
 	report failures the same way and nothing has to remember to include it.
 
-	Top of the screen on every size, deliberately: the primary action of a form lives at the bottom
-	where a thumb reaches (Rule 6), and a toast that covers the button somebody is trying to press
-	is worse than no toast.
+	**Bottom LEFT.** Drawers slide in from the right and take the full width of a phone, so a toast
+	anywhere on that side is either under the drawer or on top of the form inside it — which is
+	exactly where the message about that form needs to be readable. The bottom-left corner is the
+	one place nothing else in this app occupies.
+
+	Above the drawer's z-index but out of its way horizontally, and `pointer-events-none` on the
+	container so the empty space beside a toast never swallows a click on the page behind.
 
 	`role="alert"` for a failure and `role="status"` for a confirmation: a screen reader should
 	interrupt for bad news and wait its turn for good news.
@@ -28,7 +32,7 @@
 
 {#if toasts.lista.length > 0}
 	<div
-		class="pointer-events-none fixed inset-x-2 top-2 z-60 flex flex-col gap-2 sm:left-auto sm:right-4 sm:top-4 sm:w-96"
+		class="pointer-events-none fixed inset-x-2 bottom-2 z-60 flex flex-col-reverse gap-2 sm:bottom-4 sm:left-4 sm:right-auto sm:w-96"
 	>
 		{#each toasts.lista as toast (toast.id)}
 			<div
@@ -57,7 +61,7 @@
 					type="button"
 					onclick={() => toasts.quitar(toast.id)}
 					aria-label="Cerrar aviso"
-					class="-my-1 -mr-1 shrink-0 rounded p-1.5 text-sand-500 hover:bg-sand-950/5 hover:text-sand-950"
+					class="-my-1 -mr-1 shrink-0 rounded p-2 text-sand-500 hover:bg-sand-950/5 hover:text-sand-950"
 				>
 					<X
 						size={16}
@@ -74,10 +78,11 @@
 		animation: entra 160ms ease-out;
 	}
 
+	/* Up from the bottom edge, which is where it now comes from. */
 	@keyframes entra {
 		from {
 			opacity: 0;
-			transform: translateY(-0.5rem);
+			transform: translateY(0.5rem);
 		}
 	}
 

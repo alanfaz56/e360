@@ -32,7 +32,7 @@ import {
 } from "$lib/facturacion";
 import { recordAudit } from "./audit";
 import { ClienteError, trim } from "./clientes";
-import { proveedorActivo } from "./pac";
+import { proveedorActivo, type ConfigPac, type ProveedorTimbrado } from "./pac";
 import type { Actor } from "./guard";
 
 /**
@@ -87,6 +87,114 @@ async function prepararTimbrado(facturaId: string) {
 	return { factura, cliente: c, conceptos };
 }
 
+/** The customer's own fields the PAC will accept, checked once. */
+type ClienteFiscal = {
+	id: string;
+	nombreCompleto: string;
+	rfc: string | null;
+	regimenFiscal: string | null;
+	codigoPostal: string | null;
+	usoCfdi: string | null;
+	email: string | null;
+	direccion: string | null;
+	facturaComUid: string | null;
+	facturaComEntorno: string | null;
+};
+
+/**
+ * Find or create this customer AT the provider, and remember which one they are.
+ *
+ * The uid is stored so a customer is registered once rather than looked up on every sale, and it
+ * is stored **with its environment**: a sandbox uid names nothing in production, and stamping
+ * against a receptor that does not exist fails with a message that names neither the customer nor
+ * the cause.
+ *
+ * Its own function because two callers need it — stamping, which does it on the way past, and the
+ * customer screen, which does it on purpose so the link can be checked before an invoice depends
+ * on it.
+ */
+export async function vincularReceptor(
+	cliente: ClienteFiscal,
+	proveedor: ProveedorTimbrado,
+	cfg: ConfigPac,
+): Promise<string> {
+	const faltantes = [
+		[cliente.rfc, "el RFC"],
+		[cliente.regimenFiscal, "el régimen fiscal"],
+		[cliente.codigoPostal, "el código postal"],
+		[cliente.usoCfdi, "el uso de CFDI"],
+	]
+		.filter(([v]) => !v)
+		.map(([, nombre]) => nombre as string);
+
+	if (faltantes.length > 0) {
+		throw new ClienteError(
+			409,
+			`Para facturar falta ${faltantes.join(", ")} de ${cliente.nombreCompleto}. Complétalo en su ficha.`,
+		);
+	}
+
+	const uidVigente = cliente.facturaComEntorno === cfg.entorno ? cliente.facturaComUid : null;
+
+	const receptorId = await proveedor.asegurarReceptor(
+		cfg,
+		{
+			rfc: cliente.rfc!,
+			nombre: cliente.nombreCompleto,
+			codigoPostal: cliente.codigoPostal!,
+			regimenFiscal: cliente.regimenFiscal!,
+			usoCfdi: cliente.usoCfdi!,
+			email: cliente.email,
+			// One free-text address column here, several fields over there. Only what we actually
+			// hold is sent; inventing a colonia to fill a form is how a CFDI ends up with an address
+			// nobody can deliver to.
+			calle: cliente.direccion,
+			numero: null,
+			colonia: null,
+			ciudad: null,
+			estado: null,
+		},
+		uidVigente,
+	);
+
+	if (receptorId !== cliente.facturaComUid || cliente.facturaComEntorno !== cfg.entorno) {
+		await prisma.cliente.update({
+			where: { id: cliente.id },
+			data: { facturaComUid: receptorId, facturaComEntorno: cfg.entorno },
+		});
+	}
+
+	return receptorId;
+}
+
+/**
+ * Link a customer to the PAC on purpose, from their own screen.
+ *
+ * Reuses `factura:timbrar` rather than adding a key: this is the first half of stamping, run early
+ * so the link can be verified before an invoice depends on it. It creates nothing on our side and
+ * nothing that costs anything — a receptor at the PAC is free.
+ */
+export async function vincularClienteConPac(input: { actor: Actor; clienteId: string }) {
+	if (!can(input.actor.role, "factura:timbrar")) throw new ClienteError(403, "Sin permiso: factura:timbrar");
+
+	const cliente = await prisma.cliente.findUnique({ where: { id: input.clienteId } });
+	if (!cliente) throw new ClienteError(404, "Cliente no encontrado");
+
+	const { proveedor, cfg } = await proveedorActivo();
+	const uid = await vincularReceptor(cliente, proveedor, cfg);
+
+	await recordAudit(prisma, {
+		action: "cliente.pac_link",
+		actor: input.actor,
+		entityId: cliente.id,
+		entityLabel: cliente.nombreCompleto,
+		summary: `${cliente.nombreCompleto} vinculado con ${proveedor.label} (${cfg.entorno})`,
+		after: { uid, entorno: cfg.entorno, proveedor: proveedor.clave },
+	});
+
+	return { uid, entorno: cfg.entorno };
+}
+
 /**
  * Stamp. `factura:timbrar` — Admin and Gerente.
  *
@@ -100,29 +208,7 @@ export async function timbrarFactura(input: { actor: Actor; id: string }) {
 	const { factura, cliente, conceptos } = await prepararTimbrado(input.id);
 	const { proveedor, cfg } = await proveedorActivo();
 
-	// A uid from the other environment is not a uid here. Re-registering is cheap; stamping
-	// against a receptor that does not exist fails with a message that names neither.
-	const uidVigente = cliente.facturaComEntorno === cfg.entorno ? cliente.facturaComUid : null;
-
-	const receptorId = await proveedor.asegurarReceptor(
-		cfg,
-		{
-			rfc: cliente.rfc!,
-			nombre: cliente.nombreCompleto,
-			codigoPostal: cliente.codigoPostal!,
-			regimenFiscal: cliente.regimenFiscal!,
-			usoCfdi: cliente.usoCfdi!,
-			email: cliente.email,
-		},
-		uidVigente,
-	);
-
-	if (receptorId !== cliente.facturaComUid || cliente.facturaComEntorno !== cfg.entorno) {
-		await prisma.cliente.update({
-			where: { id: cliente.id },
-			data: { facturaComUid: receptorId, facturaComEntorno: cfg.entorno },
-		});
-	}
+	const receptorId = await vincularReceptor(cliente, proveedor, cfg);
 
 	const ivaTotal = aCentavos(factura.iva);
 	const lineas = armarConceptos(conceptos, ivaTotal);

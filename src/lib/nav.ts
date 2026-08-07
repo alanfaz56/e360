@@ -61,7 +61,9 @@ export const NAV: readonly NavItem[] = [
 		ocultarSi: "nota:read",
 	},
 	{ href: "/panel/notas", label: "Notas de servicio", icon: "clipboard-list", permission: "nota:read" },
-	{ href: "/panel/cotizaciones", label: "Cotizaciones", icon: "receipt-text", permission: "cotizacion:read" },
+	// Named for what it answers, not for one of the two things it lists: quotes, invoices, what was
+	// collected and what is still owed, over a period.
+	{ href: "/panel/cotizaciones", label: "Dinero", icon: "receipt-text", permission: "cotizacion:read" },
 	{ href: "/panel/inventario", label: "Inventario", icon: "package", permission: "producto:read" },
 	{ href: "/panel/clientes", label: "Clientes", icon: "contact", permission: "cliente:read" },
 	{ href: "/panel/unidades", label: "Unidades", icon: "car", permission: "unidad:read" },

@@ -58,6 +58,14 @@ model user {
   refaccionesSolicitadas solicitud_refaccion[]  @relation("refaccionSolicitadaPor")
   refaccionesResueltas   solicitud_refaccion[]  @relation("refaccionResueltaPor")
 
+  /// Declared because it is USED: `alcanceDeTaller` and `mecanicosDeTaller` both query
+  /// `user WHERE tallerId = …`, which is the boundary that decides which notes a partner shop's
+  /// mechanic can open at all.
+  ///
+  /// It exists in the database from `usuarios_de_taller_aliado` and was not declared here, so the
+  /// next `migrate diff` read it as drift and emitted a DROP — an index the database has and the
+  /// schema does not is exactly that. Declaring it is what stops it happening again.
+  @@index([tallerId])
   @@map("user")
 }
 
@@ -481,6 +489,9 @@ model taller {
   @@index([nombre])
   @@index([archivedAt])
   @@index([estado])
+  /// `tallerMencionado` filters on it for every customer-facing comment and quote line, and the
+  /// registry list sorts by it. Declared so it stops reading as drift.
+  @@index([esInterno])
   @@map("taller")
 }
 
@@ -641,6 +652,8 @@ model nota_evidencia {
 
   @@index([notaId])
   @@index([categoria])
+  /// Every comment renders its attachments through this.
+  @@index([comentarioId])
   @@map("nota_evidencia")
 }
 
@@ -887,6 +900,9 @@ model factura {
   @@index([clienteId])
   @@index([estado])
   @@index([vence])
+  /// The provider's own id for the stamped document. Declared, not just created in SQL: an index
+  /// the database has and the schema does not is drift, and the next `migrate diff` drops it.
+  @@index([pacUid])
   @@map("factura")
 }
 

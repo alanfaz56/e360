@@ -5,6 +5,8 @@
 	import Camera from "@lucide/svelte/icons/camera";
 	import ChevronLeft from "@lucide/svelte/icons/chevron-left";
 	import ChevronRight from "@lucide/svelte/icons/chevron-right";
+	import Columns3 from "@lucide/svelte/icons/columns-3";
+	import Rows3 from "@lucide/svelte/icons/rows-3";
 	import Badge from "$lib/components/Badge.svelte";
 	import Button from "$lib/components/Button.svelte";
 	import DataTable from "$lib/components/DataTable.svelte";
@@ -35,6 +37,34 @@
 	description="Las unidades que están —o estuvieron— en el taller."
 >
 	{#snippet actions()}
+		<!--
+			Board or table, keeping every filter: the switch is a change of lens, not of subject.
+			The board is the default, so it is the one with no param — `?vista=tabla` opts out.
+		-->
+		<span class="flex rounded-md border border-sand-300 p-0.5">
+			<Button
+				href={searchHref(page.url, { vista: null, page: null })}
+				variant={data.tablero ? "primary" : "ghost"}
+				size="sm"
+			>
+				<Columns3
+					size={15}
+					aria-hidden="true"
+				/>
+				Tablero
+			</Button>
+			<Button
+				href={searchHref(page.url, { vista: "tabla", page: null })}
+				variant={data.tablero ? "ghost" : "primary"}
+				size="sm"
+			>
+				<Rows3
+					size={15}
+					aria-hidden="true"
+				/>
+				Tabla
+			</Button>
+		</span>
 		<Button
 			href={searchHref(page.url, { abiertas: data.filtros.abiertas ? null : "1", page: null })}
 			variant={data.filtros.abiertas ? "primary" : "outline"}
@@ -114,6 +144,91 @@
 				aria-hidden="true"
 			/>{/snippet}
 	</EmptyState>
+{:else if data.tablero}
+	<!--
+		The same rows read down instead of across. "Where is every vehicle stuck" is the question the
+		counter asks all day, and it is the one a list sorted by date cannot answer: three units
+		waiting on a partner shop are invisible in a table and impossible to miss as a column.
+
+		No drag and drop here, unlike citas: moving a note is never just a status. `en_taller` needs a
+		workshop and a reason, `entregada` records who collected the vehicle, `cancelada` needs a
+		motivo — `NOTA_TRANSICIONES` makes all three unreachable through the plain advance on purpose.
+		A card that dragged into one of those columns would promise something the drawer behind it
+		still has to ask for. The card opens the note, where every move already lives.
+
+		Columns scroll sideways in their own container; the page never does.
+	-->
+	<div class="overflow-x-auto pb-2">
+		<div class="flex min-w-max gap-3">
+			{#each data.estados as col (col.value)}
+				{@const enCol = data.notas.filter((n) => n.estado === col.value)}
+				<section
+					class="w-64 shrink-0 rounded-lg border border-sand-200 bg-sand-50"
+					aria-label="Notas {col.label}"
+				>
+					<h2
+						class="flex items-center justify-between gap-2 border-b border-sand-200 px-3 py-2 text-sm font-medium text-sand-800"
+					>
+						<Badge tone={notaEstadoTone(col.value)}>{col.label}</Badge>
+						<span class="text-xs text-sand-500">{enCol.length}</span>
+					</h2>
+					<ul class="max-h-[70svh] space-y-2 overflow-y-auto p-2">
+						{#each enCol as nota (nota.id)}
+							<li>
+								<a
+									href="/panel/notas/{nota.id}"
+									class="block rounded border border-sand-200 bg-white p-2 text-sm hover:border-brand-600"
+								>
+									<span class="flex flex-wrap items-baseline gap-1.5">
+										<span class="font-medium text-sand-950">{nota.clienteNombre}</span>
+										<span class="text-xs text-sand-500">#{nota.folio}</span>
+									</span>
+									<span class="mt-0.5 block truncate text-xs text-sand-600">
+										{nota.unidadEtiqueta}
+									</span>
+									{#if nota.unidadNumeroEconomico}
+										<span class="block text-xs text-sand-500">
+											Econ. {nota.unidadNumeroEconomico}
+										</span>
+									{/if}
+									<span class="mt-1 flex flex-wrap items-center gap-1.5">
+										<!-- The two things that make a card actionable at a glance: who is holding
+										     the vehicle, and whether anybody ever walked around it. -->
+										{#if nota.tallerActualNombre}
+											<Badge tone="brand">
+												<Wrench
+													size={11}
+													class="inline"
+													aria-hidden="true"
+												/>
+												{nota.tallerActualNombre}
+											</Badge>
+										{/if}
+										{#if !nota.inspeccionada}<Badge tone="warn">Sin inspección</Badge>{/if}
+										{#if nota.evidencias > 0}
+											<span class="inline-flex items-center gap-0.5 text-xs text-sand-500">
+												<Camera
+													size={12}
+													aria-hidden="true"
+												/>{nota.evidencias}
+											</span>
+										{/if}
+									</span>
+									<span class="mt-1 block text-xs text-sand-400">{dia(nota.recibidaAt)}</span>
+								</a>
+							</li>
+						{:else}
+							<li class="px-1 py-3 text-center text-xs text-sand-400">Vacío</li>
+						{/each}
+					</ul>
+				</section>
+			{/each}
+		</div>
+	</div>
+	<p class="mt-3 text-xs text-sand-500">
+		El tablero muestra hasta 200 notas del filtro actual, sin paginar: una columna paginada miente sobre lo que
+		tiene. Abre la nota para moverla — cada paso pide su taller, su motivo o quién recibió la unidad.
+	</p>
 {:else}
 	<DataTable
 		columns={["Folio", "Recibida", "Cliente", "Unidad", "Estado", "Km", ""]}
