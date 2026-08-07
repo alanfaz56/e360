@@ -1,11 +1,10 @@
-import { error, fail, type Actions, type ServerLoad } from "@sveltejs/kit";
+import { type Actions, type ServerLoad } from "@sveltejs/kit";
 import { CONTACTO_ROLES } from "$lib/contacto-roles";
 import { assignableContactoRoles, can } from "$lib/roles";
 import { requirePermission, requireUser } from "$lib/server/guard";
 import {
 	CLIENTE_TIPOS,
 	CLIENTE_TIPO_LABEL,
-	ClienteError,
 	getCliente,
 	publicCliente,
 	setClienteArchivado,
@@ -13,6 +12,7 @@ import {
 } from "$lib/server/clientes";
 import { createContacto, deleteContacto, listContactos, updateContacto } from "$lib/server/contactos";
 import { createUnidad, listUnidades } from "$lib/server/unidades";
+import { fallaEnCarga, fallo } from "$lib/server/errores";
 
 export const load: ServerLoad = async ({ locals, params }) => {
 	const actor = requirePermission(locals, "cliente:read");
@@ -21,8 +21,7 @@ export const load: ServerLoad = async ({ locals, params }) => {
 	try {
 		cliente = await getCliente(params.id!);
 	} catch (err) {
-		if (err instanceof ClienteError) error(err.status, err.message);
-		throw err;
+		fallaEnCarga(err);
 	}
 
 	const [contactos, unidades] = await Promise.all([
@@ -61,8 +60,7 @@ export const actions: Actions = {
 			await updateCliente({ actor, id: params.id!, body });
 			return { ok: "Cliente actualizado." };
 		} catch (err) {
-			if (err instanceof ClienteError) return fail(err.status, { message: err.message });
-			throw err;
+			return fallo(err);
 		}
 	},
 
@@ -77,8 +75,7 @@ export const actions: Actions = {
 			});
 			return { ok: cliente.archivedAt ? "Cliente archivado." : "Cliente restaurado." };
 		} catch (err) {
-			if (err instanceof ClienteError) return fail(err.status, { message: err.message });
-			throw err;
+			return fallo(err);
 		}
 	},
 
@@ -98,8 +95,7 @@ export const actions: Actions = {
 			});
 			return { ok: "Contacto agregado." };
 		} catch (err) {
-			if (err instanceof ClienteError) return fail(err.status, { message: err.message });
-			throw err;
+			return fallo(err);
 		}
 	},
 
@@ -118,8 +114,7 @@ export const actions: Actions = {
 			});
 			return { ok: "Contacto actualizado." };
 		} catch (err) {
-			if (err instanceof ClienteError) return fail(err.status, { message: err.message });
-			throw err;
+			return fallo(err);
 		}
 	},
 
@@ -130,8 +125,7 @@ export const actions: Actions = {
 			await deleteContacto({ actor, id: String(form.get("contactoId") ?? "") });
 			return { ok: "Contacto eliminado." };
 		} catch (err) {
-			if (err instanceof ClienteError) return fail(err.status, { message: err.message });
-			throw err;
+			return fallo(err);
 		}
 	},
 
@@ -142,8 +136,7 @@ export const actions: Actions = {
 			await createUnidad({ actor, clienteId: params.id!, body });
 			return { ok: "Unidad registrada." };
 		} catch (err) {
-			if (err instanceof ClienteError) return fail(err.status, { message: err.message });
-			throw err;
+			return fallo(err);
 		}
 	},
 };

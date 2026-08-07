@@ -1,8 +1,7 @@
-import { error, fail, type Actions, type ServerLoad } from "@sveltejs/kit";
+import { type Actions, type ServerLoad } from "@sveltejs/kit";
 import prisma from "$lib/prisma";
 import { can } from "$lib/roles";
 import { requirePermission, requireUser } from "$lib/server/guard";
-import { ClienteError } from "$lib/server/clientes";
 import { historialKilometraje, historialUnidad } from "$lib/server/notas";
 import {
 	getUnidad,
@@ -12,6 +11,7 @@ import {
 	transferUnidad,
 	updateUnidad,
 } from "$lib/server/unidades";
+import { fallaEnCarga, fallo } from "$lib/server/errores";
 
 export const load: ServerLoad = async ({ locals, params }) => {
 	const actor = requirePermission(locals, "unidad:read");
@@ -20,8 +20,7 @@ export const load: ServerLoad = async ({ locals, params }) => {
 	try {
 		unidad = await getUnidad(params.id!);
 	} catch (err) {
-		if (err instanceof ClienteError) error(err.status, err.message);
-		throw err;
+		fallaEnCarga(err);
 	}
 
 	const puedeTransferir = can(actor.role, "unidad:transfer");
@@ -77,8 +76,7 @@ export const actions: Actions = {
 			await updateUnidad({ actor, id: params.id!, body });
 			return { ok: "Unidad actualizada." };
 		} catch (err) {
-			if (err instanceof ClienteError) return fail(err.status, { message: err.message });
-			throw err;
+			return fallo(err);
 		}
 	},
 
@@ -93,8 +91,7 @@ export const actions: Actions = {
 			});
 			return { ok: unidad.archivedAt ? "Unidad archivada." : "Unidad restaurada." };
 		} catch (err) {
-			if (err instanceof ClienteError) return fail(err.status, { message: err.message });
-			throw err;
+			return fallo(err);
 		}
 	},
 
@@ -111,8 +108,7 @@ export const actions: Actions = {
 			});
 			return { ok: "Unidad transferida. Se revocaron las autorizaciones del dueño anterior." };
 		} catch (err) {
-			if (err instanceof ClienteError) return fail(err.status, { message: err.message });
-			throw err;
+			return fallo(err);
 		}
 	},
 };

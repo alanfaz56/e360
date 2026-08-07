@@ -1,11 +1,12 @@
-import { fail, type Actions, type ServerLoad } from "@sveltejs/kit";
-import { hoy, isVista, parseFecha, sumarDias } from "$lib/agenda";
+import { type Actions, type ServerLoad } from "@sveltejs/kit";
+import { hoy, isVista, parseFecha, pasoDeVista } from "$lib/agenda";
 import { can } from "$lib/roles";
-import { CitaError, agenda, crearCita, resumenAgenda } from "$lib/server/citas";
+import { agenda, crearCita, resumenAgenda } from "$lib/server/citas";
 import { listClientes } from "$lib/server/clientes";
 import { listUnidades } from "$lib/server/unidades";
 import { requirePermission, requireUser } from "$lib/server/guard";
 import { listUsers } from "$lib/server/users";
+import { fallo } from "$lib/server/errores";
 
 /**
  * /panel/agenda is the calendar — only the calendar.
@@ -61,8 +62,10 @@ export const load: ServerLoad = async ({ locals, url }) => {
 		asignables,
 		// Navigation, precomputed so the template stays markup. The week is a rolling seven days
 		// from the anchor, so stepping moves the whole window.
-		anterior: sumarDias(fecha, vista === "dia" ? -1 : -7),
-		siguiente: sumarDias(fecha, vista === "dia" ? 1 : 7),
+		// Each view steps by its own span, so "next" always means the next screenful. A month view
+		// stepped by 7 days would show the same month four times before moving on.
+		anterior: pasoDeVista(vista, fecha, -1),
+		siguiente: pasoDeVista(vista, fecha, 1),
 		hoy: hoy(),
 		mias,
 		clientes,
@@ -84,8 +87,7 @@ export const actions: Actions = {
 			await crearCita({ actor, body });
 			return { creada: true };
 		} catch (err) {
-			if (err instanceof CitaError) return fail(err.status, { message: err.message, valores: body });
-			throw err;
+			return fallo(err, { valores: body });
 		}
 	},
 };

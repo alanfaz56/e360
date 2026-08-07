@@ -12,7 +12,7 @@
 	import PageHeader from "$lib/components/PageHeader.svelte";
 	import Flash from "$lib/components/Flash.svelte";
 	import { CITA_TIPOS, CITA_TIPO_DEFAULT, CITA_TIPO_KEYS } from "$lib/citas";
-	import { fechaLarga } from "$lib/agenda";
+	import { VISTAS, VISTA_KEYS, ZONA, fechaLarga } from "$lib/agenda";
 	import { searchHref } from "$lib/url";
 	import { page } from "$app/state";
 
@@ -29,11 +29,26 @@
 	const INPUT =
 		"mt-1 w-full rounded-md border border-sand-300 bg-white px-3 py-2 text-sm focus:border-brand-600 focus:outline-none";
 
+	const mesLargo = (f: string) =>
+		new Intl.DateTimeFormat("es-MX", { timeZone: ZONA, month: "long", year: "numeric" }).format(
+			new Date(`${f}T12:00:00-07:00`),
+		);
+
+	// What the arrows are stepping through, in words. A month says its month; everything else says
+	// the span it actually covers — which for `mes` is NOT desde–hasta, because the grid pads with
+	// days from the neighbouring months and naming those would be a lie about what you are looking at.
 	const rango = $derived(
 		data.vista === "dia"
 			? fechaLarga(data.fecha)
-			: `${fechaLarga(data.desde).replace(/^\w+, /, "")} – ${fechaLarga(data.hasta).replace(/^\w+, /, "")}`,
+			: data.vista === "mes"
+				? mesLargo(data.fecha)
+				: `${fechaLarga(data.desde).replace(/^\w+, /, "")} – ${fechaLarga(data.hasta).replace(/^\w+, /, "")}`,
 	);
+
+	// Switching views KEEPS the date. Jumping to today every time you change view is the thing
+	// that makes a calendar feel like it is fighting you: you were looking at the 15th for a
+	// reason, and the reason survives the switch.
+	const cambiarVista = (vista: string) => searchHref(page.url, { vista, drawer: null });
 	const irA = (fecha: string) => searchHref(page.url, { fecha, drawer: null });
 </script>
 
@@ -122,13 +137,15 @@
 			/>
 			Solo las mías
 		</Button>
-		{#each [["semana", "Semana"], ["dia", "Día"]] as [value, label] (value)}
+		<!-- Narrowest first, and the anchor date rides along: switching view is a change of lens,
+		     not a change of subject. -->
+		{#each VISTA_KEYS as value (value)}
 			<Button
-				href={searchHref(page.url, { vista: value, drawer: null })}
+				href={cambiarVista(value)}
 				variant={data.vista === value ? "primary" : "ghost"}
 				size="sm"
 			>
-				{label}
+				{VISTAS[value].label}
 			</Button>
 		{/each}
 	</div>
@@ -149,6 +166,7 @@
 <Calendar
 	dias={data.dias}
 	vista={data.vista}
+	fecha={data.fecha}
 />
 
 {#if drawer === "nueva" && data.puede.crear}

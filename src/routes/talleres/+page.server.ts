@@ -1,8 +1,8 @@
-import { fail, redirect, type Actions, type ServerLoad } from "@sveltejs/kit";
+import { redirect, type Actions, type ServerLoad } from "@sveltejs/kit";
 import { BENEFICIOS_TALLER, REQUISITOS_TALLER } from "$lib/talleres";
-import { ClienteError } from "$lib/server/clientes";
 import { solicitarTaller } from "$lib/server/talleres";
 import { turnstileSiteKey } from "$lib/server/turnstile";
+import { fallo } from "$lib/server/errores";
 
 /**
  * The public page where a workshop applies to become a certified Estación 360 partner.
@@ -31,12 +31,10 @@ export const actions: Actions = {
 			});
 			redirect(303, "/talleres/gracias");
 		} catch (err) {
-			if (err instanceof ClienteError) {
-				// Hand the values back so nobody retypes the whole form after one bad field.
-				delete body["cf-turnstile-response"];
-				return fail(err.status, { message: err.message, valores: body });
-			}
-			throw err;
+			// Hand the values back so nobody retypes the whole form after one bad field. The token
+			// is single-use and already spent, so it never goes back to the browser.
+			delete body["cf-turnstile-response"];
+			return fallo(err, { valores: body });
 		}
 	},
 };

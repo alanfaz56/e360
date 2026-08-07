@@ -495,6 +495,11 @@ export async function crearNota(input: { actor: Actor; body: Record<string, unkn
 
 	// One vehicle, one open job. Two live notes for the same truck is how work gets duplicated
 	// and invoiced twice.
+	//
+	// This reads before it writes, so on its own it loses the race two near-simultaneous submits
+	// create — which is the ordinary shape of the bug, because a button that looks dead gets
+	// tapped again. `nota_servicio_unidad_abierta_key` is what actually guarantees it; this check
+	// survives to produce a Spanish message with the folio in it instead of a constraint dump.
 	const abierta = await prisma.nota_servicio.findFirst({
 		where: { unidadId, estado: { in: NOTA_ESTADOS_ABIERTOS } },
 		select: { folio: true },
@@ -506,81 +511,92 @@ export async function crearNota(input: { actor: Actor; body: Record<string, unkn
 	const kilometraje = int(input.body.kilometraje);
 	const entrego = await resolverQuienEntrego(clienteId!, input.body);
 
-	const nota = await prisma.$transaction(async (tx) => {
-		const creada = await tx.nota_servicio.create({
-			data: {
-				id: randomUUID(),
-				citaId,
-				clienteId: clienteId!,
-				unidadId: unidadId!,
-				motivo: motivo!,
-				estado: "recibida",
-				recibidaPorId: input.actor.id,
-				...entrego,
-				observaciones: trim(input.body.observaciones),
-				// Minted at intake, so the customer can be sent their tracking link the moment the
-				// vehicle is in. Generating it later would mean a note nobody can follow.
-				seguimientoToken: nuevoTokenSeguimiento(),
-			},
-			include: INCLUDE,
-		});
+	const nota = await prisma
+		.$transaction(async (tx) => {
+			const creada = await tx.nota_servicio.create({
+				data: {
+					id: randomUUID(),
+					citaId,
+					clienteId: clienteId!,
+					unidadId: unidadId!,
+					motivo: motivo!,
+					estado: "recibida",
+					recibidaPorId: input.actor.id,
+					...entrego,
+					observaciones: trim(input.body.observaciones),
+					// Minted at intake, so the customer can be sent their tracking link the moment the
+					// vehicle is in. Generating it later would mean a note nobody can follow.
+					seguimientoToken: nuevoTokenSeguimiento(),
+				},
+				include: INCLUDE,
+			});
 
-		// Arriving with the odometer already read is the common case, so take it now.
-		if (kilometraje !== null) {
-			await registrarKilometraje(tx, {
+			// Arriving with the odometer already read is the common case, so take it now.
+			if (kilometraje !== null) {
+				await registrarKilometraje(tx, {
+					actor: input.actor,
+					unidadId: unidadId!,
+					kilometraje,
+					origen: "nota",
+					notaId: creada.id,
+					forzar: input.body.forzarKilometraje === "1" || input.body.forzarKilometraje === true,
+				});
+				// Re-read rather than mutate `creada` in place: the object above was built before this
+				// update, so returning it would report a null odometer that the row does not have.
+				Object.assign(
+					creada,
+					await tx.nota_servicio.update({
+						where: { id: creada.id },
+						data: { kilometraje },
+						include: INCLUDE,
+					}),
+				);
+			}
+
+			// The appointment is DONE the moment the vehicle is here — that was its whole job. What
+			// happens to the car from now on is the nota's business, and leaving the cita `en_proceso`
+			// meant somebody had to close it by hand later, which nobody does: the "citas sin procesar"
+			// counter filled up with appointments that had actually succeeded.
+			if (citaId) {
+				// `completada` is in REQUIEREN_HORA, so a request that never got an hour would violate
+				// `cita_inicio_requerido_check` and surface as a raw 500. Stamp the arrival as the hour
+				// first — it IS when the appointment happened — then complete it. Two statements, not a
+				// data-modifying CTE: every part of one command shares a snapshot, so the second half
+				// would not see the first.
+				const VIVAS = ["solicitada", "confirmada", "en_proceso"];
+				await tx.cita.updateMany({
+					where: { id: citaId, estado: { in: VIVAS }, inicio: null },
+					data: { inicio: new Date() },
+				});
+				await tx.cita.updateMany({
+					where: { id: citaId, estado: { in: VIVAS } },
+					data: { estado: "completada" },
+				});
+			}
+
+			await recordAudit(tx, {
+				action: citaId ? "cita.receive" : "nota.create",
 				actor: input.actor,
-				unidadId: unidadId!,
-				kilometraje,
-				origen: "nota",
-				notaId: creada.id,
-				forzar: input.body.forzarKilometraje === "1" || input.body.forzarKilometraje === true,
+				entityId: creada.id,
+				entityLabel: notaLabel(creada),
+				summary: citaId
+					? `Unidad recibida de la cita #${creada.cita?.folio}: nota #${creada.folio}`
+					: `Nota #${creada.folio} abierta sin cita`,
+				after: { clienteId, unidadId, kilometraje, citaId },
 			});
-			// Re-read rather than mutate `creada` in place: the object above was built before this
-			// update, so returning it would report a null odometer that the row does not have.
-			Object.assign(
-				creada,
-				await tx.nota_servicio.update({
-					where: { id: creada.id },
-					data: { kilometraje },
-					include: INCLUDE,
-				}),
-			);
-		}
 
-		// The appointment is DONE the moment the vehicle is here — that was its whole job. What
-		// happens to the car from now on is the nota's business, and leaving the cita `en_proceso`
-		// meant somebody had to close it by hand later, which nobody does: the "citas sin procesar"
-		// counter filled up with appointments that had actually succeeded.
-		if (citaId) {
-			// `completada` is in REQUIEREN_HORA, so a request that never got an hour would violate
-			// `cita_inicio_requerido_check` and surface as a raw 500. Stamp the arrival as the hour
-			// first — it IS when the appointment happened — then complete it. Two statements, not a
-			// data-modifying CTE: every part of one command shares a snapshot, so the second half
-			// would not see the first.
-			const VIVAS = ["solicitada", "confirmada", "en_proceso"];
-			await tx.cita.updateMany({
-				where: { id: citaId, estado: { in: VIVAS }, inicio: null },
-				data: { inicio: new Date() },
-			});
-			await tx.cita.updateMany({
-				where: { id: citaId, estado: { in: VIVAS } },
-				data: { estado: "completada" },
-			});
-		}
-
-		await recordAudit(tx, {
-			action: citaId ? "cita.receive" : "nota.create",
-			actor: input.actor,
-			entityId: creada.id,
-			entityLabel: notaLabel(creada),
-			summary: citaId
-				? `Unidad recibida de la cita #${creada.cita?.folio}: nota #${creada.folio}`
-				: `Nota #${creada.folio} abierta sin cita`,
-			after: { clienteId, unidadId, kilometraje, citaId },
+			return creada;
+		})
+		.catch((err) => {
+			// The database won the race that the read-then-write check above cannot. Translate it into
+			// the same 409 the check produces, so a double-tapped "Recibir unidad" reads as "ya está
+			// abierta" instead of a constraint dump — and, crucially, so the operator does not go
+			// looking for a second note that was never created.
+			if ((err as { code?: string }).code === "P2002") {
+				throw new ClienteError(409, "Esa unidad ya tiene una nota de servicio abierta.");
+			}
+			throw err;
 		});
-
-		return creada;
-	});
 
 	// After the commit, never inside it: a slow push service must not hold a transaction open, and
 	// a notification about a change that rolled back is a lie.
@@ -1714,7 +1730,12 @@ export async function borrarEvidencia(input: { actor: Actor; id: string; evidenc
 		});
 	});
 
-	await borrarObjeto(evidencia.clave);
+	// The row is already gone and the audit entry with it, so the user's action DID succeed — this
+	// is not something to fail their request over. But a file left in the bucket with nothing
+	// pointing at it is invisible forever unless somebody writes it down here.
+	if (!(await borrarObjeto(evidencia.clave))) {
+		console.error(`[huerfano] objeto no borrado en R2: ${evidencia.clave} (nota ${nota.id})`);
+	}
 	return { ok: true };
 }
 

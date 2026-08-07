@@ -509,6 +509,10 @@ model nota_servicio {
   tallerActualId String?
   tallerActual   taller? @relation(fields: [tallerActualId], references: [id], onDelete: SetNull)
 
+  /// One open note per vehicle is enforced by `nota_servicio_unidad_abierta_key`, a partial unique
+  /// index Prisma cannot express. Declared in the migration; do not "simplify" it into app code —
+  /// the app check reads before it writes and loses a race a double-tapped button creates daily.
+
   /// Who physically HANDED THE VEHICLE OVER at intake.
   ///
   /// Free text plus an optional FK, the same shape as `cita`: whoever showed up is often the

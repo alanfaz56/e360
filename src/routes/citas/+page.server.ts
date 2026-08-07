@@ -1,8 +1,9 @@
-import { fail, redirect, type Actions, type ServerLoad } from "@sveltejs/kit";
+import { redirect, type Actions, type ServerLoad } from "@sveltejs/kit";
 import { FRANJA_KEYS, FRANJAS, CITA_TIPO_KEYS, CITA_TIPOS } from "$lib/citas";
 import { hoy, sumarDias } from "$lib/agenda";
-import { CitaError, solicitarCita } from "$lib/server/citas";
+import { solicitarCita } from "$lib/server/citas";
 import { turnstileSiteKey } from "$lib/server/turnstile";
+import { fallo } from "$lib/server/errores";
 
 /**
  * The public booking page. Dynamic, not prerendered: it needs the Turnstile site key from the
@@ -33,12 +34,10 @@ export const actions: Actions = {
 			// POST → redirect → GET, so a refresh cannot book a second appointment.
 			redirect(303, `/citas/gracias?folio=${cita.folio}`);
 		} catch (err) {
-			if (err instanceof CitaError) {
-				// Hand the values back so nobody retypes the whole form after one bad field.
-				delete body["cf-turnstile-response"];
-				return fail(err.status, { message: err.message, valores: body });
-			}
-			throw err;
+			// Hand the values back so nobody retypes the whole form after one bad field. The token
+			// is single-use and already spent, so it never goes back to the browser.
+			delete body["cf-turnstile-response"];
+			return fallo(err, { valores: body });
 		}
 	},
 };

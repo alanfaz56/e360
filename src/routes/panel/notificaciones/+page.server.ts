@@ -1,5 +1,4 @@
-import { fail, redirect, type Actions, type ServerLoad } from "@sveltejs/kit";
-import { ClienteError } from "$lib/server/clientes";
+import { redirect, type Actions, type ServerLoad } from "@sveltejs/kit";
 import { requireUser } from "$lib/server/guard";
 import {
 	borrarSuscripcion,
@@ -12,6 +11,7 @@ import {
 } from "$lib/server/notificaciones";
 import { clavePublicaVapid } from "$lib/server/push";
 import { EVENTOS_EMPLEADO } from "$lib/notificaciones";
+import { fallo } from "$lib/server/errores";
 
 /**
  * Your notifications: the full history, which events reach you, and which devices are registered.
@@ -86,8 +86,7 @@ export const actions: Actions = {
 			await guardarPreferencias({ actor, cambios });
 			return { guardado: true };
 		} catch (err) {
-			if (err instanceof ClienteError) return fail(err.status, { message: err.message });
-			throw err;
+			return fallo(err);
 		}
 	},
 
@@ -99,8 +98,7 @@ export const actions: Actions = {
 			await borrarSuscripcion({ dueno: { userId: actor.id }, id: String(data.get("id") ?? ""), actor });
 			return { quitado: true };
 		} catch (err) {
-			if (err instanceof ClienteError) return fail(err.status, { message: err.message });
-			throw err;
+			return fallo(err);
 		}
 	},
 };

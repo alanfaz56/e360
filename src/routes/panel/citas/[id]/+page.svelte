@@ -16,9 +16,8 @@
 	import Field from "$lib/components/Field.svelte";
 	import PageHeader from "$lib/components/PageHeader.svelte";
 	import Flash from "$lib/components/Flash.svelte";
-	import { CITA_TIPOS, CITA_TIPO_KEYS, citaEstadoLabel, citaEstadoTone, franjaLabel } from "$lib/citas";
-	import { FRANJAS, type Franja } from "$lib/citas";
-	import { fechaLarga, horaCorta } from "$lib/agenda";
+	import { CITA_TIPOS, CITA_TIPO_KEYS, citaEstadoLabel, citaEstadoTone, franjaLabel, horaSugerida } from "$lib/citas";
+	import { fechaLarga, horaCorta, paraDatetimeLocal } from "$lib/agenda";
 	import { searchHref } from "$lib/url";
 	import { page } from "$app/state";
 
@@ -42,29 +41,8 @@
 			.join("")
 			.toUpperCase();
 
-	/** `datetime-local` wants shop wall-clock time, not the browser's or UTC. */
-	const paraInput = (iso: string | null) => {
-		if (!iso) return "";
-		const d = new Date(iso);
-		const f = new Intl.DateTimeFormat("en-CA", {
-			timeZone: "America/Hermosillo",
-			year: "numeric",
-			month: "2-digit",
-			day: "2-digit",
-			hour: "2-digit",
-			minute: "2-digit",
-			hour12: false,
-		}).formatToParts(d);
-		const p = (t: string) => f.find((x) => x.type === t)?.value ?? "";
-		return `${p("year")}-${p("month")}-${p("day")}T${p("hour")}:${p("minute")}`;
-	};
-
 	// Sensible default when confirming: the start of the franja the customer asked for.
-	const sugerido = $derived(
-		c.inicio
-			? paraInput(c.inicio)
-			: `${c.fecha}T${c.franja && c.franja in FRANJAS ? FRANJAS[c.franja as Franja].desde : "09:00"}`,
-	);
+	const sugerido = $derived(horaSugerida(c));
 </script>
 
 <svelte:head><title>Cita #{c.folio} — Estación 360</title></svelte:head>
@@ -705,13 +683,13 @@
 					label="Inicio"
 					name="inicio"
 					type="datetime-local"
-					value={paraInput(c.inicio)}
+					value={paraDatetimeLocal(c.inicio)}
 				/>
 				<Field
 					label="Fin"
 					name="fin"
 					type="datetime-local"
-					value={paraInput(c.fin)}
+					value={paraDatetimeLocal(c.fin)}
 				/>
 			</div>
 

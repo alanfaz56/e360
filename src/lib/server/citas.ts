@@ -28,12 +28,16 @@ import {
 	parseFecha,
 	rangoVista,
 	semanaDe,
+	sumarDias,
+	celdasDeMes,
+	VISTAS,
 	type Vista,
 } from "$lib/agenda";
 import { recordAudit } from "./audit";
-import { ClienteError, createCliente, getCliente, trim } from "./clientes";
+import { ClienteError, createCliente, getCliente, listClientes, trim } from "./clientes";
+import { listContactos } from "./contactos";
 import { notificar } from "./notificaciones";
-import { createUnidad } from "./unidades";
+import { createUnidad, listUnidades, sugerirUnidades } from "./unidades";
 import { pageMeta, parsePageParams, skipFor, type PageParams } from "./paginate";
 import { verifyTurnstile } from "./turnstile";
 import type { Actor } from "./guard";
@@ -51,12 +55,8 @@ const int = (v: unknown): number | null => {
 };
 
 /** How an appointment is named in lists, drawers and the audit trail. */
-export const citaLabel = (c: {
-	folio: number;
-	nombre: string;
-	marca: string | null;
-	modelo: string | null;
-}) => [`#${c.folio}`, c.nombre, [c.marca, c.modelo].filter(Boolean).join(" ")].filter(Boolean).join(" · ");
+export const citaLabel = (c: { folio: number; nombre: string; marca: string | null; modelo: string | null }) =>
+	[`#${c.folio}`, c.nombre, [c.marca, c.modelo].filter(Boolean).join(" ")].filter(Boolean).join(" · ");
 
 type CitaRow = {
 	id: string;
@@ -285,7 +285,16 @@ export async function getCita(id: string) {
  */
 export async function agenda(vista: Vista, fecha: string, asignadoId?: string | null) {
 	const { desde, hasta } = rangoVista(vista, fecha);
-	const dias = vista === "dia" ? [fecha] : semanaDe(fecha);
+	// Which day columns the view draws. The month grid is Monday-aligned whole weeks (you read it
+	// against "the 15th is a Tuesday"); everything else is a rolling span from the anchor.
+	const dias =
+		vista === "dia"
+			? [fecha]
+			: vista === "mes"
+				? celdasDeMes(fecha)
+				: vista === "agenda"
+					? Array.from({ length: VISTAS.agenda.dias }, (_, i) => sumarDias(fecha, i))
+					: semanaDe(fecha);
 
 	const rows = await prisma.cita.findMany({
 		where: {
@@ -319,6 +328,58 @@ export async function agenda(vista: Vista, fecha: string, asignadoId?: string | 
 }
 
 /**
+ * Everything `ClienteUnidadPicker` needs to render for one appointment: the customers to search,
+ * the chosen customer's fleet, the vehicles already on file that match what the customer typed,
+ * and the contacts allowed to hand a unit over.
+ *
+ * Shared by the cita detail screen and the board, which render the same drawer (Rule 5). Loading
+ * it by hand in each is how one of them quietly stops offering the suggestions.
+ *
+ * Caller MUST have checked `cita:update` — this is the data behind `vincularCita`.
+ *
+ * `clienteElegido` lets the drawer preview another customer's units before anything is saved.
+ */
+export async function datosParaVincular(cita: CitaPublica, clienteElegido: string | null) {
+	const [clientes, unidades, sugeridas, entregadores] = await Promise.all([
+		listClientes({ q: null, perPage: 100 }).then((r) =>
+			r.clientes.map((c) => ({ id: c.id, nombreCompleto: c.nombreCompleto, tipoLabel: c.tipoLabel })),
+		),
+		clienteElegido
+			? listUnidades({ clienteId: clienteElegido, perPage: 100 }).then((r) =>
+					r.unidades.map((u) => ({
+						id: u.id,
+						etiqueta: u.etiqueta,
+						// `etiqueta` prefers placas, so a fleet's número económico would otherwise never
+						// appear in the no-JS list — the one identifier they actually use.
+						numeroEconomico: u.numeroEconomico,
+						vin: u.vin,
+						anio: u.anio,
+						color: u.color,
+						archivado: u.archivado,
+					})),
+				)
+			: [],
+		// Scoped to the customer's fleet once one is known; otherwise searched across the whole
+		// registry, which is how a returning customer is recognised from their plates alone.
+		sugerirUnidades({
+			placas: cita.placas,
+			marca: cita.marca,
+			modelo: cita.modelo,
+			clienteId: clienteElegido,
+		}),
+		clienteElegido
+			? listContactos(clienteElegido).then((cs) =>
+					cs
+						.filter((c) => c.roles.includes("entregador"))
+						.map((c) => ({ id: c.id, nombre: c.nombre, telefono: c.telefono })),
+				)
+			: [],
+	]);
+
+	return { clientes, unidades, sugeridas, entregadores };
+}
+
+/**
  * One user's appointment numbers over a period. Caller MUST have checked `user:stats`.
  *
  * Counts what was ASSIGNED to them, by estado, plus how many of those were pickups — the thing
@@ -333,7 +394,11 @@ export async function estadisticasUsuario(userId: string, desde: string, hasta: 
 		prisma.cita.count({ where: asignadas }),
 		prisma.cita.count({ where: { ...asignadas, tipo: "recoleccion" } }),
 		prisma.cita.findMany({
-			where: { asignadoId: userId, fecha: { gte: enZona(hoy()) }, estado: { notIn: ["cancelada", "completada"] } },
+			where: {
+				asignadoId: userId,
+				fecha: { gte: enZona(hoy()) },
+				estado: { notIn: ["cancelada", "completada"] },
+			},
 			orderBy: [{ fecha: "asc" }, { inicio: "asc" }],
 			take: 10,
 			include: INCLUDE,
@@ -641,7 +706,10 @@ async function resolverAsignado(actor: Actor, value: unknown, { alCrear = false 
 	const asignadoId = trim(value);
 	if (!asignadoId) return null;
 	if (!can(actor.role, "cita:assign")) {
-		throw new ClienteError(403, alCrear ? "Sin permiso para asignar la cita: cita:assign" : "Sin permiso: cita:assign");
+		throw new ClienteError(
+			403,
+			alCrear ? "Sin permiso para asignar la cita: cita:assign" : "Sin permiso: cita:assign",
+		);
 	}
 	const user = await prisma.user.findUnique({ where: { id: asignadoId }, select: { banned: true } });
 	if (!user) throw new ClienteError(404, "Usuario no encontrado");
@@ -921,10 +989,7 @@ export async function confirmarCita(input: { actor: Actor; id: string; body: Rec
 		throw new ClienteError(409, `Una cita ${citaEstadoLabel(current.estado).toLowerCase()} ya no se confirma.`);
 	}
 	if (!current.clienteId || !current.unidadId) {
-		throw new ClienteError(
-			409,
-			"Antes de confirmar, vincula la cita a un cliente y a una unidad.",
-		);
+		throw new ClienteError(409, "Antes de confirmar, vincula la cita a un cliente y a una unidad.");
 	}
 
 	const inicio = leerInstante(input.body.inicio, "La hora de inicio");

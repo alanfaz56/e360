@@ -1,11 +1,11 @@
-import { error, fail, redirect, type Actions, type ServerLoad } from "@sveltejs/kit";
+import { redirect, type Actions, type ServerLoad } from "@sveltejs/kit";
 import { conFlash } from "$lib/flash";
-import { ClienteError } from "$lib/server/clientes";
 import { requirePermission, requireUser } from "$lib/server/guard";
 import { capturarDiagnostico, comentarNota, getNotaDeTaller } from "$lib/server/notas";
 import { solicitarRefaccion } from "$lib/server/inventario";
 import { buscarParaTaller } from "$lib/server/productos";
 import { r2Configurado } from "$lib/server/r2";
+import { fallaEnCarga, fallo } from "$lib/server/errores";
 
 /**
  * One job, as the mechanic works it.
@@ -31,14 +31,12 @@ export const load: ServerLoad = async ({ locals, params, url }) => {
 			r2: r2Configurado(),
 		};
 	} catch (err) {
-		if (err instanceof ClienteError) error(err.status, err.message);
-		throw err;
+		fallaEnCarga(err);
 	}
 };
 
 const problema = (err: unknown) => {
-	if (err instanceof ClienteError) return fail(err.status, { message: err.message });
-	throw err;
+	return fallo(err);
 };
 
 export const actions: Actions = {
@@ -55,7 +53,7 @@ export const actions: Actions = {
 			});
 			redirect(303, conFlash(`/panel/taller/${params.id}`, "nota.diagnostico"));
 		} catch (err) {
-			return problema(err);
+			return fallo(err);
 		}
 	},
 
@@ -66,7 +64,7 @@ export const actions: Actions = {
 			await solicitarRefaccion({ actor, notaId: params.id!, body });
 			redirect(303, conFlash(`/panel/taller/${params.id}`, "inventario.solicitud"));
 		} catch (err) {
-			return problema(err);
+			return fallo(err);
 		}
 	},
 
@@ -79,7 +77,7 @@ export const actions: Actions = {
 			await comentarNota({ actor, id: params.id!, texto: data.get("texto"), interno: true });
 			redirect(303, conFlash(`/panel/taller/${params.id}`, "nota.comentar"));
 		} catch (err) {
-			return problema(err);
+			return fallo(err);
 		}
 	},
 };

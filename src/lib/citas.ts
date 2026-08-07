@@ -7,6 +7,8 @@
  * Safe to import from the browser: data only.
  */
 
+import { paraDatetimeLocal } from "./agenda";
+
 /** Badge tones, matching src/lib/components/Badge.svelte. */
 type Tone = "neutral" | "ok" | "warn" | "danger" | "brand";
 
@@ -56,16 +58,59 @@ export const TRANSICIONES = {
  * is the real guard, this is so the app refuses with a Spanish message instead of letting a
  * constraint violation surface as a 500. Change one, change the other.
  */
-export const REQUIEREN_HORA = CITA_ESTADO_KEYS.filter(
-	(e) => e !== "solicitada" && e !== "cancelada",
-);
+export const REQUIEREN_HORA = CITA_ESTADO_KEYS.filter((e) => e !== "solicitada" && e !== "cancelada");
 
-export const requiereHora = (estado: string): boolean =>
-	(REQUIEREN_HORA as readonly string[]).includes(estado);
+export const requiereHora = (estado: string): boolean => (REQUIEREN_HORA as readonly string[]).includes(estado);
 
 export function puedeTransicionar(desde: string, hasta: string): boolean {
 	if (!isCitaEstado(desde) || !isCitaEstado(hasta)) return false;
 	return (TRANSICIONES[desde] as readonly string[]).includes(hasta);
+}
+
+/**
+ * Which board column a card may be dropped into. It decides which drops are OFFERED; the server
+ * still decides which ones happen, so `avanzarCita` / `confirmarCita` / `cancelarCita` re-check
+ * every one of these. Keep the two in step — `check-agenda.ts` pins this half.
+ *
+ * A drop starts a flow, it does not write. That is why an unlinked cita may still be dropped on
+ * Confirmada: vincular is a STEP OF confirming, not a precondition somebody has to go do
+ * elsewhere first — see `pasoParaMover`.
+ */
+export function puedeMoverCita(
+	cita: { estado: string; inicio: string | null; asignadoId: string | null },
+	destino: string,
+	permisos: { avanzar: boolean; cancelar: boolean; actualizar: boolean; actorId: string },
+): boolean {
+	if (!puedeTransicionar(cita.estado, destino)) return false;
+
+	// Cancelling is its own permission and its own reason — never just "one more step forward".
+	if (destino === "cancelada") return permisos.cancelar;
+
+	// Granting the hour is `confirmarCita`, which is cita:update. Checked before the `requiereHora`
+	// rule below, because confirming is what GRANTS the hour.
+	if (destino === "confirmada") return permisos.actualizar;
+
+	if (!permisos.avanzar) return false;
+	// An estado that cannot exist without an hour is unreachable until one was granted.
+	if (requiereHora(destino) && !cita.inicio) return false;
+	// The ownership rule: an Operador advances only what is assigned to them.
+	return permisos.actualizar || cita.asignadoId === permisos.actorId;
+}
+
+/**
+ * What the board has to ask for before a dropped card can actually move.
+ *
+ * `confirmarCita` refuses (409) until the appointment points at a real cliente AND a real unidad,
+ * so dropping an unlinked request on Confirmada asks for those FIRST and only then for the hour.
+ * The alternative — refusing the drop and telling somebody to go open the cita — is the counter
+ * being sent away to do by hand exactly what the drawer already knows how to do.
+ */
+export type PasoMover = "vincular" | "hora" | "motivo" | "confirmar";
+
+export function pasoParaMover(cita: { vinculada: boolean }, destino: string): PasoMover {
+	if (destino === "cancelada") return "motivo";
+	if (destino !== "confirmada") return "confirmar";
+	return cita.vinculada ? "hora" : "vincular";
 }
 
 /**
@@ -98,6 +143,16 @@ export const isFranja = (v: unknown): v is Franja => typeof v === "string" && v 
 export const franjaLabel = (v: string | null) =>
 	v && isFranja(v) ? `${FRANJAS[v].label} (${FRANJAS[v].desde}–${FRANJAS[v].hasta})` : "Sin franja";
 
+/**
+ * What hour the confirm form starts on: the one already granted, or the start of the franja the
+ * customer asked for.
+ *
+ * Shared by the detail screen and the board drawer — a different default in each is how the same
+ * request gets booked at two different hours depending on which screen somebody happened to use.
+ */
+export const horaSugerida = (c: { inicio: string | null; fecha: string; franja: string | null }): string =>
+	c.inicio ? paraDatetimeLocal(c.inicio) : `${c.fecha}T${isFranja(c.franja) ? FRANJAS[c.franja].desde : "09:00"}`;
+
 /** Default duration of an appointment when nobody says otherwise. */
 export const DURACION_MINUTOS = 60;
 
@@ -129,8 +184,7 @@ export const MOTIVOS_VENCIDA = {
 
 export type MotivoVencida = keyof typeof MOTIVOS_VENCIDA;
 export const MOTIVO_VENCIDA_KEYS = Object.keys(MOTIVOS_VENCIDA) as MotivoVencida[];
-export const motivoVencidaLabel = (v: string) =>
-	v in MOTIVOS_VENCIDA ? MOTIVOS_VENCIDA[v as MotivoVencida].label : v;
+export const motivoVencidaLabel = (v: string) => (v in MOTIVOS_VENCIDA ? MOTIVOS_VENCIDA[v as MotivoVencida].label : v);
 
 /**
  * Grace after the slot ends before a confirmed appointment reads as unprocessed. A car running
@@ -153,9 +207,7 @@ export function motivoVencida(
 ): MotivoVencida | null {
 	if (c.estado === "solicitada") return c.fecha < hoyEnZona ? "sin_atender" : null;
 	if (c.estado === "confirmada" && c.inicio) {
-		return new Date(c.inicio).getTime() < ahora.getTime() - GRACIA_MINUTOS * 60_000
-			? "sin_procesar"
-			: null;
+		return new Date(c.inicio).getTime() < ahora.getTime() - GRACIA_MINUTOS * 60_000 ? "sin_procesar" : null;
 	}
 	return null;
 }

@@ -13,12 +13,10 @@
 	import Camera from "@lucide/svelte/icons/camera";
 	import LoaderCircle from "@lucide/svelte/icons/loader-circle";
 	import Button from "./Button.svelte";
+	import { ErrorVisible, mensajeDeExcepcion, mensajeDeRespuesta, toasts } from "$lib/toasts.svelte";
 	import { invalidateAll } from "$app/navigation";
 
-	let {
-		notaId,
-		categorias,
-	}: { notaId: string; categorias: { value: string; label: string }[] } = $props();
+	let { notaId, categorias }: { notaId: string; categorias: { value: string; label: string }[] } = $props();
 
 	// Derived-with-override, so a change to the prop is picked up instead of being shadowed by
 	// the initial value captured at mount.
@@ -38,8 +36,13 @@
 		error = null;
 		progreso = { hechos: 0, total: archivos.length };
 
+		// Which file broke, not just that something did: a batch of eight photos with one HEIC the
+		// bucket refused is a different problem from "the upload failed".
+		let actual = "";
+
 		try {
 			for (const archivo of Array.from(archivos)) {
+				actual = archivo.name;
 				// 1. Ask for a signed URL. The server generates the key and checks the content type
 				//    BEFORE signing, so a rejected file never gets an upload URL at all.
 				const firmaRes = await fetch(`/api/notas/${notaId}/evidencias/firma`, {
@@ -51,7 +54,9 @@
 						bytes: archivo.size,
 					}),
 				});
-				if (!firmaRes.ok) throw new Error((await firmaRes.json()).message ?? "No se pudo firmar la subida");
+				if (!firmaRes.ok) {
+					throw new ErrorVisible(await mensajeDeRespuesta(firmaRes, "No se pudo preparar la subida."));
+				}
 				const firma = await firmaRes.json();
 
 				// 2. Straight to R2.
@@ -60,7 +65,12 @@
 					headers: { "content-type": archivo.type },
 					body: archivo,
 				});
-				if (!subida.ok) throw new Error(`R2 rechazó el archivo (${subida.status})`);
+				// The bucket answers XML, not JSON, and its message names the bucket. The user gets a
+				// sentence; the status goes to the console for whoever has to look into it.
+				if (!subida.ok) {
+					console.error("R2 rechazó la subida", subida.status, await subida.text().catch(() => ""));
+					throw new ErrorVisible("El almacenamiento rechazó el archivo. Vuelve a intentarlo.");
+				}
 
 				// 3. Record it. Only now does a row exist, so a failed upload never leaves a
 				//    phantom attachment pointing at nothing.
@@ -76,16 +86,26 @@
 						descripcion: descripcion || null,
 					}),
 				});
-				if (!registro.ok) throw new Error((await registro.json()).message ?? "No se pudo registrar");
+				if (!registro.ok) {
+					// The file IS in the bucket; only the row is missing. Say so, because retrying is
+					// the right move and it will not duplicate anything the user can see.
+					throw new ErrorVisible(
+						await mensajeDeRespuesta(registro, "El archivo subió pero no quedó registrado."),
+					);
+				}
 
 				progreso = { ...progreso, hechos: progreso.hechos + 1 };
 			}
 
 			archivos = null;
 			descripcion = "";
+			toasts.mostrar(progreso.total === 1 ? "Evidencia subida." : `${progreso.total} archivos subidos.`, "ok");
 			await invalidateAll();
 		} catch (err) {
-			error = err instanceof Error ? err.message : "Falló la subida";
+			// Both: the toast is what gets noticed, the inline line is what is still on screen after
+			// the toast is dismissed and the operator goes looking for which photo failed.
+			error = `${actual}: ${mensajeDeExcepcion(err, "Falló la subida.")}`;
+			toasts.error(error);
 		} finally {
 			subiendo = false;
 		}
@@ -95,9 +115,15 @@
 		"mt-1 w-full rounded-md border border-sand-300 bg-white px-3 py-2 text-sm focus:border-brand-600 focus:outline-none";
 </script>
 
-<form onsubmit={subir} class="mt-4 rounded border border-sand-200 bg-sand-50 p-3">
+<form
+	onsubmit={subir}
+	class="mt-4 rounded border border-sand-200 bg-sand-50 p-3"
+>
 	<p class="flex items-center gap-1.5 text-sm font-medium text-sand-700">
-		<Camera size={16} aria-hidden="true" />
+		<Camera
+			size={16}
+			aria-hidden="true"
+		/>
 		Agregar evidencia
 	</p>
 
@@ -117,7 +143,12 @@
 
 		<label class="block sm:col-span-2">
 			<span class="block text-xs text-sand-600">Descripción (opcional)</span>
-			<input type="text" bind:value={descripcion} class={INPUT} placeholder="Rayón lado conductor" />
+			<input
+				type="text"
+				bind:value={descripcion}
+				class={INPUT}
+				placeholder="Rayón lado conductor"
+			/>
 		</label>
 	</div>
 
@@ -135,15 +166,26 @@
 	</label>
 
 	{#if error}
-		<p role="alert" class="mt-2 rounded border border-brand-300 bg-brand-50 px-2 py-1.5 text-xs text-brand-900">
+		<p
+			role="alert"
+			class="mt-2 rounded border border-danger/40 bg-danger/10 px-2 py-1.5 text-xs text-sand-900"
+		>
 			{error}
 		</p>
 	{/if}
 
 	<div class="mt-3 flex items-center gap-3">
-		<Button size="sm" type="submit" disabled={subiendo || !archivos?.length}>
+		<Button
+			size="sm"
+			type="submit"
+			disabled={subiendo || !archivos?.length}
+		>
 			{#if subiendo}
-				<LoaderCircle size={16} class="animate-spin" aria-hidden="true" />
+				<LoaderCircle
+					size={16}
+					class="animate-spin"
+					aria-hidden="true"
+				/>
 				Subiendo {progreso.hechos}/{progreso.total}
 			{:else}
 				Subir

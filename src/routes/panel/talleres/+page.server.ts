@@ -1,7 +1,6 @@
-import { fail, redirect, type Actions, type ServerLoad } from "@sveltejs/kit";
+import { redirect, type Actions, type ServerLoad } from "@sveltejs/kit";
 import { conFlash } from "$lib/flash";
 import { can } from "$lib/roles";
-import { ClienteError } from "$lib/server/clientes";
 import { requirePermission, requireUser } from "$lib/server/guard";
 import {
 	archivarSucursal,
@@ -18,6 +17,7 @@ import {
 	updateSucursal,
 	updateTaller,
 } from "$lib/server/talleres";
+import { fallo } from "$lib/server/errores";
 
 /** Partner workshops Estación 360 sources jobs out to, plus the applications waiting to be judged. */
 export const load: ServerLoad = async ({ locals, url }) => {
@@ -49,8 +49,7 @@ export const load: ServerLoad = async ({ locals, url }) => {
 };
 
 const problema = (err: unknown) => {
-	if (err instanceof ClienteError) return fail(err.status, { message: err.message });
-	throw err;
+	return fallo(err);
 };
 
 export const actions: Actions = {
@@ -61,7 +60,7 @@ export const actions: Actions = {
 			await createTaller({ actor, body });
 			redirect(303, "/panel/talleres");
 		} catch (err) {
-			return problema(err);
+			return fallo(err);
 		}
 	},
 
@@ -73,7 +72,7 @@ export const actions: Actions = {
 			await updateTaller({ actor, id: String(data.get("id")), body });
 			redirect(303, "/panel/talleres");
 		} catch (err) {
-			return problema(err);
+			return fallo(err);
 		}
 	},
 
@@ -88,7 +87,7 @@ export const actions: Actions = {
 			});
 			redirect(303, "/panel/talleres");
 		} catch (err) {
-			return problema(err);
+			return fallo(err);
 		}
 	},
 
@@ -105,7 +104,7 @@ export const actions: Actions = {
 			});
 			redirect(303, "/panel/talleres?estado=solicitado");
 		} catch (err) {
-			return problema(err);
+			return fallo(err);
 		}
 	},
 
@@ -118,7 +117,7 @@ export const actions: Actions = {
 			await createSucursal({ actor, tallerId, body });
 			redirect(303, conFlash(`/panel/talleres?taller=${tallerId}&drawer=sucursales`, "taller.sucursal"));
 		} catch (err) {
-			return problema(err);
+			return fallo(err);
 		}
 	},
 
@@ -133,7 +132,7 @@ export const actions: Actions = {
 				conFlash(`/panel/talleres?taller=${String(data.get("tallerId"))}&drawer=sucursales`, "taller.sucursal"),
 			);
 		} catch (err) {
-			return problema(err);
+			return fallo(err);
 		}
 	},
 
@@ -151,7 +150,7 @@ export const actions: Actions = {
 				conFlash(`/panel/talleres?taller=${String(data.get("tallerId"))}&drawer=sucursales`, "taller.sucursal"),
 			);
 		} catch (err) {
-			return problema(err);
+			return fallo(err);
 		}
 	},
 
@@ -174,7 +173,7 @@ export const actions: Actions = {
 			});
 			redirect(303, conFlash(`/panel/talleres?taller=${tallerId}&drawer=mecanicos`, "taller.mecanico"));
 		} catch (err) {
-			return problema(err);
+			return fallo(err);
 		}
 	},
 };

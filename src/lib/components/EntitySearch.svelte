@@ -14,6 +14,7 @@
 	import X from "@lucide/svelte/icons/x";
 	import LoaderCircle from "@lucide/svelte/icons/loader-circle";
 	import Field from "./Field.svelte";
+	import { mensajeDeExcepcion, toasts } from "$lib/toasts.svelte";
 
 	/**
 	 * `hint` is the one-line subtitle. `detalles` are short facts rendered as chips — for a
@@ -78,6 +79,9 @@
 	let cargando = $state(false);
 	let activo = $state(-1);
 	let sinResultados = $state(false);
+	// A search that FAILED is not a search that found nothing. Showing "Sin resultados" for a 500
+	// tells the counter the customer is not on file and sends them off to create a duplicate.
+	let fallo = $state(false);
 
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	let controller: AbortController | null = null;
@@ -90,6 +94,7 @@
 		abierto = false;
 		resultados = [];
 		sinResultados = false;
+		fallo = false;
 		onselect?.(op.id, op);
 	}
 
@@ -119,14 +124,18 @@
 		try {
 			resultados = await buscar(q, controller.signal);
 			sinResultados = resultados.length === 0;
+			fallo = false;
 			abierto = true;
 			activo = -1;
 		} catch (err) {
-			if ((err as Error)?.name !== "AbortError") {
-				resultados = [];
-				sinResultados = true;
-				abierto = true;
-			}
+			// An abort is us cancelling a stale request, not a failure — reporting it would fire a
+			// toast on every keystroke.
+			if ((err as Error)?.name === "AbortError") return;
+			resultados = [];
+			sinResultados = false;
+			fallo = true;
+			abierto = true;
+			toasts.error(mensajeDeExcepcion(err, "No pudimos buscar. Revisa tu conexión e inténtalo otra vez."));
 		} finally {
 			cargando = false;
 		}
@@ -166,11 +175,19 @@
 	}
 </script>
 
-<Field {label} {name} {hint}>
+<Field
+	{label}
+	{name}
+	{hint}
+>
 	{#snippet children(id)}
 		{#if hydrated}
 			<div class="relative">
-				<input type="hidden" {name} value={seleccionado} />
+				<input
+					type="hidden"
+					{name}
+					value={seleccionado}
+				/>
 				<div class="relative">
 					<Search
 						size={16}
@@ -209,7 +226,10 @@
 							aria-label="Limpiar"
 							class="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-1 text-sand-500 hover:bg-sand-100 hover:text-sand-950"
 						>
-							<X size={15} aria-hidden="true" />
+							<X
+								size={15}
+								aria-hidden="true"
+							/>
 						</button>
 					{/if}
 				</div>
@@ -220,7 +240,16 @@
 						role="listbox"
 						class="absolute z-10 mt-1 max-h-60 w-full overflow-y-auto rounded-md border border-sand-300 bg-white shadow-lg"
 					>
-						{#if sinResultados}
+						{#if fallo}
+							<li class="px-3 py-2 text-sm text-danger">
+								No se pudo buscar. <button
+									type="button"
+									onmousedown={(e) => e.preventDefault()}
+									onclick={correr}
+									class="underline">Reintentar</button
+								>
+							</li>
+						{:else if sinResultados}
 							<li class="px-3 py-2 text-sm text-sand-500">Sin resultados</li>
 						{:else}
 							{#each resultados as op, i (op.id)}
@@ -241,7 +270,9 @@
 										{#if op.detalles?.some(Boolean)}
 											<span class="mt-1 flex flex-wrap gap-1">
 												{#each op.detalles.filter(Boolean) as dato (dato)}
-													<span class="rounded bg-sand-100 px-1.5 py-0.5 font-mono text-[11px] text-sand-700">
+													<span
+														class="rounded bg-sand-100 px-1.5 py-0.5 font-mono text-[11px] text-sand-700"
+													>
 														{dato}
 													</span>
 												{/each}
@@ -265,7 +296,10 @@
 				<option value="">Elige…</option>
 				{#each opciones as op (op.id)}
 					<!-- No JS: everything the card would show has to fit on one line. -->
-					<option value={op.id} selected={op.id === value}>
+					<option
+						value={op.id}
+						selected={op.id === value}
+					>
 						{[op.label, op.hint, ...(op.detalles ?? [])].filter(Boolean).join(" · ")}
 					</option>
 				{/each}

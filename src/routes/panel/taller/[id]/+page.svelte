@@ -241,6 +241,15 @@
 							class="h-24 w-full object-cover"
 							loading="lazy"
 						/>
+						<!-- Visible, not just in `alt`: a note on a photo exists to be read later. -->
+						{#if e.descripcion}
+							<span
+								class="line-clamp-2 px-1.5 py-1 text-[11px] leading-tight text-sand-700"
+								title={e.descripcion}
+							>
+								{e.descripcion}
+							</span>
+						{/if}
 					</a>
 				{/each}
 			</div>

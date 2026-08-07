@@ -225,7 +225,10 @@ function explicarFalla(err: unknown): string {
 	if (/permission/i.test(crudo)) {
 		return "El navegador no dio permiso para mostrar avisos.";
 	}
-	return crudo || "No se pudo activar.";
+	// Never the raw string: what is left here is English, written for whoever builds browsers, and
+	// it names internals. It goes to the console for us and a sentence goes to the person.
+	console.error("Push: fallo no reconocido al suscribir", err);
+	return "No se pudieron activar los avisos en este dispositivo. Vuelve a intentarlo.";
 }
 
 /**

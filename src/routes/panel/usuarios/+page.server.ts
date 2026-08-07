@@ -1,15 +1,10 @@
-import { fail, type Actions, type ServerLoad } from "@sveltejs/kit";
+import { type Actions, type ServerLoad } from "@sveltejs/kit";
 import prisma from "$lib/prisma";
 import { ROLE_LABEL, assignableRoles, can, settableRoles } from "$lib/roles";
 import { requirePermission, requireUser } from "$lib/server/guard";
-import {
-	InviteError,
-	canRevokeInvitation,
-	issueInvitation,
-	publicInvitation,
-	revokeInvitation,
-} from "$lib/server/invitations";
-import { UserError, changeUserRole, listRoleChanges, listUsers, setUserLockout } from "$lib/server/users";
+import { canRevokeInvitation, issueInvitation, publicInvitation, revokeInvitation } from "$lib/server/invitations";
+import { changeUserRole, listRoleChanges, listUsers, setUserLockout } from "$lib/server/users";
+import { fallo } from "$lib/server/errores";
 
 export const load: ServerLoad = async ({ locals }) => {
 	const actor = requirePermission(locals, "user:list");
@@ -51,8 +46,7 @@ export const actions: Actions = {
 			// Surfaced once. Copy it out now — only the hash survives in the DB.
 			return { inviteUrl: link };
 		} catch (err) {
-			if (err instanceof InviteError) return fail(err.status, { message: err.message });
-			throw err;
+			return fallo(err);
 		}
 	},
 
@@ -65,8 +59,7 @@ export const actions: Actions = {
 			await revokeInvitation({ actor, id: form.get("id") });
 			return { revoked: true };
 		} catch (err) {
-			if (err instanceof InviteError) return fail(err.status, { message: err.message });
-			throw err;
+			return fallo(err);
 		}
 	},
 
@@ -85,8 +78,7 @@ export const actions: Actions = {
 				roleChanged: `${user.name}: ${fromRole ? ROLE_LABEL[fromRole as keyof typeof ROLE_LABEL] : "Sin rol"} → ${user.roleLabel}`,
 			};
 		} catch (err) {
-			if (err instanceof UserError) return fail(err.status, { message: err.message });
-			throw err;
+			return fallo(err);
 		}
 	},
 
@@ -108,8 +100,7 @@ export const actions: Actions = {
 					: `${user.email} puede volver a entrar.`,
 			};
 		} catch (err) {
-			if (err instanceof UserError) return fail(err.status, { message: err.message });
-			throw err;
+			return fallo(err);
 		}
 	},
 };

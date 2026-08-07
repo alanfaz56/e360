@@ -1,7 +1,7 @@
-import { error, type ServerLoad } from "@sveltejs/kit";
-import { ClienteError } from "$lib/server/clientes";
+import { type ServerLoad } from "@sveltejs/kit";
 import { seguimientoPorToken } from "$lib/server/notas";
 import { clavePublicaVapid } from "$lib/server/push";
+import { fallaEnCarga } from "$lib/server/errores";
 
 /**
  * The customer's window onto their own vehicle. **No account, no session** — the token in the URL
@@ -22,7 +22,6 @@ export const load: ServerLoad = async ({ params, setHeaders }) => {
 			clavePublica: clavePublicaVapid(),
 		};
 	} catch (err) {
-		if (err instanceof ClienteError) error(err.status, err.message);
-		throw err;
+		fallaEnCarga(err);
 	}
 };

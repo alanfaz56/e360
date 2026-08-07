@@ -743,14 +743,23 @@ export async function asignarMecanicoATaller(input: { actor: Actor; userId: unkn
 			select: { id: true, name: true, email: true, tallerId: true },
 		});
 
+		// `tallerId` rides on the session, so an account that was already logged in would keep the
+		// scope it had — either blind to their new shop's work, or still seeing the old shop's
+		// after being removed from it. The second half is the one that matters: taking somebody OFF
+		// a crew has to take effect now, not whenever their cookie happens to expire.
+		//
+		// Same treatment a lockout gets, and the same reason: cut the open sessions instead of
+		// waiting them out. They sign in again and get the right scope.
+		await tx.session.deleteMany({ where: { userId: usuario.id } });
+
 		await recordAudit(tx, {
 			action: "taller.mecanico",
 			actor: input.actor,
 			entityId: usuario.id,
 			entityLabel: usuario.email,
 			summary: tallerId
-				? `${usuario.name} asignado al taller ${nombreTaller}`
-				: `${usuario.name} desligado de su taller aliado`,
+				? `${usuario.name} asignado al taller ${nombreTaller} (se cerraron sus sesiones)`
+				: `${usuario.name} desligado de su taller aliado (se cerraron sus sesiones)`,
 			before: { tallerId: usuario.tallerId },
 			after: { tallerId, taller: nombreTaller },
 		});

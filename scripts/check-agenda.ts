@@ -15,6 +15,12 @@ import {
 	posicion,
 	rangoVista,
 	semanaDe,
+	celdasDeMes,
+	finDeMes,
+	inicioDeMes,
+	pasoDeVista,
+	sumarMeses,
+	VISTA_KEYS,
 	sumarDias,
 } from "../src/lib/agenda.js";
 import {
@@ -30,6 +36,9 @@ import {
 	REQUIEREN_HORA,
 	requiereHora,
 	puedeTransicionar,
+	puedeMoverCita,
+	pasoParaMover,
+	horaSugerida,
 	isCitaEstado,
 	isCitaTipo,
 	isFranja,
@@ -224,6 +233,69 @@ assert.equal(isFranja("noche"), false);
 // Franjas must not overlap, or "mañana" and "tarde" would suggest the same hour.
 assert.equal(FRANJAS.manana.hasta, FRANJAS.tarde.desde);
 
+// --- El tablero: qué columna acepta qué tarjeta ------------------------------------------------
+// `puedeMoverCita` decides which drops the board OFFERS, and it has to give the same answer the
+// server gives — a card that drops into a column the server then refuses teaches the wrong thing.
+// These mirror avanzarCita / confirmarCita / cancelarCita one by one.
+{
+	const ADMIN = { avanzar: true, cancelar: true, actualizar: true, actorId: "u-admin" };
+	const OPERADOR = { avanzar: true, cancelar: false, actualizar: false, actorId: "u-oper" };
+
+	const solicitada = { estado: "solicitada", inicio: null, asignadoId: null };
+	const confirmada = { estado: "confirmada", inicio: "2026-08-10T16:00:00.000Z", asignadoId: "u-oper" };
+
+	// Granting the hour is cita:update.
+	assert.equal(puedeMoverCita(solicitada, "confirmada", ADMIN), true);
+	assert.equal(puedeMoverCita(solicitada, "confirmada", OPERADOR), false, "operador no confirma");
+
+	// A request with no cliente/unidad may STILL be dropped on Confirmada — vincular is a step of
+	// confirming, not a precondition somebody has to go satisfy on another screen first. The drawer
+	// asks for the links, then for the hour; `confirmarCita` refuses until both exist.
+	assert.equal(pasoParaMover({ vinculada: false }, "confirmada"), "vincular");
+	assert.equal(pasoParaMover({ vinculada: true }, "confirmada"), "hora");
+	assert.equal(pasoParaMover({ vinculada: false }, "cancelada"), "motivo");
+	assert.equal(pasoParaMover({ vinculada: true }, "en_proceso"), "confirmar");
+
+	// Cancelling is its own permission, never one more step forward.
+	assert.equal(puedeMoverCita(confirmada, "cancelada", ADMIN), true);
+	assert.equal(puedeMoverCita(confirmada, "cancelada", OPERADOR), false);
+
+	// The ownership rule: an Operador advances only what is assigned to them.
+	assert.equal(puedeMoverCita(confirmada, "en_proceso", OPERADOR), true);
+	assert.equal(puedeMoverCita({ ...confirmada, asignadoId: "otro" }, "en_proceso", OPERADOR), false);
+	assert.equal(puedeMoverCita({ ...confirmada, asignadoId: "otro" }, "en_proceso", ADMIN), true);
+
+	// No estado that requires an hour is reachable while there is none — the same rule
+	// cita_inicio_requerido_check enforces in the database.
+	for (const destino of CITA_ESTADO_KEYS) {
+		if (destino === "confirmada" || !requiereHora(destino)) continue;
+		assert.equal(
+			puedeMoverCita({ ...solicitada, inicio: null }, destino, ADMIN),
+			false,
+			`sin hora no se llega a ${destino}`,
+		);
+	}
+
+	// A move the state machine does not list is never offered, whoever is asking.
+	for (const desde of CITA_ESTADO_KEYS) {
+		for (const hasta of CITA_ESTADO_KEYS) {
+			if (puedeTransicionar(desde, hasta)) continue;
+			const row = { estado: desde, inicio: "2026-08-10T16:00:00.000Z", asignadoId: "u-admin", vinculada: true };
+			assert.equal(puedeMoverCita(row, hasta, ADMIN), false, `${desde} -> ${hasta} no existe`);
+		}
+	}
+}
+
+// The hour the confirm form starts on: the one already granted, else the start of the franja the
+// customer asked for. Shop wall clock — 16:00Z is 09:00 in Hermosillo, not the runner's timezone.
+assert.equal(
+	horaSugerida({ inicio: "2026-08-10T16:00:00.000Z", fecha: "2026-08-10", franja: "tarde" }),
+	"2026-08-10T09:00",
+);
+assert.equal(horaSugerida({ inicio: null, fecha: "2026-08-10", franja: "tarde" }), "2026-08-10T13:00");
+assert.equal(horaSugerida({ inicio: null, fecha: "2026-08-10", franja: "manana" }), "2026-08-10T08:00");
+assert.equal(horaSugerida({ inicio: null, fecha: "2026-08-10", franja: null }), "2026-08-10T09:00");
+
 // --- Citas vencidas ----------------------------------------------------------------------------
 // Two different lost sales, and the distinction matters: a request nobody ever confirmed is a
 // customer who raised their hand and got silence; a confirmed slot nobody processed is a car that
@@ -243,7 +315,10 @@ assert.equal(FRANJAS.manana.hasta, FRANJAS.tarde.desde);
 
 	// A confirmed slot well past its hour, still sitting in `confirmada`.
 	const hace3h = new Date(ahora.getTime() - 3 * 3600_000).toISOString();
-	assert.equal(motivoVencida({ estado: "confirmada", fecha: hoyMismo, inicio: hace3h }, ahora, hoyMismo), "sin_procesar");
+	assert.equal(
+		motivoVencida({ estado: "confirmada", fecha: hoyMismo, inicio: hace3h }, ahora, hoyMismo),
+		"sin_procesar",
+	);
 
 	// GRACE: a car running late is not a failure. Inside the window, nothing is flagged.
 	const hace30m = new Date(ahora.getTime() - 30 * 60_000).toISOString();
@@ -253,7 +328,10 @@ assert.equal(FRANJAS.manana.hasta, FRANJAS.tarde.desde);
 	const justo = new Date(ahora.getTime() - GRACIA_MINUTOS * 60_000).toISOString();
 	const pasado = new Date(ahora.getTime() - (GRACIA_MINUTOS + 1) * 60_000).toISOString();
 	assert.equal(motivoVencida({ estado: "confirmada", fecha: hoyMismo, inicio: justo }, ahora, hoyMismo), null);
-	assert.equal(motivoVencida({ estado: "confirmada", fecha: hoyMismo, inicio: pasado }, ahora, hoyMismo), "sin_procesar");
+	assert.equal(
+		motivoVencida({ estado: "confirmada", fecha: hoyMismo, inicio: pasado }, ahora, hoyMismo),
+		"sin_procesar",
+	);
 
 	// An appointment somebody ACTED on is never overdue, however old it is. This is the whole
 	// point of deriving it: no sweeper job, no stale flag to clean up.
@@ -277,5 +355,53 @@ assert.equal(FRANJAS.manana.hasta, FRANJAS.tarde.desde);
 assert.equal(CITA_TIPO_DEFAULT, "recoleccion");
 assert.equal(CITA_TIPO_KEYS[0], "recoleccion", "recolección must be offered first");
 assert.deepEqual(CITA_TIPO_KEYS, ["recoleccion", "en_sitio"]);
+
+// --- Vistas: día, semana, mes, agenda -----------------------------------------------------------
+// Month arithmetic is where calendars break, and it breaks silently: a wrong padding day shifts
+// every cell after it and the grid still LOOKS like a calendar.
+assert.deepEqual(VISTA_KEYS, ["dia", "semana", "mes", "agenda"], "el orden es el de los botones");
+
+assert.equal(inicioDeMes("2026-08-17"), "2026-08-01");
+assert.equal(finDeMes("2026-08-17"), "2026-08-31");
+assert.equal(finDeMes("2026-02-10"), "2026-02-28", "2026 no es bisiesto");
+assert.equal(finDeMes("2028-02-10"), "2028-02-29", "2028 sí lo es");
+
+// Clamping, not rolling over: Jan 31 + 1 month is the end of February, never the 3rd of March.
+assert.equal(sumarMeses("2026-01-31", 1), "2026-02-28");
+assert.equal(sumarMeses("2026-03-31", -1), "2026-02-28");
+assert.equal(sumarMeses("2026-12-15", 1), "2027-01-15", "cruza el año");
+assert.equal(sumarMeses("2026-01-15", -1), "2025-12-15");
+
+// Six whole weeks, Monday-first, starting on or before the 1st and covering the whole month.
+const celdas = celdasDeMes("2026-08-17");
+assert.equal(celdas.length, 42, "seis filas fijas: el grid no debe cambiar de alto entre meses");
+assert.equal(celdas.length % 7, 0);
+assert.ok(celdas[0] <= "2026-08-01", "arranca en o antes del día 1");
+assert.ok(celdas[41] >= "2026-08-31", "cubre hasta el último día");
+assert.equal(new Date(`${celdas[0]}T12:00:00-07:00`).getUTCDay(), 1, "la primera celda es lunes");
+// Consecutive days, no gaps and no repeats — the bug that duplicates a day in the grid.
+for (let i = 1; i < celdas.length; i++) {
+	assert.equal(celdas[i], sumarDias(celdas[i - 1], 1), `hueco o repetido en la celda ${i}`);
+}
+assert.equal(new Set(celdas).size, 42, "ninguna fecha se repite en el mes");
+
+// A month that starts on a Monday must NOT be padded with a blank week before it.
+const agosto2026 = celdasDeMes("2026-06-10"); // 2026-06-01 is a Monday
+assert.equal(agosto2026[0], "2026-06-01", "sin semana en blanco de más");
+
+// Each view steps by its own span, or "next" stops meaning "the next screenful".
+assert.equal(pasoDeVista("dia", "2026-08-17", 1), "2026-08-18");
+assert.equal(pasoDeVista("semana", "2026-08-17", 1), "2026-08-24");
+assert.equal(pasoDeVista("semana", "2026-08-17", -1), "2026-08-10");
+assert.equal(pasoDeVista("mes", "2026-08-17", 1), "2026-09-17");
+assert.equal(pasoDeVista("agenda", "2026-08-17", 1), "2026-09-16", "30 días");
+
+// The query range has to cover every cell the view draws, or a day renders empty because its
+// appointments were never fetched.
+const rangoMes = rangoVista("mes", "2026-08-17");
+assert.equal(rangoMes.desde, celdas[0]);
+assert.equal(rangoMes.hasta, celdas[41]);
+assert.equal(rangoVista("dia", "2026-08-17").desde, "2026-08-17");
+assert.equal(rangoVista("agenda", "2026-08-17").hasta, "2026-09-15");
 
 console.log("check-agenda: OK");

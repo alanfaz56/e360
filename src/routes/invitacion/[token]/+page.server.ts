@@ -1,12 +1,8 @@
 import { error, fail, redirect, type Actions, type ServerLoad } from "@sveltejs/kit";
 import { auth } from "$lib/auth";
 import { ROLE_LABEL, type Role } from "$lib/roles";
-import {
-	InviteError,
-	MIN_PASSWORD_LENGTH,
-	acceptInvitation,
-	findLiveInvitation,
-} from "$lib/server/invitations";
+import { MIN_PASSWORD_LENGTH, acceptInvitation, findLiveInvitation } from "$lib/server/invitations";
+import { fallo } from "$lib/server/errores";
 
 export const load: ServerLoad = async ({ params }) => {
 	const invitation = await findLiveInvitation(params.token!);
@@ -35,8 +31,7 @@ export const actions: Actions = {
 			const result = await acceptInvitation({ token: params.token!, name, password });
 			email = result.user.email;
 		} catch (err) {
-			if (err instanceof InviteError) return fail(err.status, { name, message: err.message });
-			throw err;
+			return fallo(err, { name });
 		}
 
 		// Account exists now — log them straight in so the invite link ends at the panel,

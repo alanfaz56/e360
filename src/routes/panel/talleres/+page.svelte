@@ -631,6 +631,8 @@
 			Un mecánico de este taller puede <strong>ver la unidad</strong>, el motivo de entrada, el trabajo que le
 			encargamos, subir <strong>evidencia</strong> y dejar
 			<strong>comentarios internos</strong>. Nunca ve al cliente, ni precios, ni el resto del piso.
+			<br />
+			Al agregarlo o quitarlo <strong>se cierra su sesión</strong>: vuelve a entrar y ya trae el alcance correcto.
 		</p>
 
 		{#if data.mecanicos.length === 0}

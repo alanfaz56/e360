@@ -8,6 +8,12 @@ declare global {
 			user: (User & { role?: string | null; banned?: boolean | null; tallerId?: string | null }) | null;
 			session: Session | null;
 		}
+
+		/** What `handleError` returns and `+error.svelte` renders. `ref` points at the server log. */
+		interface Error {
+			message: string;
+			ref?: string;
+		}
 	}
 }
 

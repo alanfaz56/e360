@@ -1,10 +1,9 @@
-import { fail, redirect, type Actions, type ServerLoad } from "@sveltejs/kit";
+import { redirect, type Actions, type ServerLoad } from "@sveltejs/kit";
 import { hoy } from "$lib/agenda";
 import { conFlash } from "$lib/flash";
 import prisma from "$lib/prisma";
 import { NOTA_TRANSICIONES, type NotaEstado } from "$lib/notas";
 import { can } from "$lib/roles";
-import { ClienteError } from "$lib/server/clientes";
 import { listContactos } from "$lib/server/contactos";
 import { listTalleres } from "$lib/server/talleres";
 import { requirePermission, requireUser } from "$lib/server/guard";
@@ -37,6 +36,7 @@ import {
 } from "$lib/server/comercial";
 import { listSolicitudes, resolverSolicitud } from "$lib/server/inventario";
 import { listProductos } from "$lib/server/productos";
+import { fallo } from "$lib/server/errores";
 
 export const load: ServerLoad = async ({ locals, params }) => {
 	const actor = requirePermission(locals, "nota:read");
@@ -137,8 +137,7 @@ export const load: ServerLoad = async ({ locals, params }) => {
 };
 
 const problema = (err: unknown) => {
-	if (err instanceof ClienteError) return fail(err.status, { message: err.message });
-	throw err;
+	return fallo(err);
 };
 
 /** Every action routes through the same shared function the API route calls (Rule 4). */
@@ -151,7 +150,7 @@ export const actions: Actions = {
 			await asignarMecanico({ actor, id: params.id!, mecanicoId: data.get("mecanicoId") });
 			redirect(303, conFlash(`/panel/notas/${params.id}`, "nota.mecanico"));
 		} catch (err) {
-			return problema(err);
+			return fallo(err);
 		}
 	},
 
@@ -163,7 +162,7 @@ export const actions: Actions = {
 			await capturarDiagnostico({ actor, id: params.id!, diagnostico: data.get("diagnostico") });
 			redirect(303, conFlash(`/panel/notas/${params.id}`, "nota.diagnostico"));
 		} catch (err) {
-			return problema(err);
+			return fallo(err);
 		}
 	},
 
@@ -201,7 +200,7 @@ export const actions: Actions = {
 			});
 			redirect(303, conFlash(`/panel/notas/${params.id}`, "cotizacion.crear"));
 		} catch (err) {
-			return problema(err);
+			return fallo(err);
 		}
 	},
 
@@ -228,7 +227,7 @@ export const actions: Actions = {
 			});
 			redirect(303, conFlash(`/panel/notas/${params.id}`, "cotizacion.estado"));
 		} catch (err) {
-			return problema(err);
+			return fallo(err);
 		}
 	},
 
@@ -258,7 +257,7 @@ export const actions: Actions = {
 			});
 			redirect(303, conFlash(`/panel/notas/${params.id}`, "factura.crear"));
 		} catch (err) {
-			return problema(err);
+			return fallo(err);
 		}
 	},
 
@@ -280,7 +279,7 @@ export const actions: Actions = {
 			});
 			redirect(303, conFlash(`/panel/notas/${params.id}`, "pago.registrar"));
 		} catch (err) {
-			return problema(err);
+			return fallo(err);
 		}
 	},
 
@@ -292,7 +291,7 @@ export const actions: Actions = {
 			await cancelarFactura({ actor, id: String(data.get("facturaId")), motivo: data.get("motivo") });
 			redirect(303, conFlash(`/panel/notas/${params.id}`, "factura.cancelar"));
 		} catch (err) {
-			return problema(err);
+			return fallo(err);
 		}
 	},
 
@@ -304,7 +303,7 @@ export const actions: Actions = {
 			await avanzarInterno({ actor, id: String(data.get("cotizacionId")), estado: data.get("estado") });
 			redirect(303, conFlash(`/panel/notas/${params.id}`, "cotizacion.interno"));
 		} catch (err) {
-			return problema(err);
+			return fallo(err);
 		}
 	},
 
@@ -316,7 +315,7 @@ export const actions: Actions = {
 			await surtirCotizacion({ actor, id: String(data.get("cotizacionId")) });
 			redirect(303, conFlash(`/panel/notas/${params.id}`, "cotizacion.surtir"));
 		} catch (err) {
-			return problema(err);
+			return fallo(err);
 		}
 	},
 
@@ -332,7 +331,7 @@ export const actions: Actions = {
 			});
 			redirect(303, conFlash(`/panel/notas/${params.id}`, "inventario.surtida"));
 		} catch (err) {
-			return problema(err);
+			return fallo(err);
 		}
 	},
 	inspeccionar: async ({ locals, params, request }) => {
@@ -350,7 +349,7 @@ export const actions: Actions = {
 			await inspeccionarNota({ actor, id: params.id!, body });
 			redirect(303, conFlash(`/panel/notas/${params.id}`, "nota.inspeccionar"));
 		} catch (err) {
-			return problema(err);
+			return fallo(err);
 		}
 	},
 
@@ -361,7 +360,7 @@ export const actions: Actions = {
 			await avanzarNota({ actor, id: params.id!, estado: data.get("estado") });
 			redirect(303, conFlash(`/panel/notas/${params.id}`, "nota.avanzar"));
 		} catch (err) {
-			return problema(err);
+			return fallo(err);
 		}
 	},
 
@@ -381,7 +380,7 @@ export const actions: Actions = {
 			});
 			redirect(303, conFlash(`/panel/notas/${params.id}`, "nota.recibirTaller"));
 		} catch (err) {
-			return problema(err);
+			return fallo(err);
 		}
 	},
 
@@ -397,7 +396,7 @@ export const actions: Actions = {
 			});
 			redirect(303, conFlash(`/panel/notas/${params.id}`, "nota.transferir"));
 		} catch (err) {
-			return problema(err);
+			return fallo(err);
 		}
 	},
 
@@ -413,7 +412,7 @@ export const actions: Actions = {
 			});
 			redirect(303, conFlash(`/panel/notas/${params.id}`, "nota.comentar"));
 		} catch (err) {
-			return problema(err);
+			return fallo(err);
 		}
 	},
 
@@ -429,7 +428,7 @@ export const actions: Actions = {
 			});
 			redirect(303, conFlash(`/panel/notas/${params.id}`, "nota.entregar"));
 		} catch (err) {
-			return problema(err);
+			return fallo(err);
 		}
 	},
 
@@ -440,7 +439,7 @@ export const actions: Actions = {
 			await cancelarNota({ actor, id: params.id!, motivo: data.get("motivo") });
 			redirect(303, conFlash(`/panel/notas/${params.id}`, "nota.cancelar"));
 		} catch (err) {
-			return problema(err);
+			return fallo(err);
 		}
 	},
 };

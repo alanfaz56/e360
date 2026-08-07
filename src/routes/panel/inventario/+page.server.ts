@@ -1,6 +1,5 @@
-import { fail, redirect, type Actions, type ServerLoad } from "@sveltejs/kit";
+import { redirect, type Actions, type ServerLoad } from "@sveltejs/kit";
 import { can } from "$lib/roles";
-import { ClienteError } from "$lib/server/clientes";
 import { requirePermission, requireUser } from "$lib/server/guard";
 import {
 	ajustarExistencia,
@@ -18,6 +17,7 @@ import {
 	listProductos,
 	parseProductoQuery,
 } from "$lib/server/productos";
+import { fallo } from "$lib/server/errores";
 
 /**
  * Catalogue and stock on one screen, because they are one job: you look something up to know
@@ -65,8 +65,7 @@ export const load: ServerLoad = async ({ locals, url }) => {
 };
 
 const problema = (err: unknown) => {
-	if (err instanceof ClienteError) return fail(err.status, { message: err.message });
-	throw err;
+	return fallo(err);
 };
 
 export const actions: Actions = {
@@ -77,7 +76,7 @@ export const actions: Actions = {
 			await crearProducto({ actor, body });
 			redirect(303, "/panel/inventario");
 		} catch (err) {
-			return problema(err);
+			return fallo(err);
 		}
 	},
 
@@ -91,7 +90,7 @@ export const actions: Actions = {
 			await actualizarProducto({ actor, id: String(data.get("id")), body });
 			redirect(303, "/panel/inventario");
 		} catch (err) {
-			return problema(err);
+			return fallo(err);
 		}
 	},
 
@@ -106,7 +105,7 @@ export const actions: Actions = {
 			});
 			redirect(303, "/panel/inventario");
 		} catch (err) {
-			return problema(err);
+			return fallo(err);
 		}
 	},
 
@@ -143,7 +142,7 @@ export const actions: Actions = {
 			});
 			redirect(303, "/panel/inventario");
 		} catch (err) {
-			return problema(err);
+			return fallo(err);
 		}
 	},
 
@@ -160,7 +159,7 @@ export const actions: Actions = {
 			});
 			redirect(303, "/panel/inventario");
 		} catch (err) {
-			return problema(err);
+			return fallo(err);
 		}
 	},
 
@@ -176,7 +175,7 @@ export const actions: Actions = {
 			});
 			redirect(303, "/panel/inventario");
 		} catch (err) {
-			return problema(err);
+			return fallo(err);
 		}
 	},
 };

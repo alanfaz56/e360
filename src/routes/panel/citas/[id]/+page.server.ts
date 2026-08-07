@@ -1,79 +1,44 @@
-import { fail, redirect, type Actions, type ServerLoad } from "@sveltejs/kit";
+import { redirect, type Actions, type ServerLoad } from "@sveltejs/kit";
 import { conFlash } from "$lib/flash";
 import { can } from "$lib/roles";
 import { TRANSICIONES, requiereHora, type CitaEstado } from "$lib/citas";
 import {
-	CitaError,
 	actualizarCita,
 	asignarCita,
 	avanzarCita,
 	cancelarCita,
 	confirmarCita,
+	datosParaVincular,
 	getCita,
 	publicCita,
 	vincularCita,
 } from "$lib/server/citas";
 import prisma from "$lib/prisma";
 import { crearNota } from "$lib/server/notas";
-import { listClientes } from "$lib/server/clientes";
 import { listContactos } from "$lib/server/contactos";
-import { listUnidades, sugerirUnidades } from "$lib/server/unidades";
 import { requirePermission, requireUser } from "$lib/server/guard";
 import { listUsers } from "$lib/server/users";
+import { fallaEnCarga, fallo } from "$lib/server/errores";
 
 export const load: ServerLoad = async ({ locals, params, url }) => {
 	const actor = requirePermission(locals, "cita:read");
-	const cita = publicCita(await getCita(params.id!));
+	// `getCita` throws a 404 for an id that is not on file. Unguarded it escaped the load as an
+	// unhandled error and came back a 500 — the right words with the wrong status, which is what a
+	// crawler, a monitor and the browser's own cache all read instead of the sentence.
+	const cita = publicCita(await getCita(params.id!).catch(fallaEnCarga));
 
 	const asignables = can(actor.role, "cita:assign")
 		? (await listUsers()).filter((u) => u.active).map((u) => ({ id: u.id, name: u.name, roleLabel: u.roleLabel }))
 		: [];
 
-	// For the "vincular" drawer: candidate customers, and — once one is chosen — its vehicles and
-	// the contacts allowed to hand a unit over. Loaded server-side so the drawer works with no JS.
-	const puedeVincular = can(actor.role, "cita:update");
-	const clientes = puedeVincular
-		? (await listClientes({ q: null, perPage: 100 })).clientes.map((c) => ({
-				id: c.id,
-				nombreCompleto: c.nombreCompleto,
-				tipoLabel: c.tipoLabel,
-			}))
-		: [];
-
+	// For the "vincular" drawer. Loaded server-side so it works with no JS, and through the shared
+	// loader so the board's copy of the same drawer cannot drift from this one.
 	// `?cliente=` lets the drawer preview another customer's units before saving.
+	const puedeVincular = can(actor.role, "cita:update");
 	const clienteElegido = url.searchParams.get("cliente") ?? cita.clienteId;
-	const unidades =
-		puedeVincular && clienteElegido
-			? (await listUnidades({ clienteId: clienteElegido, perPage: 100 })).unidades.map((u) => ({
-					id: u.id,
-					etiqueta: u.etiqueta,
-					// `etiqueta` prefers placas, so a fleet's número económico would otherwise never
-					// appear in the no-JS list — the one identifier they actually use.
-					numeroEconomico: u.numeroEconomico,
-					vin: u.vin,
-					anio: u.anio,
-					color: u.color,
-					archivado: u.archivado,
-				}))
-			: [];
-
-	// Vehicles already on file that match what this customer typed. Scoped to their fleet once a
-	// customer is known; otherwise searched across every customer, which is how a returning
-	// customer gets recognised from their plates — the owner comes with the vehicle.
-	const sugeridas = puedeVincular
-		? await sugerirUnidades({
-				placas: cita.placas,
-				marca: cita.marca,
-				modelo: cita.modelo,
-				clienteId: clienteElegido,
-			})
-		: [];
-	const entregadores =
-		puedeVincular && clienteElegido
-			? (await listContactos(clienteElegido))
-					.filter((c) => c.roles.includes("entregador"))
-					.map((c) => ({ id: c.id, nombre: c.nombre, telefono: c.telefono }))
-			: [];
+	const { clientes, unidades, sugeridas, entregadores } = puedeVincular
+		? await datosParaVincular(cita, clienteElegido)
+		: { clientes: [], unidades: [], sugeridas: [], entregadores: [] };
 
 	// For the "recibir" drawer. Every live contact, not just the `entregador` ones: handing a
 	// vehicle OVER carries no risk of releasing it to the wrong person, so it needs no authority —
@@ -143,8 +108,7 @@ export const actions: Actions = {
 			await actualizarCita({ actor, id: params.id!, body });
 			redirect(303, conFlash(`/panel/citas/${params.id}`, "cita.editar"));
 		} catch (err) {
-			if (err instanceof CitaError) return fail(err.status, { message: err.message });
-			throw err;
+			return fallo(err);
 		}
 	},
 
@@ -174,8 +138,7 @@ export const actions: Actions = {
 			});
 			redirect(303, conFlash(`/panel/notas/${nota.id}?drawer=inspeccion`, "nota.recibir"));
 		} catch (err) {
-			if (err instanceof CitaError) return fail(err.status, { message: err.message });
-			throw err;
+			return fallo(err);
 		}
 	},
 
@@ -186,8 +149,7 @@ export const actions: Actions = {
 			await vincularCita({ actor, id: params.id!, body });
 			redirect(303, conFlash(`/panel/citas/${params.id}`, "cita.vincular"));
 		} catch (err) {
-			if (err instanceof CitaError) return fail(err.status, { message: err.message });
-			throw err;
+			return fallo(err);
 		}
 	},
 
@@ -198,8 +160,7 @@ export const actions: Actions = {
 			await confirmarCita({ actor, id: params.id!, body });
 			redirect(303, conFlash(`/panel/citas/${params.id}`, "cita.confirmar"));
 		} catch (err) {
-			if (err instanceof CitaError) return fail(err.status, { message: err.message });
-			throw err;
+			return fallo(err);
 		}
 	},
 
@@ -210,8 +171,7 @@ export const actions: Actions = {
 			await asignarCita({ actor, id: params.id!, asignadoId: data.get("asignadoId") });
 			redirect(303, conFlash(`/panel/citas/${params.id}`, "cita.asignar"));
 		} catch (err) {
-			if (err instanceof CitaError) return fail(err.status, { message: err.message });
-			throw err;
+			return fallo(err);
 		}
 	},
 
@@ -222,8 +182,7 @@ export const actions: Actions = {
 			await avanzarCita({ actor, id: params.id!, estado: data.get("estado") });
 			redirect(303, conFlash(`/panel/citas/${params.id}`, "cita.avanzar"));
 		} catch (err) {
-			if (err instanceof CitaError) return fail(err.status, { message: err.message });
-			throw err;
+			return fallo(err);
 		}
 	},
 
@@ -234,8 +193,7 @@ export const actions: Actions = {
 			await cancelarCita({ actor, id: params.id!, motivo: data.get("motivo") });
 			redirect(303, conFlash(`/panel/citas/${params.id}`, "cita.cancelar"));
 		} catch (err) {
-			if (err instanceof CitaError) return fail(err.status, { message: err.message });
-			throw err;
+			return fallo(err);
 		}
 	},
 };

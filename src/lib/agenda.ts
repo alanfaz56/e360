@@ -37,6 +37,27 @@ export function horaEnZona(d: Date): string {
 	}).format(d);
 }
 
+/**
+ * An instant as the `YYYY-MM-DDTHH:MM` an `<input type="datetime-local">` wants.
+ *
+ * The input has no timezone, so what goes in it is shop wall-clock time — the same reading
+ * `leerInstante` pins back to `OFFSET` on the way in. Never the viewer's clock.
+ */
+export function paraDatetimeLocal(valor: string | Date | null): string {
+	if (!valor) return "";
+	const d = typeof valor === "string" ? new Date(valor) : valor;
+	if (Number.isNaN(d.getTime())) return "";
+	// `hourCycle: "h23"` and not `hour12: false`: the latter renders midnight as `24:00` in some
+	// ICU builds, and the input silently refuses it.
+	const hora = new Intl.DateTimeFormat("en-GB", {
+		timeZone: ZONA,
+		hour: "2-digit",
+		minute: "2-digit",
+		hourCycle: "h23",
+	}).format(d);
+	return `${fechaEnZona(d)}T${hora}`;
+}
+
 export function horaCorta(d: Date): string {
 	return new Intl.DateTimeFormat("es-MX", {
 		timeZone: ZONA,
@@ -101,14 +122,85 @@ export const PERIODO_DEFAULT = "30";
 export const periodoDe = (value: string | null) =>
 	PERIODOS.find((p) => p.value === value) ?? PERIODOS.find((p) => p.value === PERIODO_DEFAULT)!;
 
-export type Vista = "semana" | "dia";
-export const isVista = (v: unknown): v is Vista => v === "semana" || v === "dia";
+/**
+ * The four ways to read the same week's worth of work.
+ *
+ * `dia` and `semana` draw the time grid; `mes` is the overview you plan against; `agenda` is the
+ * flat chronological list — the one that survives on a phone, and the only one that shows a
+ * request with no hour next to the appointments it is competing with.
+ *
+ * Order is the order of the buttons, narrowest first, because that is how the counter steps out.
+ */
+export const VISTAS = {
+	dia: { label: "Día", dias: 1 },
+	semana: { label: "Semana", dias: 7 },
+	mes: { label: "Mes", dias: 0 },
+	agenda: { label: "Agenda", dias: 30 },
+} as const satisfies Record<string, { label: string; dias: number }>;
+
+export type Vista = keyof typeof VISTAS;
+export const VISTA_KEYS = Object.keys(VISTAS) as Vista[];
+export const isVista = (v: unknown): v is Vista => typeof v === "string" && v in VISTAS;
+export const vistaLabel = (v: string) => (isVista(v) ? VISTAS[v].label : v);
+
+/** First day of `fecha`'s calendar month. */
+export const inicioDeMes = (fecha: string) => `${fecha.slice(0, 7)}-01`;
+
+/** Last day of `fecha`'s calendar month. Day 0 of the next month IS the last of this one. */
+export function finDeMes(fecha: string): string {
+	const d = enZona(inicioDeMes(fecha), "12:00");
+	d.setUTCMonth(d.getUTCMonth() + 1);
+	d.setUTCDate(0);
+	return fechaEnZona(d);
+}
+
+/** Shift by whole calendar months, clamped so 31-Jan + 1 is the 28th, not the 3rd of March. */
+export function sumarMeses(fecha: string, meses: number): string {
+	const d = enZona(inicioDeMes(fecha), "12:00");
+	d.setUTCMonth(d.getUTCMonth() + meses);
+	const primero = fechaEnZona(d);
+	const dia = Number(fecha.slice(8, 10));
+	const ultimo = Number(finDeMes(primero).slice(8, 10));
+	return `${primero.slice(0, 8)}${String(Math.min(dia, ultimo)).padStart(2, "0")}`;
+}
+
+/**
+ * The month grid: whole weeks, Monday-aligned, covering the month and the days that pad it out.
+ *
+ * A month view IS calendar-aligned, unlike the rolling week — you read it against "the 15th falls
+ * on a Tuesday", which only works if the columns are weekdays. Always six rows so the grid does
+ * not jump height between months.
+ */
+export function celdasDeMes(fecha: string): string[] {
+	const primero = inicioDeMes(fecha);
+	// getUTCDay: 0 = Sunday. Monday-first means Sunday sits at the end.
+	const diaSemana = (enZona(primero, "12:00").getUTCDay() + 6) % 7;
+	const arranque = sumarDias(primero, -diaSemana);
+	return Array.from({ length: 42 }, (_, i) => sumarDias(arranque, i));
+}
 
 /** The half-open instant range a view covers, for one `WHERE fecha BETWEEN` per screen. */
 export function rangoVista(vista: Vista, fecha: string): { desde: string; hasta: string } {
 	if (vista === "dia") return { desde: fecha, hasta: fecha };
+	if (vista === "mes") {
+		const celdas = celdasDeMes(fecha);
+		return { desde: celdas[0], hasta: celdas[celdas.length - 1] };
+	}
+	if (vista === "agenda") return { desde: fecha, hasta: sumarDias(fecha, VISTAS.agenda.dias - 1) };
 	const dias = semanaDe(fecha);
 	return { desde: dias[0], hasta: dias[6] };
+}
+
+/**
+ * Where the arrows go from here.
+ *
+ * A month steps by months and everything else steps by its own span, so "next" always means "the
+ * next screenful" rather than a fixed number of days — stepping a month view by 7 would show the
+ * same month four times.
+ */
+export function pasoDeVista(vista: Vista, fecha: string, direccion: 1 | -1): string {
+	if (vista === "mes") return sumarMeses(fecha, direccion);
+	return sumarDias(fecha, VISTAS[vista].dias * direccion);
 }
 
 export type Ubicable = { inicio: Date; fin: Date };
@@ -144,9 +236,7 @@ export function acomodar<T extends Ubicable>(citas: T[]): (T & { col: number; co
 		// Nothing in the cluster still runs at this start time -> the cluster is over.
 		if (cita.inicio.getTime() >= finDelGrupo) cerrar();
 
-		const ocupadas = new Set(
-			grupo.filter((c) => c.fin.getTime() > cita.inicio.getTime()).map((c) => c.col),
-		);
+		const ocupadas = new Set(grupo.filter((c) => c.fin.getTime() > cita.inicio.getTime()).map((c) => c.col));
 		let col = 0;
 		while (ocupadas.has(col)) col++;
 

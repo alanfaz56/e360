@@ -18,6 +18,7 @@
 	import Sparkles from "@lucide/svelte/icons/sparkles";
 	import EntitySearch, { type Opcion } from "./EntitySearch.svelte";
 	import Field from "./Field.svelte";
+	import { ErrorVisible, mensajeDeRespuesta } from "$lib/toasts.svelte";
 
 	type ClienteOpcion = { id: string; nombreCompleto: string; tipoLabel: string };
 	type UnidadOpcion = {
@@ -61,7 +62,15 @@
 		unidadEtiqueta?: string;
 		entregadorId?: string;
 		/** What the customer already told us, used to prefill the create fields. */
-		prefill?: { nombre?: string; telefono?: string; email?: string; marca?: string; modelo?: string; anio?: number | null; placas?: string };
+		prefill?: {
+			nombre?: string;
+			telefono?: string;
+			email?: string;
+			marca?: string;
+			modelo?: string;
+			anio?: number | null;
+			placas?: string;
+		};
 		fichaClienteHref?: string;
 	} = $props();
 
@@ -99,15 +108,32 @@
 	const INPUT =
 		"mt-1 w-full rounded-md border border-sand-300 bg-white px-3 py-2 text-sm focus:border-brand-600 focus:outline-none";
 
+	// `res.ok` is checked before the body is read on purpose: without it a 403 or a 500 parses into
+	// an object with no `clientes` key, the map yields `[]`, and the picker calmly reports "sin
+	// resultados" — which reads as "this customer is not on file" and sends somebody off to
+	// register a duplicate of a customer the shop already has.
+	const exigirOk = async (res: Response, quePasaba: string) => {
+		if (!res.ok) throw new ErrorVisible(await mensajeDeRespuesta(res, quePasaba));
+		return res.json();
+	};
+
 	const buscarClientes = async (q: string, signal: AbortSignal): Promise<Opcion[]> => {
 		const res = await fetch(`/api/clientes?q=${encodeURIComponent(q)}&perPage=8`, { signal });
-		const body = await res.json();
-		return (body.clientes ?? []).map((c: { id: string; nombreCompleto: string; tipoLabel: string; telefono: string | null; rfc: string | null }) => ({
-			id: c.id,
-			label: c.nombreCompleto,
-			hint: c.tipoLabel,
-			detalles: [c.telefono, c.rfc],
-		}));
+		const body = await exigirOk(res, "No pudimos buscar clientes.");
+		return (body.clientes ?? []).map(
+			(c: {
+				id: string;
+				nombreCompleto: string;
+				tipoLabel: string;
+				telefono: string | null;
+				rfc: string | null;
+			}) => ({
+				id: c.id,
+				label: c.nombreCompleto,
+				hint: c.tipoLabel,
+				detalles: [c.telefono, c.rfc],
+			}),
+		);
 	};
 
 	const buscarUnidades = async (q: string, signal: AbortSignal): Promise<Opcion[]> => {
@@ -115,20 +141,33 @@
 		// alone find the vehicle and bring its owner with it.
 		const scope = clienteActual ? `&clienteId=${clienteActual}` : "";
 		const res = await fetch(`/api/unidades?q=${encodeURIComponent(q)}${scope}&perPage=8`, { signal });
-		const body = await res.json();
-		return (body.unidades ?? []).map((u: { id: string; clienteId: string; clienteNombre: string | null; marca: string; modelo: string; anio: number | null; color: string | null; placas: string | null; vin: string | null; numeroEconomico: string | null }) => {
-			duenos.set(u.id, u.clienteId);
-			return {
-				id: u.id,
-				label: `${u.marca} ${u.modelo}${u.anio ? ` ${u.anio}` : ""}`,
-				hint: [u.clienteNombre, u.color].filter(Boolean).join(" · "),
-				detalles: [
-					u.numeroEconomico ? `Econ. ${u.numeroEconomico}` : null,
-					u.placas,
-					u.vin ? `VIN ${u.vin}` : null,
-				],
-			};
-		});
+		const body = await exigirOk(res, "No pudimos buscar unidades.");
+		return (body.unidades ?? []).map(
+			(u: {
+				id: string;
+				clienteId: string;
+				clienteNombre: string | null;
+				marca: string;
+				modelo: string;
+				anio: number | null;
+				color: string | null;
+				placas: string | null;
+				vin: string | null;
+				numeroEconomico: string | null;
+			}) => {
+				duenos.set(u.id, u.clienteId);
+				return {
+					id: u.id,
+					label: `${u.marca} ${u.modelo}${u.anio ? ` ${u.anio}` : ""}`,
+					hint: [u.clienteNombre, u.color].filter(Boolean).join(" · "),
+					detalles: [
+						u.numeroEconomico ? `Econ. ${u.numeroEconomico}` : null,
+						u.placas,
+						u.vin ? `VIN ${u.vin}` : null,
+					],
+				};
+			},
+		);
 	};
 
 	function alElegirUnidad(id: string) {
@@ -153,7 +192,11 @@
 			Buscar un cliente registrado
 		</label>
 	{:else}
-		<input type="hidden" name="crearCliente" value="1" />
+		<input
+			type="hidden"
+			name="crearCliente"
+			value="1"
+		/>
 		<p class="text-sm text-sand-600">Todavía no hay clientes. Se creará uno con estos datos.</p>
 	{/if}
 
@@ -171,7 +214,10 @@
 			/>
 			{#if fichaClienteHref}
 				<p class="mt-1 text-xs text-sand-500">
-					¿No aparece? <a class="underline" href={fichaClienteHref}>Búscalo en Clientes</a>.
+					¿No aparece? <a
+						class="underline"
+						href={fichaClienteHref}>Búscalo en Clientes</a
+					>.
 				</p>
 			{/if}
 		</div>
@@ -193,9 +239,16 @@
 
 	{#if mostrarCrearCliente}
 		<div class="mt-3 space-y-3">
-			<Field label="Tipo" name="tipoCliente">
+			<Field
+				label="Tipo"
+				name="tipoCliente"
+			>
 				{#snippet children(id)}
-					<select {id} name="tipoCliente" class={INPUT}>
+					<select
+						{id}
+						name="tipoCliente"
+						class={INPUT}
+					>
 						<option value="persona">Persona</option>
 						<option value="organizacion">Organización</option>
 					</select>
@@ -207,9 +260,23 @@
 				required={hydrated && creandoCliente}
 				value={prefill.nombre ?? ""}
 			/>
-			<Field label="Apellidos" name="apellidos" hint="Solo si es persona." />
-			<Field label="Teléfono" name="telefono" type="tel" value={prefill.telefono ?? ""} />
-			<Field label="Correo" name="email" type="email" value={prefill.email ?? ""} />
+			<Field
+				label="Apellidos"
+				name="apellidos"
+				hint="Solo si es persona."
+			/>
+			<Field
+				label="Teléfono"
+				name="telefono"
+				type="tel"
+				value={prefill.telefono ?? ""}
+			/>
+			<Field
+				label="Correo"
+				name="email"
+				type="email"
+				value={prefill.email ?? ""}
+			/>
 		</div>
 	{/if}
 </fieldset>
@@ -226,12 +293,17 @@
 	{#if sugeridas.length > 0}
 		<div class="mb-3 rounded border border-brand-200 bg-brand-50 p-2">
 			<p class="flex items-center gap-1.5 px-1 pb-1 text-xs font-bold text-brand-900">
-				<Sparkles size={13} aria-hidden="true" />
+				<Sparkles
+					size={13}
+					aria-hidden="true"
+				/>
 				Ya registradas que coinciden
 			</p>
 			<div class="space-y-1">
 				{#each sugeridas as u (u.id)}
-					<label class="flex cursor-pointer items-start gap-2 rounded border border-sand-200 bg-white p-2 hover:border-brand-600">
+					<label
+						class="flex cursor-pointer items-start gap-2 rounded border border-sand-200 bg-white p-2 hover:border-brand-600"
+					>
 						<input
 							type="radio"
 							name="sugeridaId"
@@ -288,7 +360,11 @@
 			Buscar una unidad registrada
 		</label>
 	{:else}
-		<input type="hidden" name="crearUnidad" value="1" />
+		<input
+			type="hidden"
+			name="crearUnidad"
+			value="1"
+		/>
 		<p class="text-sm text-sand-600">Se registrará con estos datos, a nombre del cliente.</p>
 	{/if}
 
@@ -343,23 +419,57 @@
 	{#if mostrarCrearUnidad}
 		<div class="mt-3 space-y-3">
 			<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-				<Field label="Marca" name="marca" required={hydrated && creandoUnidad} value={prefill.marca ?? ""} />
-				<Field label="Modelo" name="modelo" required={hydrated && creandoUnidad} value={prefill.modelo ?? ""} />
-				<Field label="Placas" name="placas" value={prefill.placas ?? ""} />
-				<Field label="Año" name="anio" type="number" value={prefill.anio ? String(prefill.anio) : ""} />
+				<Field
+					label="Marca"
+					name="marca"
+					required={hydrated && creandoUnidad}
+					value={prefill.marca ?? ""}
+				/>
+				<Field
+					label="Modelo"
+					name="modelo"
+					required={hydrated && creandoUnidad}
+					value={prefill.modelo ?? ""}
+				/>
+				<Field
+					label="Placas"
+					name="placas"
+					value={prefill.placas ?? ""}
+				/>
+				<Field
+					label="Año"
+					name="anio"
+					type="number"
+					value={prefill.anio ? String(prefill.anio) : ""}
+				/>
 			</div>
-			<Field label="VIN" name="vin" hint="Opcional, pero único cuando se captura." />
+			<Field
+				label="VIN"
+				name="vin"
+				hint="Opcional, pero único cuando se captura."
+			/>
 		</div>
 	{/if}
 </fieldset>
 
 {#if entregadores.length > 0}
-	<Field label="¿Quién entrega la unidad?" name="entregadorId" hint="Solo contactos con rol de Entregador.">
+	<Field
+		label="¿Quién entrega la unidad?"
+		name="entregadorId"
+		hint="Solo contactos con rol de Entregador."
+	>
 		{#snippet children(id)}
-			<select {id} name="entregadorId" class={INPUT}>
+			<select
+				{id}
+				name="entregadorId"
+				class={INPUT}
+			>
 				<option value="">El cliente mismo</option>
 				{#each entregadores as e (e.id)}
-					<option value={e.id} selected={entregadorId === e.id}>
+					<option
+						value={e.id}
+						selected={entregadorId === e.id}
+					>
 						{e.nombre}{e.telefono ? ` · ${e.telefono}` : ""}
 					</option>
 				{/each}
@@ -369,7 +479,9 @@
 {:else if clienteActual && fichaClienteHref}
 	<p class="text-xs text-sand-500">
 		Este cliente no tiene contactos con rol de Entregador.
-		<a class="underline" href="{fichaClienteHref}/{clienteActual}">Agrégalos en su ficha</a> si alguien
-		más va a entregar la unidad.
+		<a
+			class="underline"
+			href="{fichaClienteHref}/{clienteActual}">Agrégalos en su ficha</a
+		> si alguien más va a entregar la unidad.
 	</p>
 {/if}

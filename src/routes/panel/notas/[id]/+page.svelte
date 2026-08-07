@@ -530,6 +530,20 @@
 											{e.nombre}
 										</span>
 									{/if}
+									<!--
+										The caption. It was only in `alt`, which means the one person who typed
+										"rayón lado conductor" was the last person to ever read it — and the whole
+										point of a note on a damage photo is that somebody reads it later.
+									-->
+									<span class="block px-1.5 py-1 text-[11px] leading-tight text-sand-600">
+										{#if e.descripcion}
+											<span
+												class="line-clamp-2 text-sand-800"
+												title={e.descripcion}>{e.descripcion}</span
+											>
+										{/if}
+										<span class="block text-[10px] text-sand-400">{fechaHora(e.createdAt)}</span>
+									</span>
 								</a>
 							{/each}
 						</div>
