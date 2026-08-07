@@ -397,11 +397,31 @@ reason), `entregada` (records who collected it) and `cancelada` (needs a reason)
   `nota_transferencia` row, written in one transaction, with a partial unique index guaranteeing at
   most one open transfer per note. A vehicle is never at two shops at once.
 
+#### El trabajo siempre se asigna a un TALLER — incluido el nuestro
+
+`taller.esInterno` marks a workshop as **us**: Estación 360's own bay, not a partner. It exists so
+routing a job has one shape. A note that stays in-house takes the same path as one that goes out,
+and the mechanics who can open it are scoped by `user.tallerId` either way.
+
+That replaces assigning an individual mechanic. **There is no "asignar mecánico" block on the note
+screen** — two parallel ways to route work is two answers to "who can see this", and they disagreed:
+`comentarNota` used to compare `mecanicoId` by hand and would 404 every note a mechanic could
+legitimately open. Scope goes through `exigirNotaPropia` → `alcanceDeTaller`, one boundary function,
+which is the whole reason it exists.
+
+`nota.mecanicoId` and `nota:asignar-mecanico` remain on the API (Rule 4) and still record who did
+the work when something sets them. Nothing in the panel does.
+
+**`taller_interno_aprobado_check`**: our own bay cannot be `solicitado` or `rechazado`. It is not
+something that applies to be certified — it is the shop.
+
 #### El taller aliado es invisible para el cliente
 
 Estación 360 sources the job out and is the one the customer holds responsible. Handing them the
 partner's name invites them to go straight there next time, cutting out the shop that found the
-work, priced it and warranties it. So:
+work, priced it and warranties it. **This is about PARTNERS, not about us** — `tallerMencionado`
+skips internal workshops, because telling a customer their truck is being worked on at Estación 360
+is the opposite of leaking a supplier. So:
 
 - **A quote line is customer-facing data too.** The customer reads the conceptos on
   `/seguimiento`, so `exigirSinTaller` refuses a description naming an active partner shop when the
@@ -479,6 +499,33 @@ request body limit is a few megabytes and a phone photo is routinely more.
 - Rows store the KEY, never a signed URL — a stored signature expires and rots into a broken image.
 - No keys configured → 503. It fails closed rather than pretending to store things.
 
+**The MIME type is the classification, not the caller's word for it.** `TIPOS_MIME_PERMITIDOS` maps
+each allowed content type to the `tipo` the row gets, so a video can never be labelled `foto` and
+rendered inside an `<img>`. Photos, PDFs, **audio and video** are accepted; video has its own,
+larger cap (`limiteDeTipo`), because 20 MB is about eight seconds of 4K — the start of a clip, not
+one. The file goes straight to R2, so a bigger limit costs the server nothing.
+
+#### Adjuntos en los comentarios
+
+A comment can carry photos, a PDF, a voice note or a clip, and **they are evidence rows** —
+`nota_evidencia.comentarioId` — not a second table. Same bucket, same signer, same prefix check,
+same audit. A parallel `nota_comentario_adjunto` would be a second upload path to keep in step, and
+the first thing to drift would be which content types are allowed.
+
+- **A voice note IS the comment.** `texto` is no longer required when something came attached:
+  demanding text beside a recording is asking somebody with greasy hands to type what they just
+  said. Neither text nor file is still a 400.
+- The link is written with `notaId` **and** `comentarioId: null` in the `WHERE`. Without the first,
+  a caller could staple another job's evidence onto their comment and read its description; without
+  the second, they could steal a file off somebody else's. `updateMany` skips what does not match
+  rather than failing — a stale id from a double-submit is not worth losing the comment over.
+- Uploading happens **on pick**, not on submit, so by the time the form posts it carries only ids
+  and the comment stays a plain `<form method="POST">`. With JavaScript off the attach control is
+  not rendered at all and the comment box still works (Rule 7).
+- [Adjuntos.svelte](src/lib/components/Adjuntos.svelte) renders them on all three screens — staff,
+  mechanic, customer — because a file that plays on one and downloads on another is drift nobody
+  notices until a customer says "no me abre".
+
 ### Dinero: cotizaciones, facturas, pagos, crédito
 
 | Permission                                              | Admin | Gerente | Operador |
@@ -515,6 +562,118 @@ money, and it rejects anything ambiguous rather than guessing.
   override is its own audit entry (`cliente.credito_override`) — the exception has to be visible.
   The check runs _inside_ the transaction, so two invoices issued at the same instant cannot both
   slip under the same headroom.
+
+### Timbrado: el CFDI ante el SAT
+
+**Emitir y timbrar son dos hechos distintos.** The shop issues an invoice — that is a receivable —
+and the SAT stamps it — that is a fiscal document. `factura.uuid` is what says the second happened,
+`timbrada` is what every screen gates on, and there is a real window where only the first did.
+
+`factura:timbrar` (Admin, Gerente) is its own key even though it holds the same roles as
+`factura:create` today. It is irreversible, it spends a timbre, and undoing it is a cancellation
+the SAT has to accept. The line that matters is that the counter never reaches it.
+
+**Cancelling a stamped invoice reuses `factura:cancel`, and it goes to the SAT first.** Once a PAC
+is wired, flipping the row without cancelling the CFDI is a lie: the document keeps existing and
+the shop believes it is gone. So `cancelarFactura` refuses outright on anything with a `uuid`, and
+`cancelarEnSat` is the path — SAT first, our row after, because a row marked cancelled over a live
+document is the expensive direction of that mistake.
+
+- `motivo` is the SAT's clave `01`–`04`; `explicacion` is ours, in words. The clave says which box
+  was ticked, never why. Only `01` names a replacement UUID, enforced by
+  `factura_cancelacion_sustituye_check`.
+- **`en_proceso` is not cancelled.** The SAT can hold a cancellation waiting for the receiver to
+  accept it, and until it does the invoice is live. `cancelarEnSat` records the status and leaves
+  the estado alone — marking it cancelled there is how the same job gets invoiced twice.
+- `factura_timbrado_completo_check` makes a half-stamped row impossible: the UUID, the PAC's own
+  id, the environment and the moment arrive together or not at all.
+
+**The invoice keeps its OWN line items** (`factura_concepto`), copied at issue from the quote or
+read from the request when there is no quote. Copied and not read back through `cotizacion`:
+re-quoting or re-classifying a product next year must never rewrite what was already invoiced — the
+same reasoning as copying the credit terms onto the row. It is also what makes an ad-hoc invoice
+stampable at all, because before it the lines were computed, used for a total, and thrown away.
+
+They are written in the **same transaction** as the invoice: an invoice whose lines committed
+separately could exist without them, and that invoice is one nobody can stamp.
+
+#### El PAC es reemplazable, y eso es una decisión de forma
+
+`ProveedorTimbrado` in [src/lib/server/pac/tipos.ts](src/lib/server/pac/tipos.ts) is the port;
+[factura-com.ts](src/lib/server/pac/factura-com.ts) is the only adapter today. A PAC is a vendor
+decision, not an architectural one — Facturama, SW sapien and Finkok stamp the same CFDI because
+the SAT is what validates it — so the seam is drawn where **the vocabulary is ours**: cents, our
+estados, our claves. An adapter translates; it never leaks its own shape upward.
+
+It is a plain object of functions, not a class hierarchy. A second provider is one file plus one
+entry in `PROVEEDORES`. Rules an adapter must keep: missing credentials → `ClienteError(503)`,
+their Spanish validation messages pass through (they name the field the user has to fix), anything
+else becomes a reference in the log, and **the provider's raw payload never comes back**.
+
+**`distribuirIva` is the arithmetic that gets a document rejected.** The shop computes IVA once on
+the rounded subtotal; a CFDI carries it per concepto. Rounding line by line does not add back up —
+three lines of 33.33 each round to 5.33 and the CFDI ends up a cent heavier than its own total. So
+each line is rounded and the whole leftover is pushed onto the **largest** line, where a cent is
+the smallest relative distortion. `check-facturacion.ts` pins that the parts always sum to the
+whole.
+
+Two more things that are easy to get wrong and are checked:
+
+- **Claves, never labels.** `formaPago` is `"03"`. A credit sale that nobody has paid yet is `99`
+  (por definir), not cash — inventing a form of payment is worse than declining to name one.
+- **The receptor lives at the PAC.** factura.com identifies it by its own uid, not by RFC, so
+  `cliente.facturaComUid` is written on the first stamp and reused — **scoped by environment**,
+  because a sandbox uid is meaningless in production and the failure names neither.
+
+Stamping calls the PAC **outside any transaction**: a stamp takes seconds and a transaction held
+open across a network call is a lock the whole shop waits behind. Which leaves one failure that
+cannot be undone — stamped at the SAT, not written here — and it is logged loudly with the UUID,
+because that document exists whatever our row says.
+
+### Ajustes del sistema: `/panel/ajustes`
+
+App-wide configuration — the PAC's credentials today, Stripe and the AI providers later.
+`AJUSTES` in [src/lib/ajustes.ts](src/lib/ajustes.ts) is the catalogue, same shape as
+`audit-actions.ts`, and **a key that is not in it cannot be written**. Deny by default, for the
+same reason permissions are.
+
+**Two gates, because they answer different questions.** `ajustes:read` / `ajustes:manage` are Admin
+in the registry — that says "an Admin may". `OWNER_EMAILS` says **which** Admin. The shop will have
+its own Admin one day and that account manages the shop; it does not get the credentials that stamp
+CFDIs in our name, or the bill for the timbres.
+
+- `requireDueno` checks the **owner list first** and answers **404** to everyone who fails either
+  gate. Checking the permission first would answer 403 to a Gerente and 404 to a non-owner Admin,
+  which is a two-message oracle for "does this screen exist and who can open it".
+- **An empty `OWNER_EMAILS` denies everybody.** A misconfigured deployment must not open the
+  credentials screen to every Admin, so there is deliberately no "unset means unrestricted".
+- `NAV.soloDueno` hides the link. As always, that is a courtesy; the 404 is the control.
+
+**Secrets are encrypted with a key that is not in the database.** AES-256-GCM over `node:crypto`
+([cifrado.ts](src/lib/server/cifrado.ts)), key from `AJUSTES_SECRET_KEY`, generated by
+`npm run llave`. Hand-rolled crypto is only defensible when something else checks the answer, so
+`check-facturacion.ts` pins the round trip, that a rotated key **fails** rather than returning
+garbage, that a tampered ciphertext is refused, and that two encryptions of the same text differ.
+GCM and not CBC because it authenticates as well as encrypts. **Rotating the key makes every stored
+secret unreadable** — there is no re-encrypt step, on purpose: it would need the old key kept
+around, which is most of the way back to not having rotated.
+
+Three rules about secrets that are each one bug away from being wrong:
+
+- **`leerAjustes` never returns a value for a secret** — absent, not masked. `valorSecreto` is the
+  only door that decrypts and it is unreachable from any route. That is what makes "a secret never
+  reaches the browser" checkable by reading the call sites.
+- **A blank secret means "leave it alone", not "erase it".** The screen cannot show the stored
+  value, so an untouched field always posts empty; treating that as a delete would wipe the
+  credentials every time somebody changed the environment dropdown. Clearing one is explicit
+  (`<clave>__borrar`).
+- **The audit entry records which setting moved and, for a secret, only whether one now exists.**
+  Never the value, never even the hint — a hint plus a rotation history is more than nothing, and
+  the trail must never become a way to obtain access (Rule 3).
+
+`proveedorActivo` reads the settings on **every** stamp rather than caching them, so rotating a
+credential takes effect on the next invoice instead of the next deploy — and it names the missing
+field in its 503, because "falta la API key" is actionable and "no se pudo timbrar" is a ticket.
 
 ### Registro de talleres — solicitud pública y certificación
 

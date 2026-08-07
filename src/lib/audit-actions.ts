@@ -88,6 +88,13 @@ export const AUDIT_ACTIONS = {
 	"cotizacion.reject": "Cotización rechazada",
 	"factura.create": "Factura emitida",
 	"factura.cancel": "Factura cancelada",
+	"factura.timbrar": "Factura timbrada ante el SAT",
+	"factura.cancelar_sat": "Cancelación solicitada al SAT",
+
+	// Ajustes del sistema. The entry records WHICH settings moved and, for a secret, only whether
+	// one now exists — never a value, never a hint. The audit trail must never become a way to
+	// obtain access (Rule 3).
+	"ajuste.update": "Ajustes del sistema actualizados",
 	"pago.register": "Pago registrado",
 	"cliente.credito": "Condiciones de crédito actualizadas",
 	"cliente.credito_override": "Venta a crédito autorizada sobre el límite",

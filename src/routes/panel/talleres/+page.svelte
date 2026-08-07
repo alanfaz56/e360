@@ -163,7 +163,10 @@
 					>
 				{/if}
 			</td>
-			<td class="px-4 py-2.5 text-sand-600">{taller.especialidades ?? "—"}</td>
+			<td class="px-4 py-2.5 text-sand-600">
+				{#if taller.esInterno}<Badge tone="brand">Nuestro taller</Badge>{/if}
+				<span class="block">{taller.especialidades ?? "—"}</span>
+			</td>
 			<td class="px-4 py-2.5 text-sand-600">{taller.notasRecibidas}</td>
 			<td class="px-4 py-2.5 text-right">
 				<span class="flex flex-wrap justify-end gap-1">
@@ -323,6 +326,28 @@
 				value={t?.especialidades ?? ""}
 				hint="Hojalatería, pintura, transmisiones…"
 			/>
+			<!--
+				Our own bay. Marking it internal changes two things: it is offered first when sending a
+				vehicle out, and the "never name a partner to the customer" rule skips it — telling
+				somebody their truck is being worked on at Estación 360 is the opposite of leaking a
+				supplier.
+			-->
+			<label class="flex items-start gap-2 rounded border border-sand-200 bg-sand-50 p-3 text-sm">
+				<input
+					type="checkbox"
+					name="esInterno"
+					value="1"
+					checked={t?.esInterno ?? false}
+					class="mt-0.5 size-4 accent-brand-600"
+				/>
+				<span>
+					<span class="font-medium text-sand-900">Es nuestro taller</span>
+					<span class="block text-xs text-sand-600">
+						No es un aliado: es una bahía de Estación 360. El trabajo que se queda en casa se asigna aquí, y
+						su nombre sí se le puede decir al cliente.
+					</span>
+				</span>
+			</label>
 			<Field
 				label="Notas"
 				name="notas"

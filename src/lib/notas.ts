@@ -48,7 +48,7 @@ export const notaEstadoClienteLabel = (v: string) => NOTA_ESTADO_CLIENTE[v] ?? "
 
 export type NotaEstado = keyof typeof NOTA_ESTADOS;
 export const NOTA_ESTADO_KEYS = Object.keys(NOTA_ESTADOS) as NotaEstado[];
-export const isNotaEstado = (v: unknown): v is NotaEstado => typeof v === "string" && v in NOTA_ESTADOS;
+export const isNotaEstado = (v: unknown): v is NotaEstado => typeof v === "string" && Object.hasOwn(NOTA_ESTADOS, v);
 export const notaEstadoLabel = (v: string) => (isNotaEstado(v) ? NOTA_ESTADOS[v].label : v);
 export const notaEstadoTone = (v: string): Tone => (isNotaEstado(v) ? NOTA_ESTADOS[v].tone : "neutral");
 
@@ -121,7 +121,8 @@ export const INVENTARIO_ITEMS = {
 
 export type InventarioItem = keyof typeof INVENTARIO_ITEMS;
 export const INVENTARIO_ITEM_KEYS = Object.keys(INVENTARIO_ITEMS) as InventarioItem[];
-export const isInventarioItem = (v: unknown): v is InventarioItem => typeof v === "string" && v in INVENTARIO_ITEMS;
+export const isInventarioItem = (v: unknown): v is InventarioItem =>
+	typeof v === "string" && Object.hasOwn(INVENTARIO_ITEMS, v);
 export const inventarioLabel = (v: string) => (isInventarioItem(v) ? INVENTARIO_ITEMS[v].label : v);
 export const INVENTARIO_OBLIGATORIOS = INVENTARIO_ITEM_KEYS.filter((k) => INVENTARIO_ITEMS[k].obligatorio);
 
@@ -132,25 +133,72 @@ export const INVENTARIO_OBLIGATORIOS = INVENTARIO_ITEM_KEYS.filter((k) => INVENT
 export const EVIDENCIA_TIPOS = {
 	foto: { label: "Foto", acepta: "image/*" },
 	documento: { label: "Documento", acepta: "application/pdf,image/*" },
+	audio: { label: "Audio", acepta: "audio/*" },
+	video: { label: "Video", acepta: "video/*" },
 } as const satisfies Record<string, { label: string; acepta: string }>;
 
 export type EvidenciaTipo = keyof typeof EVIDENCIA_TIPOS;
 export const EVIDENCIA_TIPO_KEYS = Object.keys(EVIDENCIA_TIPOS) as EvidenciaTipo[];
-export const isEvidenciaTipo = (v: unknown): v is EvidenciaTipo => typeof v === "string" && v in EVIDENCIA_TIPOS;
+export const isEvidenciaTipo = (v: unknown): v is EvidenciaTipo =>
+	typeof v === "string" && Object.hasOwn(EVIDENCIA_TIPOS, v);
 
-/** Content types accepted for upload. Anything else is refused before a URL is ever signed. */
-export const TIPOS_MIME_PERMITIDOS = [
-	"image/jpeg",
-	"image/png",
-	"image/webp",
-	"image/heic",
-	"application/pdf",
-] as const;
-export const esMimePermitido = (v: unknown): v is (typeof TIPOS_MIME_PERMITIDOS)[number] =>
-	typeof v === "string" && (TIPOS_MIME_PERMITIDOS as readonly string[]).includes(v);
+/**
+ * Content types accepted for upload. Anything else is refused **before a URL is ever signed**.
+ *
+ * An allowlist and not a blocklist, and it is what keeps `image/svg+xml` and `text/html` out: a
+ * bucket that serves those is an XSS, and no amount of "we only upload photos" in a comment
+ * prevents somebody uploading one.
+ *
+ * The value is the `tipo` the row gets — the mime IS the classification, so a caller cannot label
+ * a video as a photo and have it render in an `<img>`.
+ */
+export const TIPOS_MIME_PERMITIDOS = {
+	"image/jpeg": "foto",
+	"image/png": "foto",
+	"image/webp": "foto",
+	"image/heic": "foto",
+	"application/pdf": "documento",
+	// Voice notes. `audio/mp4` and `audio/webm` are what a phone's recorder actually produces;
+	// `audio/mpeg` is an mp3 somebody picked from their files.
+	"audio/mpeg": "audio",
+	"audio/mp4": "audio",
+	"audio/webm": "audio",
+	"audio/ogg": "audio",
+	"audio/wav": "audio",
+	"audio/x-m4a": "audio",
+	// Ten seconds of a noise says what a paragraph cannot. `video/quicktime` is what an iPhone
+	// sends when it is not transcoding.
+	"video/mp4": "video",
+	"video/webm": "video",
+	"video/quicktime": "video",
+} as const satisfies Record<string, EvidenciaTipo>;
+
+export type MimePermitido = keyof typeof TIPOS_MIME_PERMITIDOS;
+export const MIME_KEYS = Object.keys(TIPOS_MIME_PERMITIDOS) as MimePermitido[];
+export const esMimePermitido = (v: unknown): v is MimePermitido =>
+	typeof v === "string" && Object.hasOwn(TIPOS_MIME_PERMITIDOS, v);
+
+/** The `tipo` a file gets from its own content type. Never taken from the caller. */
+export const tipoDeMime = (mime: string): EvidenciaTipo =>
+	esMimePermitido(mime) ? TIPOS_MIME_PERMITIDOS[mime] : "documento";
+
+/** `accept=` for a file input that takes anything we store. */
+export const ACEPTA_TODO = MIME_KEYS.join(",");
 
 /** 20 MB. A phone photo is 3–8 MB; a PDF report rarely more. */
 export const TAMANO_MAXIMO_BYTES = 20 * 1024 * 1024;
+
+/**
+ * Video gets its own, larger cap: 20 MB is about eight seconds of 4K, which is not a clip of a
+ * noise, it is the start of one. The file goes STRAIGHT to R2 (presigned PUT), so a bigger limit
+ * costs the server nothing — the ceiling is what the shop's upload actually manages on a phone.
+ */
+export const TAMANO_MAXIMO_VIDEO_BYTES = 200 * 1024 * 1024;
+
+export const limiteDeTipo = (tipo: string): number =>
+	tipo === "video" ? TAMANO_MAXIMO_VIDEO_BYTES : TAMANO_MAXIMO_BYTES;
+
+export const megas = (bytes: number) => Math.round(bytes / 1024 / 1024);
 
 /** Where a photo was taken. Drives the gallery's grouping and the "missing angles" hint. */
 export const FOTO_CATEGORIAS = {
@@ -167,7 +215,8 @@ export const FOTO_CATEGORIAS = {
 
 export type FotoCategoria = keyof typeof FOTO_CATEGORIAS;
 export const FOTO_CATEGORIA_KEYS = Object.keys(FOTO_CATEGORIAS) as FotoCategoria[];
-export const isFotoCategoria = (v: unknown): v is FotoCategoria => typeof v === "string" && v in FOTO_CATEGORIAS;
+export const isFotoCategoria = (v: unknown): v is FotoCategoria =>
+	typeof v === "string" && Object.hasOwn(FOTO_CATEGORIAS, v);
 export const fotoCategoriaLabel = (v: string) => (isFotoCategoria(v) ? FOTO_CATEGORIAS[v].label : v);
 /** The angles the shop wants on every intake, so a damage claim later has a before picture. */
 export const FOTOS_SUGERIDAS = FOTO_CATEGORIA_KEYS.filter((k) => FOTO_CATEGORIAS[k].sugerida);
@@ -200,7 +249,7 @@ export const QA_RESULTADOS = {
 export type QaResultado = keyof typeof QA_RESULTADOS;
 /** What a person may choose. `no_aplica` is not here on purpose — see below. */
 export const QA_RESULTADO_KEYS = Object.keys(QA_RESULTADOS) as QaResultado[];
-export const isQaResultado = (v: unknown): v is QaResultado => typeof v === "string" && v in QA_RESULTADOS;
+export const isQaResultado = (v: unknown): v is QaResultado => typeof v === "string" && Object.hasOwn(QA_RESULTADOS, v);
 
 /**
  * Set only when a note is CANCELLED while a unit is still out: the transfer has to close, and
@@ -237,7 +286,7 @@ export const QA_DESTINOS = {
 
 export type QaDestino = keyof typeof QA_DESTINOS;
 export const QA_DESTINO_KEYS = Object.keys(QA_DESTINOS) as QaDestino[];
-export const isQaDestino = (v: unknown): v is QaDestino => typeof v === "string" && v in QA_DESTINOS;
+export const isQaDestino = (v: unknown): v is QaDestino => typeof v === "string" && Object.hasOwn(QA_DESTINOS, v);
 
 /**
  * What happens when nobody says. A rejection defaults to rework — the shop that did it badly is
@@ -264,5 +313,5 @@ export const ORIGENES_KILOMETRAJE = {
 
 export type OrigenKilometraje = keyof typeof ORIGENES_KILOMETRAJE;
 export const isOrigenKilometraje = (v: unknown): v is OrigenKilometraje =>
-	typeof v === "string" && v in ORIGENES_KILOMETRAJE;
+	typeof v === "string" && Object.hasOwn(ORIGENES_KILOMETRAJE, v);
 export const origenKilometrajeLabel = (v: string) => (isOrigenKilometraje(v) ? ORIGENES_KILOMETRAJE[v] : v);

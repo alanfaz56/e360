@@ -9,7 +9,6 @@ import { listTalleres } from "$lib/server/talleres";
 import { requirePermission, requireUser } from "$lib/server/guard";
 import { r2Configurado } from "$lib/server/r2";
 import {
-	asignarMecanico,
 	avanzarNota,
 	cancelarNota,
 	capturarDiagnostico,
@@ -18,7 +17,6 @@ import {
 	faltantesInventario,
 	getNotaDetalle,
 	inspeccionarNota,
-	mecanicosDisponibles,
 	recibirDeTaller,
 	transferirNota,
 } from "$lib/server/notas";
@@ -37,31 +35,30 @@ import {
 import { listSolicitudes, resolverSolicitud } from "$lib/server/inventario";
 import { listProductos } from "$lib/server/productos";
 import { fallo } from "$lib/server/errores";
+import { cancelarEnSat, timbrarFactura } from "$lib/server/timbrado";
 
 export const load: ServerLoad = async ({ locals, params }) => {
 	const actor = requirePermission(locals, "nota:read");
 	const detalle = await getNotaDetalle(params.id!);
 	const { nota } = detalle;
 
-	const [talleres, contactos, faltantes, cotizaciones, facturas, credito, mecanicos, solicitudes, catalogo] =
-		await Promise.all([
-			can(actor.role, "taller:read")
-				? (await listTalleres({ perPage: 100 })).talleres.filter((t) => !t.archivado)
-				: [],
-			listContactos(nota.clienteId),
-			faltantesInventario(nota.id),
-			can(actor.role, "cotizacion:read") ? listCotizaciones({ notaId: nota.id, perPage: 50 }) : null,
-			can(actor.role, "factura:read") ? listFacturas({ notaId: nota.id, perPage: 50 }) : null,
-			can(actor.role, "factura:read") ? saldoCliente(nota.clienteId) : null,
-			can(actor.role, "nota:asignar-mecanico") ? mecanicosDisponibles() : [],
-			can(actor.role, "inventario:solicitar") ? listSolicitudes({ notaId: nota.id }) : [],
-			// The quote builder's catalogue. Only fetched for somebody who can actually quote, and
-			// only the live rows — an archived product is refused by `resolverProductos` anyway, so
-			// offering it would be a button that always fails.
-			can(actor.role, "cotizacion:create") && can(actor.role, "producto:read")
-				? listProductos({ perPage: 200 })
-				: null,
-		]);
+	const [talleres, contactos, faltantes, cotizaciones, facturas, credito, solicitudes, catalogo] = await Promise.all([
+		can(actor.role, "taller:read")
+			? (await listTalleres({ perPage: 100 })).talleres.filter((t) => !t.archivado)
+			: [],
+		listContactos(nota.clienteId),
+		faltantesInventario(nota.id),
+		can(actor.role, "cotizacion:read") ? listCotizaciones({ notaId: nota.id, perPage: 50 }) : null,
+		can(actor.role, "factura:read") ? listFacturas({ notaId: nota.id, perPage: 50 }) : null,
+		can(actor.role, "factura:read") ? saldoCliente(nota.clienteId) : null,
+		can(actor.role, "inventario:solicitar") ? listSolicitudes({ notaId: nota.id }) : [],
+		// The quote builder's catalogue. Only fetched for somebody who can actually quote, and
+		// only the live rows — an archived product is refused by `resolverProductos` anyway, so
+		// offering it would be a button that always fails.
+		can(actor.role, "cotizacion:create") && can(actor.role, "producto:read")
+			? listProductos({ perPage: 200 })
+			: null,
+	]);
 
 	// `saldoCents`/`limiteCents` are internal bigints and must not cross to the browser.
 	const creditoPublico = credito ? (({ saldoCents: _s, limiteCents: _l, ...resto }) => resto)(credito) : null;
@@ -80,7 +77,6 @@ export const load: ServerLoad = async ({ locals, params }) => {
 		cotizaciones: cotizaciones?.cotizaciones ?? [],
 		facturas: facturas?.facturas ?? [],
 		credito: creditoPublico,
-		mecanicos,
 		solicitudes,
 		// Trimmed to what the picker draws: a price and a stock figure per row, nothing else.
 		productos: (catalogo?.productos ?? [])
@@ -126,34 +122,19 @@ export const load: ServerLoad = async ({ locals, params }) => {
 			enviarCotizacion: can(actor.role, "cotizacion:send"),
 			facturar: can(actor.role, "factura:create"),
 			cancelarFactura: can(actor.role, "factura:cancel"),
+			// Stamping is its own key: it is irreversible and it spends a timbre.
+			timbrar: can(actor.role, "factura:timbrar"),
 			credito: can(actor.role, "cliente:credito"),
 			cobrar: can(actor.role, "pago:register"),
 			verDinero: can(actor.role, "factura:read"),
-			asignarMecanico: can(actor.role, "nota:asignar-mecanico"),
 			interno: can(actor.role, "cotizacion:interno"),
 			surtir: can(actor.role, "inventario:salida"),
 		},
 	};
 };
 
-const problema = (err: unknown) => {
-	return fallo(err);
-};
-
 /** Every action routes through the same shared function the API route calls (Rule 4). */
 export const actions: Actions = {
-	/** Hand the job to a mechanic — or take it off them. */
-	mecanico: async ({ locals, params, request }) => {
-		const actor = requireUser(locals);
-		const data = await request.formData();
-		try {
-			await asignarMecanico({ actor, id: params.id!, mecanicoId: data.get("mecanicoId") });
-			redirect(303, conFlash(`/panel/notas/${params.id}`, "nota.mecanico"));
-		} catch (err) {
-			return fallo(err);
-		}
-	},
-
 	/** The counter can write the diagnosis too — not every shop has the mechanic typing. */
 	diagnostico: async ({ locals, params, request }) => {
 		const actor = requireUser(locals);
@@ -295,6 +276,49 @@ export const actions: Actions = {
 		}
 	},
 
+	/**
+	 * Stamp at the SAT. Same shared function the API route calls (Rule 4).
+	 *
+	 * No confirmation drawer, deliberately: everything the CFDI needs is already on the invoice and
+	 * there is nothing left to ask. What protects against a stray click is that the button only
+	 * renders for `factura:timbrar`, and that a second click answers 409 with the UUID it already
+	 * has rather than spending another timbre.
+	 */
+	timbrar: async ({ locals, params, request }) => {
+		const actor = requireUser(locals);
+		const data = await request.formData();
+		try {
+			await timbrarFactura({ actor, id: String(data.get("facturaId")) });
+			redirect(303, conFlash(`/panel/notas/${params.id}`, "factura.timbrar"));
+		} catch (err) {
+			return fallo(err);
+		}
+	},
+
+	/**
+	 * Cancel a STAMPED invoice: the SAT first, our row after.
+	 *
+	 * `motivo` is the SAT's clave (01–04) and `explicacion` is ours in words — the clave says which
+	 * box was ticked, never why. A cancellation the SAT holds pending leaves the document live, and
+	 * `cancelarEnSat` refuses to mark the row cancelled until it is not.
+	 */
+	cancelarSat: async ({ locals, params, request }) => {
+		const actor = requireUser(locals);
+		const data = await request.formData();
+		try {
+			await cancelarEnSat({
+				actor,
+				id: String(data.get("facturaId")),
+				motivo: data.get("motivo"),
+				sustituye: data.get("sustituye"),
+				explicacion: data.get("explicacion"),
+			});
+			redirect(303, conFlash(`/panel/notas/${params.id}`, "factura.cancelarSat"));
+		} catch (err) {
+			return fallo(err);
+		}
+	},
+
 	/** Move a quote along the SHOP's track: en_proceso → completada → por_cobrar. */
 	interno: async ({ locals, params, request }) => {
 		const actor = requireUser(locals);
@@ -409,6 +433,9 @@ export const actions: Actions = {
 				id: params.id!,
 				texto: data.get("texto"),
 				interno: data.get("interno") === "1",
+				// `getAll`: the attach control emits one hidden input per file, so a single `get`
+				// would silently keep the first and drop the rest.
+				adjuntos: data.getAll("adjuntos"),
 			});
 			redirect(303, conFlash(`/panel/notas/${params.id}`, "nota.comentar"));
 		} catch (err) {

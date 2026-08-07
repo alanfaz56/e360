@@ -140,7 +140,7 @@ export const VISTAS = {
 
 export type Vista = keyof typeof VISTAS;
 export const VISTA_KEYS = Object.keys(VISTAS) as Vista[];
-export const isVista = (v: unknown): v is Vista => typeof v === "string" && v in VISTAS;
+export const isVista = (v: unknown): v is Vista => typeof v === "string" && Object.hasOwn(VISTAS, v);
 export const vistaLabel = (v: string) => (isVista(v) ? VISTAS[v].label : v);
 
 /** First day of `fecha`'s calendar month. */

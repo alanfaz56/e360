@@ -27,7 +27,7 @@ export const CITA_ESTADOS = {
 
 export type CitaEstado = keyof typeof CITA_ESTADOS;
 export const CITA_ESTADO_KEYS = Object.keys(CITA_ESTADOS) as CitaEstado[];
-export const isCitaEstado = (v: unknown): v is CitaEstado => typeof v === "string" && v in CITA_ESTADOS;
+export const isCitaEstado = (v: unknown): v is CitaEstado => typeof v === "string" && Object.hasOwn(CITA_ESTADOS, v);
 export const citaEstadoLabel = (v: string) => (isCitaEstado(v) ? CITA_ESTADOS[v].label : v);
 export const citaEstadoTone = (v: string): Tone => (isCitaEstado(v) ? CITA_ESTADOS[v].tone : "neutral");
 
@@ -125,7 +125,7 @@ export const CITA_TIPOS = {
 export type CitaTipo = keyof typeof CITA_TIPOS;
 export const CITA_TIPO_KEYS = Object.keys(CITA_TIPOS) as CitaTipo[];
 export const CITA_TIPO_DEFAULT: CitaTipo = "recoleccion";
-export const isCitaTipo = (v: unknown): v is CitaTipo => typeof v === "string" && v in CITA_TIPOS;
+export const isCitaTipo = (v: unknown): v is CitaTipo => typeof v === "string" && Object.hasOwn(CITA_TIPOS, v);
 export const citaTipoLabel = (v: string) => (isCitaTipo(v) ? CITA_TIPOS[v].label : v);
 
 /**
@@ -139,7 +139,7 @@ export const FRANJAS = {
 
 export type Franja = keyof typeof FRANJAS;
 export const FRANJA_KEYS = Object.keys(FRANJAS) as Franja[];
-export const isFranja = (v: unknown): v is Franja => typeof v === "string" && v in FRANJAS;
+export const isFranja = (v: unknown): v is Franja => typeof v === "string" && Object.hasOwn(FRANJAS, v);
 export const franjaLabel = (v: string | null) =>
 	v && isFranja(v) ? `${FRANJAS[v].label} (${FRANJAS[v].desde}–${FRANJAS[v].hasta})` : "Sin franja";
 
@@ -184,7 +184,8 @@ export const MOTIVOS_VENCIDA = {
 
 export type MotivoVencida = keyof typeof MOTIVOS_VENCIDA;
 export const MOTIVO_VENCIDA_KEYS = Object.keys(MOTIVOS_VENCIDA) as MotivoVencida[];
-export const motivoVencidaLabel = (v: string) => (v in MOTIVOS_VENCIDA ? MOTIVOS_VENCIDA[v as MotivoVencida].label : v);
+export const motivoVencidaLabel = (v: string) =>
+	Object.hasOwn(MOTIVOS_VENCIDA, v) ? MOTIVOS_VENCIDA[v as MotivoVencida].label : v;
 
 /**
  * Grace after the slot ends before a confirmed appointment reads as unprocessed. A car running

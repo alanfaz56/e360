@@ -48,7 +48,12 @@ export const FLASH: Record<string, string> = {
 	"cotizacion.surtir": "Refacciones surtidas del almacén.",
 	"factura.crear": "Factura emitida.",
 	"factura.cancelar": "Factura cancelada.",
+	"factura.timbrar": "Factura timbrada. Ya tiene folio fiscal.",
+	"factura.cancelarSat": "Cancelación enviada al SAT.",
 	"pago.registrar": "Pago registrado.",
+
+	// --- Ajustes del sistema ---------------------------------------------------------------------
+	"ajuste.guardar": "Ajustes guardados.",
 
 	// --- Inventario y catálogo -----------------------------------------------------------------
 	"producto.crear": "Producto dado de alta.",

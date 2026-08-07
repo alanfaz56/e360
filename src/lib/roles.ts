@@ -161,11 +161,25 @@ export const PERMISSIONS = {
 	"factura:read": ["admin", "gerente", "operador"],
 	"factura:create": ["admin", "gerente"],
 	"factura:cancel": ["admin", "gerente"],
+	// Stamping at the SAT. Separate from `factura:create` because it is the act that turns an
+	// internal receivable into a fiscal document: it is irreversible, it spends a timbre, and
+	// undoing it is a cancellation the SAT has to accept. Same two roles today, on purpose — the
+	// line that matters is that the counter never reaches it.
+	"factura:timbrar": ["admin", "gerente"],
 	"pago:read": ["admin", "gerente", "operador"],
 	"pago:register": ["admin", "gerente", "operador"],
 	// Credit terms and the limit itself. Also what lets somebody override an over-limit sale,
 	// which is always recorded with a reason — see `asegurarCredito`.
 	"cliente:credito": ["admin", "gerente"],
+
+	// --- Ajustes del sistema -------------------------------------------------------------------
+	// App-wide configuration: the PAC's credentials, which environment they point at, and what
+	// stamping has cost. Admin in the registry AND on the `OWNER_EMAILS` list — see
+	// `esDuenoDelSistema`. Two gates because they answer different questions: the registry says
+	// "an Admin may", the list says "which Admin". The shop's own owner will be an Admin one day,
+	// and handing them the key that stamps CFDIs in our name is not a decision the ladder makes.
+	"ajustes:read": ["admin"],
+	"ajustes:manage": ["admin"],
 } as const satisfies Record<string, readonly Role[]>;
 
 export type Permission = keyof typeof PERMISSIONS;

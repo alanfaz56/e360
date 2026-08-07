@@ -23,7 +23,7 @@ export const COTIZACION_ESTADOS = {
 export type CotizacionEstado = keyof typeof COTIZACION_ESTADOS;
 export const COTIZACION_ESTADO_KEYS = Object.keys(COTIZACION_ESTADOS) as CotizacionEstado[];
 export const isCotizacionEstado = (v: unknown): v is CotizacionEstado =>
-	typeof v === "string" && v in COTIZACION_ESTADOS;
+	typeof v === "string" && Object.hasOwn(COTIZACION_ESTADOS, v);
 export const cotizacionEstadoLabel = (v: string) => (isCotizacionEstado(v) ? COTIZACION_ESTADOS[v].label : v);
 export const cotizacionEstadoTone = (v: string): Tone =>
 	isCotizacionEstado(v) ? COTIZACION_ESTADOS[v].tone : "neutral";
@@ -73,7 +73,7 @@ export const COTIZACION_INTERNOS = {
 export type CotizacionInterno = keyof typeof COTIZACION_INTERNOS;
 export const COTIZACION_INTERNO_KEYS = Object.keys(COTIZACION_INTERNOS) as CotizacionInterno[];
 export const isCotizacionInterno = (v: unknown): v is CotizacionInterno =>
-	typeof v === "string" && v in COTIZACION_INTERNOS;
+	typeof v === "string" && Object.hasOwn(COTIZACION_INTERNOS, v);
 export const cotizacionInternoLabel = (v: string) => (isCotizacionInterno(v) ? COTIZACION_INTERNOS[v].label : v);
 export const cotizacionInternoTone = (v: string): Tone =>
 	isCotizacionInterno(v) ? COTIZACION_INTERNOS[v].tone : "neutral";
@@ -112,7 +112,8 @@ export const CONCEPTO_TIPOS = {
 
 export type ConceptoTipo = keyof typeof CONCEPTO_TIPOS;
 export const CONCEPTO_TIPO_KEYS = Object.keys(CONCEPTO_TIPOS) as ConceptoTipo[];
-export const isConceptoTipo = (v: unknown): v is ConceptoTipo => typeof v === "string" && v in CONCEPTO_TIPOS;
+export const isConceptoTipo = (v: unknown): v is ConceptoTipo =>
+	typeof v === "string" && Object.hasOwn(CONCEPTO_TIPOS, v);
 export const conceptoTipoLabel = (v: string) => (isConceptoTipo(v) ? CONCEPTO_TIPOS[v].label : v);
 
 /** IVA general. A rate, not a constant sprinkled through the code. */
@@ -129,7 +130,8 @@ export const FACTURA_ESTADOS = {
 
 export type FacturaEstado = keyof typeof FACTURA_ESTADOS;
 export const FACTURA_ESTADO_KEYS = Object.keys(FACTURA_ESTADOS) as FacturaEstado[];
-export const isFacturaEstado = (v: unknown): v is FacturaEstado => typeof v === "string" && v in FACTURA_ESTADOS;
+export const isFacturaEstado = (v: unknown): v is FacturaEstado =>
+	typeof v === "string" && Object.hasOwn(FACTURA_ESTADOS, v);
 export const facturaEstadoLabel = (v: string) => (isFacturaEstado(v) ? FACTURA_ESTADOS[v].label : v);
 export const facturaEstadoTone = (v: string): Tone => (isFacturaEstado(v) ? FACTURA_ESTADOS[v].tone : "neutral");
 
@@ -158,7 +160,8 @@ export const CONDICIONES_PAGO = {
 
 export type CondicionPago = keyof typeof CONDICIONES_PAGO;
 export const CONDICION_PAGO_KEYS = Object.keys(CONDICIONES_PAGO) as CondicionPago[];
-export const isCondicionPago = (v: unknown): v is CondicionPago => typeof v === "string" && v in CONDICIONES_PAGO;
+export const isCondicionPago = (v: unknown): v is CondicionPago =>
+	typeof v === "string" && Object.hasOwn(CONDICIONES_PAGO, v);
 export const condicionPagoLabel = (v: string) => (isCondicionPago(v) ? CONDICIONES_PAGO[v].label : v);
 export const esCredito = (v: string) => isCondicionPago(v) && CONDICIONES_PAGO[v].credito;
 
@@ -174,7 +177,7 @@ export const METODOS_PAGO = {
 
 export type MetodoPago = keyof typeof METODOS_PAGO;
 export const METODO_PAGO_KEYS = Object.keys(METODOS_PAGO) as MetodoPago[];
-export const isMetodoPago = (v: unknown): v is MetodoPago => typeof v === "string" && v in METODOS_PAGO;
+export const isMetodoPago = (v: unknown): v is MetodoPago => typeof v === "string" && Object.hasOwn(METODOS_PAGO, v);
 export const metodoPagoLabel = (v: string) => (isMetodoPago(v) ? METODOS_PAGO[v].label : v);
 
 // --- Money helpers ---------------------------------------------------------------------------

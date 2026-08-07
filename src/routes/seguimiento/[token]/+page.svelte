@@ -7,6 +7,7 @@
 	page cannot leak it by accident because it is never sent.
 -->
 <script lang="ts">
+	import Adjuntos from "$lib/components/Adjuntos.svelte";
 	import Car from "@lucide/svelte/icons/car";
 	import CircleCheck from "@lucide/svelte/icons/circle-check";
 	import MessageSquare from "@lucide/svelte/icons/message-square";
@@ -243,7 +244,10 @@
 				<ul class="mt-3 space-y-3">
 					{#each data.comentarios as c (c.id)}
 						<li class="border-l-2 border-brand-200 pl-3">
-							<p class="text-sm leading-relaxed text-sand-800">{c.texto}</p>
+							{#if c.texto}
+								<p class="text-sm leading-relaxed text-sand-800">{c.texto}</p>
+							{/if}
+							<Adjuntos adjuntos={c.adjuntos} />
 							<p class="mt-0.5 text-xs text-sand-500">{haceCuanto(c.createdAt)}</p>
 						</li>
 					{/each}

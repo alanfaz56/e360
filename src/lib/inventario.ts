@@ -16,7 +16,8 @@ export const MOVIMIENTO_TIPOS = {
 
 export type MovimientoTipo = keyof typeof MOVIMIENTO_TIPOS;
 export const MOVIMIENTO_TIPO_KEYS = Object.keys(MOVIMIENTO_TIPOS) as MovimientoTipo[];
-export const isMovimientoTipo = (v: unknown): v is MovimientoTipo => typeof v === "string" && v in MOVIMIENTO_TIPOS;
+export const isMovimientoTipo = (v: unknown): v is MovimientoTipo =>
+	typeof v === "string" && Object.hasOwn(MOVIMIENTO_TIPOS, v);
 export const movimientoTipoLabel = (v: string) => (isMovimientoTipo(v) ? MOVIMIENTO_TIPOS[v].label : v);
 
 export const SOLICITUD_ESTADOS = {
@@ -26,7 +27,8 @@ export const SOLICITUD_ESTADOS = {
 } as const satisfies Record<string, { label: string; tone: Tone }>;
 
 export type SolicitudEstado = keyof typeof SOLICITUD_ESTADOS;
-export const isSolicitudEstado = (v: unknown): v is SolicitudEstado => typeof v === "string" && v in SOLICITUD_ESTADOS;
+export const isSolicitudEstado = (v: unknown): v is SolicitudEstado =>
+	typeof v === "string" && Object.hasOwn(SOLICITUD_ESTADOS, v);
 export const solicitudEstadoLabel = (v: string) => (isSolicitudEstado(v) ? SOLICITUD_ESTADOS[v].label : v);
 export const solicitudEstadoTone = (v: string): Tone => (isSolicitudEstado(v) ? SOLICITUD_ESTADOS[v].tone : "neutral");
 

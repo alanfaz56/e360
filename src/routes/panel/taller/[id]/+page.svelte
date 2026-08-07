@@ -18,6 +18,8 @@
 	import Button from "$lib/components/Button.svelte";
 	import Drawer from "$lib/components/Drawer.svelte";
 	import EvidenciaSubir from "$lib/components/EvidenciaSubir.svelte";
+	import Adjuntos from "$lib/components/Adjuntos.svelte";
+	import AdjuntarArchivos from "$lib/components/AdjuntarArchivos.svelte";
 	import Field from "$lib/components/Field.svelte";
 	import PageHeader from "$lib/components/PageHeader.svelte";
 	import Flash from "$lib/components/Flash.svelte";
@@ -281,7 +283,10 @@
 			<ul class="mt-3 space-y-2">
 				{#each data.comentarios as c (c.id)}
 					<li class="border-l-2 border-sand-200 pl-3">
-						<p class="text-sm leading-relaxed text-sand-800">{c.texto}</p>
+						{#if c.texto}
+							<p class="text-sm leading-relaxed text-sand-800">{c.texto}</p>
+						{/if}
+						<Adjuntos adjuntos={c.adjuntos} />
 						<p class="mt-0.5 text-xs text-sand-500">{c.autorEmail} · {haceCuanto(c.createdAt)}</p>
 					</li>
 				{/each}
@@ -298,16 +303,18 @@
 				name="texto"
 			>
 				{#snippet children(id)}
+					<!-- Not `required`: a voice note or a clip of the noise IS the report, and this is
+					     the screen where typing is hardest. -->
 					<textarea
 						{id}
 						name="texto"
-						required
 						rows="2"
 						class={INPUT}
 						placeholder="Falta torque final, pendiente prueba de camino"
 					></textarea>
 				{/snippet}
 			</Field>
+			<AdjuntarArchivos notaId={data.nota.id} />
 			<Button
 				variant="outline"
 				size="sm"

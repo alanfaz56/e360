@@ -5,7 +5,9 @@ import { can } from "$lib/roles";
 import {
 	INVENTARIO_ITEM_KEYS,
 	NOTA_ESTADOS_ABIERTOS,
-	TAMANO_MAXIMO_BYTES,
+	limiteDeTipo,
+	megas,
+	tipoDeMime,
 	combustibleLabel,
 	esMimePermitido,
 	isFotoCategoria,
@@ -173,7 +175,7 @@ export async function seguimientoPorToken(token: string) {
 			where: { notaId: nota.id, interno: false },
 			orderBy: { createdAt: "desc" },
 			take: 30,
-			select: { id: true, texto: true, createdAt: true },
+			select: { id: true, texto: true, createdAt: true, adjuntos: { select: ADJUNTOS_SELECT } },
 		}),
 		prisma.notificacion.findMany({
 			where: { clienteId: nota.clienteId, entidad: "nota", entidadId: nota.id },
@@ -225,6 +227,7 @@ export async function seguimientoPorToken(token: string) {
 			id: c.id,
 			texto: c.texto,
 			createdAt: c.createdAt.toISOString(),
+			adjuntos: c.adjuntos.map(adjuntoPublico),
 		})),
 		avisos: avisos.map((a) => ({
 			id: a.id,
@@ -338,7 +341,11 @@ export async function getNotaDetalle(id: string) {
 			orderBy: { createdAt: "asc" },
 			include: { subidaPor: { select: { name: true } } },
 		}),
-		prisma.nota_comentario.findMany({ where: { notaId: nota.id }, orderBy: { createdAt: "asc" } }),
+		prisma.nota_comentario.findMany({
+			where: { notaId: nota.id },
+			orderBy: { createdAt: "asc" },
+			include: { adjuntos: { select: ADJUNTOS_SELECT } },
+		}),
 		prisma.nota_transferencia.findMany({
 			where: { notaId: nota.id },
 			orderBy: { desde: "desc" },
@@ -376,6 +383,7 @@ export async function getNotaDetalle(id: string) {
 			interno: c.interno,
 			autorEmail: c.autorEmail,
 			createdAt: c.createdAt.toISOString(),
+			adjuntos: c.adjuntos.map(adjuntoPublico),
 		})),
 		transferencias: transferencias.map((t) => ({
 			id: t.id,
@@ -1530,11 +1538,29 @@ export async function cancelarNota(input: { actor: Actor; id: string; motivo: un
  * Running commentary. `interno` defaults to true: the safe default is that a note stays inside
  * the shop, and sharing it with the customer is the deliberate act.
  */
-export async function comentarNota(input: { actor: Actor; id: string; texto: unknown; interno?: unknown }) {
+export async function comentarNota(input: {
+	actor: Actor;
+	id: string;
+	texto: unknown;
+	interno?: unknown;
+	/** Ids of evidence rows already uploaded and registered for THIS note. */
+	adjuntos?: unknown;
+}) {
 	if (!can(input.actor.role, "nota:comment")) throw new ClienteError(403, "Sin permiso: nota:comment");
 
+	// Attachment ids arrive as one repeated field from a plain form, or an array from the API.
+	const adjuntos = [
+		...new Set(
+			(Array.isArray(input.adjuntos) ? input.adjuntos : [input.adjuntos]).flatMap((v) =>
+				typeof v === "string" && v.trim() ? [v.trim()] : [],
+			),
+		),
+	];
+
 	const texto = trim(input.texto);
-	if (!texto) throw new ClienteError(400, "El comentario no puede ir vacío");
+	// A voice note IS the comment. Demanding text beside it is asking somebody with greasy hands to
+	// type what they just said — so a comment is empty only when nothing at all came with it.
+	if (!texto && adjuntos.length === 0) throw new ClienteError(400, "El comentario no puede ir vacío");
 
 	const nota = await getNota(input.id);
 	let interno = input.interno === undefined ? true : input.interno === true || input.interno === "1";
@@ -1542,15 +1568,20 @@ export async function comentarNota(input: { actor: Actor; id: string; texto: unk
 	// A mechanic may comment, but never AT the customer. Writing to the customer belongs to
 	// whoever owns that relationship — and `notaParaCliente` exists precisely because what reaches
 	// them is a decision, not a side effect of somebody unchecking a box in the bay.
+	//
+	// Scope goes through `exigirNotaPropia` (and so through `alcanceDeTaller`), NOT through a
+	// hand-rolled `mecanicoId` comparison: work is assigned to a taller now, so a mechanic reaches
+	// a note by belonging to whoever is holding it. The old check would 404 every note a mechanic
+	// can legitimately open — the exact drift that having one boundary function prevents.
 	if (!can(input.actor.role, "nota:read")) {
-		if (nota.mecanicoId !== input.actor.id) throw new ClienteError(404, "Nota no encontrada");
+		await exigirNotaPropia(input.actor, nota.id);
 		interno = true;
 	}
 
 	// A comment marked visible to the customer IS customer-facing data, so the same rule applies:
 	// the partner workshop never surfaces. This catches the honest slip — pasting "ya lo mandamos
 	// a El Sahuaro" into the wrong box — which is the realistic way that name escapes.
-	if (!interno) {
+	if (!interno && texto) {
 		const mencionado = await tallerMencionado(texto);
 		if (mencionado) {
 			throw new ClienteError(
@@ -1565,19 +1596,38 @@ export async function comentarNota(input: { actor: Actor; id: string; texto: unk
 			data: {
 				id: randomUUID(),
 				notaId: nota.id,
-				texto,
+				texto: texto ?? "",
 				interno,
 				autorId: input.actor.id,
 				autorEmail: input.actor.email,
 			},
 		});
+
+		if (adjuntos.length > 0) {
+			// **Scoped to this note and to unattached rows.** Without `notaId` in the WHERE, a caller
+			// could staple another job's evidence onto their comment and read its description; without
+			// `comentarioId: null`, they could steal a file off somebody else's comment. `updateMany`
+			// silently skips whatever does not match, which is the behaviour we want — a stale id from
+			// a double-submit is not worth failing the comment over.
+			const { count } = await tx.nota_evidencia.updateMany({
+				where: { id: { in: adjuntos }, notaId: nota.id, comentarioId: null },
+				data: { comentarioId: creado.id },
+			});
+			if (count === 0 && !texto) {
+				// Nothing attached and nothing said: the comment would be an empty row nobody can read.
+				throw new ClienteError(400, "No se pudo adjuntar el archivo. Vuelve a intentarlo.");
+			}
+		}
+
 		await recordAudit(tx, {
 			action: "nota.comment",
 			actor: input.actor,
 			entityId: nota.id,
 			entityLabel: notaLabel(nota),
-			summary: `Comentario ${interno ? "interno" : "para el cliente"} en la nota #${nota.folio}`,
-			after: { interno, longitud: texto.length },
+			summary: `Comentario ${interno ? "interno" : "para el cliente"} en la nota #${nota.folio}${
+				adjuntos.length > 0 ? ` con ${adjuntos.length} archivo(s)` : ""
+			}`,
+			after: { interno, longitud: texto?.length ?? 0, adjuntos: adjuntos.length },
 		});
 		return creado;
 	});
@@ -1588,12 +1638,49 @@ export async function comentarNota(input: { actor: Actor; id: string; texto: unk
 		await avisarCliente(nota, {
 			evento: "cliente_comentario",
 			titulo: "Un mensaje del taller",
-			cuerpo: texto.slice(0, 400),
+			cuerpo: texto ? texto.slice(0, 400) : "Te compartimos un archivo de tu servicio.",
 		});
 	}
 
 	return comentario;
 }
+
+/**
+ * A comment's attachments, in the one shape every screen renders.
+ *
+ * Three callers — the customer's tracking page, the staff detail screen and the mechanic's — so it
+ * is extracted rather than written three times (Rule 5). The read URL is derived here and never
+ * stored: a saved signed URL expires and rots into a broken image.
+ */
+const ADJUNTOS_SELECT = {
+	id: true,
+	tipo: true,
+	nombre: true,
+	contentType: true,
+	bytes: true,
+	descripcion: true,
+	clave: true,
+} as const;
+
+type AdjuntoRow = {
+	id: string;
+	tipo: string;
+	nombre: string;
+	contentType: string;
+	bytes: number | null;
+	descripcion: string | null;
+	clave: string;
+};
+
+const adjuntoPublico = (a: AdjuntoRow) => ({
+	id: a.id,
+	tipo: a.tipo,
+	nombre: a.nombre,
+	contentType: a.contentType,
+	bytes: a.bytes,
+	descripcion: a.descripcion,
+	url: urlDeLectura(a.clave),
+});
 
 // --- Evidencia -------------------------------------------------------------------------------
 
@@ -1634,11 +1721,15 @@ export async function firmarEvidencia(input: {
 	const nombre = trim(input.nombre, 255, "El nombre del archivo");
 	if (!nombre) throw new ClienteError(400, "Falta el nombre del archivo");
 	if (!esMimePermitido(input.contentType)) {
-		throw new ClienteError(400, "Solo se aceptan imágenes (JPG, PNG, WEBP, HEIC) o PDF");
+		throw new ClienteError(400, "Solo se aceptan imágenes, PDF, audio o video");
 	}
+
+	// The limit follows the CONTENT TYPE, not the caller's word for it: a clip of a noise needs
+	// room a photo does not, and `tipoDeMime` is what decides which is which.
+	const limite = limiteDeTipo(tipoDeMime(input.contentType));
 	const bytes = int(input.bytes);
-	if (bytes !== null && bytes > TAMANO_MAXIMO_BYTES) {
-		throw new ClienteError(413, `El archivo pasa de ${TAMANO_MAXIMO_BYTES / 1024 / 1024} MB`);
+	if (bytes !== null && bytes > limite) {
+		throw new ClienteError(413, `El archivo pasa de ${megas(limite)} MB`);
 	}
 
 	const nota = await getNota(input.id);
@@ -1678,7 +1769,9 @@ export async function registrarEvidencia(input: { actor: Actor; id: string; body
 	}
 
 	const nombre = trim(input.body.nombre, 255, "El nombre") ?? "archivo";
-	const tipo = String(input.body.contentType).startsWith("image/") ? "foto" : "documento";
+	// The mime IS the classification. Taking `tipo` from the caller would let a video be labelled a
+	// photo and rendered in an `<img>`, and a `documento` be rendered in a `<video>`.
+	const tipo = tipoDeMime(String(input.body.contentType));
 
 	const evidencia = await prisma.$transaction(async (tx) => {
 		const creada = await tx.nota_evidencia.create({
@@ -1865,6 +1958,7 @@ export async function getNotaDeTaller(actor: Actor, id: string) {
 			where: { notaId: nota.id },
 			orderBy: { createdAt: "desc" },
 			take: 30,
+			include: { adjuntos: { select: ADJUNTOS_SELECT } },
 		}),
 		// What WE asked their shop to do. Only for an outside mechanic: one of ours has no
 		// workshop, and there is no "their" transfer to read.
@@ -1894,6 +1988,7 @@ export async function getNotaDeTaller(actor: Actor, id: string) {
 			interno: c.interno,
 			autorEmail: c.autorEmail,
 			createdAt: c.createdAt.toISOString(),
+			adjuntos: c.adjuntos.map(adjuntoPublico),
 		})),
 	};
 }

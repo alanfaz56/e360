@@ -386,4 +386,31 @@ assert.notEqual(
 	"son claves distintas aunque hoy coincidan los roles",
 );
 
+// --- Timbrado y ajustes del sistema -------------------------------------------------------------
+// Stamping is its own key even though it holds the same two roles as `factura:create` today. The
+// line that matters is that the counter never reaches it: an Operador quotes and takes money, and
+// neither of those spends a timbre or produces a fiscal document.
+assert.equal(can("admin", "factura:timbrar"), true);
+assert.equal(can("gerente", "factura:timbrar"), true);
+assert.equal(can("operador", "factura:timbrar"), false, "el mostrador no timbra");
+assert.equal(can("taller", "factura:timbrar"), false);
+
+// Cancelling a stamped invoice deliberately reuses `factura:cancel`: once a PAC is wired,
+// cancelling the row WITHOUT cancelling at the SAT is a lie, so that IS what cancelling means now.
+assert.equal(can("operador", "factura:cancel"), false);
+
+// The settings screen holds the PAC's credentials. Admin in the registry — and narrowed further by
+// `esDuenoDelSistema`, because "an Admin may" and "which Admin" are different questions.
+for (const clave of ["ajustes:read", "ajustes:manage"] as const) {
+	assert.equal(can("admin", clave), true);
+	for (const rol of ["gerente", "operador", "taller"] as const) {
+		assert.equal(can(rol, clave), false, `${rol} no toca ${clave}`);
+	}
+}
+
+// The `taller` role STILL holds nothing that is not about its own work — checked above, and
+// re-checked here because two permission groups were added since.
+assert.equal(can("taller", "ajustes:read"), false);
+assert.equal(can("taller", "factura:read"), false);
+
 console.log("check-roles: OK");

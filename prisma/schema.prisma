@@ -45,6 +45,7 @@ model user {
   cotizaciones      cotizacion[]         @relation("cotizacionCreadaPor")
   facturas          factura[]            @relation("facturaCreadaPor")
   pagos             pago[]               @relation("pagoRegistradoPor")
+  ajustes           ajuste[]             @relation("ajusteActualizadoPor")
 
   notificaciones      notificacion[]             @relation("notificacionDestinatario")
   suscripcionesPush   push_suscripcion[]         @relation("pushSuscripcion")
@@ -188,6 +189,13 @@ model cliente {
   regimenFiscal String? @db.VarChar(8)
   codigoPostal  String? @db.VarChar(5)
   usoCfdi       String? @db.VarChar(8)
+
+  /// The PAC identifies a receptor by ITS OWN uid, not by RFC, so the customer has to exist on
+  /// factura.com before anything can be stamped for them. Written the first time we stamp and
+  /// reused after — see `asegurarReceptor`. Scoped per environment by `facturaComEntorno`,
+  /// because a sandbox uid is meaningless in production and reusing it stamps nothing.
+  facturaComUid     String? @db.VarChar(64)
+  facturaComEntorno String? @db.VarChar(16)
 
   /// Credit terms. `limiteCredito` null means no credit at all — the customer pays on delivery.
   /// Money is Decimal, never Float: a peso that drifts by a cent is a peso somebody argues about.
@@ -427,6 +435,17 @@ model taller {
   /// Where the row came from: `panel` (staff added it) or `publico` (they applied at /talleres).
   origen String @default("panel") @db.VarChar(16)
 
+  /// **This workshop is US** — Estación 360's own bay, not a partner we source work out to.
+  ///
+  /// It exists so that assigning work is always "to a taller", including our own: a note that
+  /// stays in-house takes the same path as one that goes out, and the mechanics who work on it are
+  /// scoped by `user.tallerId` like everybody else. That replaces assigning an individual mechanic.
+  ///
+  /// The invisibility rule does NOT apply to an internal shop: `tallerMencionado` skips these,
+  /// because "lo estamos haciendo aquí en Estación 360" is not a name to hide from the customer —
+  /// it is the customer's own shop.
+  esInterno Boolean @default(false)
+
   /// solicitado | aprobado | rechazado.
   ///
   /// Certification, as a status on the one registry rather than a separate applications table —
@@ -597,7 +616,15 @@ model nota_evidencia {
   notaId String
   nota   nota_servicio @relation(fields: [notaId], references: [id], onDelete: Cascade)
 
-  /// foto | documento
+  /// The comment this file is attached to, when it came in on one. Null for ordinary evidence.
+  ///
+  /// Attachments are evidence ROWS, not a second table: same bucket, same signer, same prefix
+  /// check, same audit. A parallel `nota_comentario_adjunto` would be a second upload path to keep
+  /// in step with this one, and the first thing to drift would be which content types are allowed.
+  comentarioId String?
+  comentario   nota_comentario? @relation(fields: [comentarioId], references: [id], onDelete: Cascade)
+
+  /// foto | documento | audio | video
   tipo String @db.VarChar(16)
   /// Key from FOTO_CATEGORIAS, e.g. `frente`, `tablero`, `dano`.
   categoria   String  @db.VarChar(32)
@@ -632,6 +659,11 @@ model nota_comentario {
   /// Snapshot, so the trail still reads correctly after the account is gone.
   autorEmail String   @db.VarChar(255)
   createdAt  DateTime @default(now())
+
+  /// Photos, PDFs, voice notes and clips that came in with the comment. The other side cascades:
+  /// deleting the comment takes its attachments with it, because an evidence row pointing at a
+  /// comment that no longer exists is unreachable from every screen.
+  adjuntos nota_evidencia[]
 
   @@index([notaId, createdAt])
   @@map("nota_comentario")
@@ -820,12 +852,28 @@ model factura {
   iva      Decimal @default(0) @db.Decimal(12, 2)
   total    Decimal @default(0) @db.Decimal(12, 2)
 
-  /// CFDI stamping data, filled in once a PAC is wired up.
+  /// CFDI stamping data. `uuid` is the folio fiscal the SAT assigned; it exists only once the
+  /// invoice was actually stamped, which is why `timbradaAt` is a different fact from `emitidaAt`:
+  /// the shop issues, the SAT stamps, and there is a window where the first happened and the
+  /// second did not.
   uuid         String? @unique @db.VarChar(36)
   serie        String? @db.VarChar(25)
+  /// factura.com's own id for the document. Needed to fetch the PDF/XML or cancel it — the UUID
+  /// alone is not enough for their API.
+  pacUid       String? @db.VarChar(64)
+  /// Which environment stamped it. A sandbox document must never be mistaken for a fiscal one.
+  pacEntorno   String? @db.VarChar(16)
+  timbradaAt   DateTime?
   emitidaAt    DateTime?
   canceladaAt  DateTime?
   canceladoMotivo String? @db.VarChar(255)
+  /// SAT cancellation is asynchronous and can sit "en proceso" needing the receiver's approval,
+  /// so the request and its outcome are two different things. Null = never requested.
+  cancelacionEstatus String? @db.VarChar(32)
+  /// Clave 01–04. `01` (comprobante emitido con errores CON relación) needs a replacement UUID,
+  /// which is why it is stored beside it rather than being derivable.
+  cancelacionMotivo  String? @db.VarChar(2)
+  cancelacionSustituye String? @db.VarChar(36)
   notas        String?
 
   creadaPorId String?
@@ -833,12 +881,46 @@ model factura {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  pagos pago[]
+  pagos     pago[]
+  conceptos factura_concepto[]
 
   @@index([clienteId])
   @@index([estado])
   @@index([vence])
   @@map("factura")
+}
+
+/// What the invoice actually charges for — its own lines, COPIED at issue.
+///
+/// Copied and not read through `cotizacion`: re-quoting or re-classifying a product next year must
+/// never rewrite what was already invoiced, which is the same reasoning as copying the credit terms
+/// onto the row. It is also what makes an invoice with no quote behind it stampable at all — a CFDI
+/// needs the detail, and before this table an ad-hoc invoice had nowhere to keep it.
+model factura_concepto {
+  id        String  @id
+  facturaId String
+  factura   factura @relation(fields: [facturaId], references: [id], onDelete: Cascade)
+
+  /// refaccion | mano_obra | insumo | externo — same vocabulary as cotizacion_concepto.
+  tipo        String  @db.VarChar(16)
+  descripcion String  @db.VarChar(500)
+  /// Fractional on purpose: 1.5 hours of labour is a real line.
+  cantidad       Decimal @db.Decimal(10, 2)
+  precioUnitario Decimal @db.Decimal(12, 2)
+  importe        Decimal @db.Decimal(12, 2)
+  orden          Int     @default(0)
+
+  /// SetNull, not Restrict: a product can be deleted and the invoice still has to read correctly.
+  productoId String?
+  producto   producto? @relation(fields: [productoId], references: [id], onDelete: SetNull)
+
+  /// SAT keys, copied like everything else here.
+  claveProdServ String? @db.VarChar(8)
+  claveUnidad   String? @db.VarChar(3)
+
+  @@index([facturaId])
+  @@index([productoId])
+  @@map("factura_concepto")
 }
 
 /// A payment against an invoice. Partial by design: the invoice is `pagada` when the payments
@@ -874,6 +956,35 @@ model configurations {
   @@id([id, key])
   @@index([key])
   @@map("configurations")
+}
+
+// ============================================================================================
+// Ajustes del sistema
+// ============================================================================================
+
+/// One app-wide setting. The catalogue of valid keys is `AJUSTES` in src/lib/ajustes.ts and a key
+/// that is not in it cannot be written — deny by default, same as the permission registry.
+///
+/// `valor` is Text, not VarChar: an encrypted secret is base64 of iv + tag + ciphertext and grows
+/// with the plaintext, and the whole reason this table exists is that its contents change without
+/// a migration. `cifrado` says how to read it; `pista` is what the screen may show (`••••1234`),
+/// stored separately so displaying a secret never requires decrypting it.
+///
+/// Not merged into `configurations` above (dead scaffolding from the starter template): that table
+/// has a composite primary key on an autoincrementing id plus its own unique key, and a
+/// VarChar(255) value an encrypted secret outgrows.
+model ajuste {
+  clave   String  @id @db.VarChar(64)
+  valor   String?
+  cifrado Boolean @default(false)
+  pista   String? @db.VarChar(32)
+
+  actualizadoPorId String?
+  actualizadoPor   user?    @relation("ajusteActualizadoPor", fields: [actualizadoPorId], references: [id], onDelete: SetNull)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@map("ajuste")
 }
 
 // ============================================================================================
@@ -1052,10 +1163,11 @@ model producto {
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
 
-  capas       inventario_capa[]
-  movimientos inventario_movimiento[]
-  conceptos   cotizacion_concepto[]
-  solicitudes solicitud_refaccion[]
+  capas             inventario_capa[]
+  movimientos       inventario_movimiento[]
+  conceptos         cotizacion_concepto[]
+  conceptosFactura  factura_concepto[]
+  solicitudes       solicitud_refaccion[]
 
   @@index([nombre])
   @@index([tipo])

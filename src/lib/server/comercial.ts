@@ -41,7 +41,9 @@ import type { Actor } from "./guard";
  */
 
 const dec = (cents: bigint) => new Prisma.Decimal(pesos(cents));
-const aCentavos = (d: Prisma.Decimal | string | null | undefined): bigint =>
+
+/** Exported: `timbrado.ts` reads the same columns and must round them the same way. */
+export const aCentavos = (d: Prisma.Decimal | string | null | undefined): bigint =>
 	d === null || d === undefined ? 0n : (centavos(d.toString()) ?? 0n);
 
 /**
@@ -50,7 +52,7 @@ const aCentavos = (d: Prisma.Decimal | string | null | undefined): bigint =>
  * ALWAYS two decimals: `Decimal.toString()` drops trailing zeros, so a total of 5050.00 would
  * serialize as "5050" and an integrator parsing it would silently disagree with the invoice.
  */
-const monto = (d: Prisma.Decimal) => d.toFixed(2);
+export const monto = (d: Prisma.Decimal) => d.toFixed(2);
 
 // --- Cotizaciones ----------------------------------------------------------------------------
 
@@ -629,6 +631,9 @@ export async function actualizarCredito(input: { actor: Actor; clienteId: string
 // --- Facturas --------------------------------------------------------------------------------
 
 const FACTURA_INCLUDE = {
+	// The invoice IS its lines: every screen that shows one wants them, and stamping cannot work
+	// without them.
+	conceptos: { orderBy: { orden: "asc" } },
 	cliente: { select: { nombreCompleto: true, rfc: true } },
 	nota: { select: { folio: true } },
 	pagos: { orderBy: { pagadoAt: "asc" }, include: { registradoPor: { select: { name: true } } } },
@@ -659,11 +664,35 @@ export const publicFactura = (f: FacturaRow) => {
 		pagado: pesos(pagado),
 		saldo: pesos(total - pagado),
 		liquidada: pagado >= total,
+		conceptos: f.conceptos.map((x) => ({
+			id: x.id,
+			tipo: x.tipo,
+			tipoLabel: conceptoTipoLabel(x.tipo),
+			descripcion: x.descripcion,
+			cantidad: x.cantidad.toFixed(2),
+			precioUnitario: monto(x.precioUnitario),
+			importe: monto(x.importe),
+			productoId: x.productoId,
+			claveProdServ: x.claveProdServ,
+			claveUnidad: x.claveUnidad,
+		})),
 		uuid: f.uuid,
 		serie: f.serie,
+		// Stamping. `timbrada` is what the screens gate on — an invoice can be `emitida` (the shop
+		// issued it) without ever having been stamped, and those are different facts.
+		timbrada: f.uuid !== null,
+		timbradaAt: f.timbradaAt?.toISOString() ?? null,
+		// Which environment produced it, so a sandbox document is never mistaken for a fiscal one.
+		// `pacUid` is deliberately NOT exposed: it is the provider's internal handle, it identifies
+		// our account's document to anyone holding it, and no client needs it — the routes that use
+		// it read it from the row.
+		entorno: f.pacEntorno,
 		emitidaAt: f.emitidaAt?.toISOString() ?? null,
 		canceladaAt: f.canceladaAt?.toISOString() ?? null,
 		canceladoMotivo: f.canceladoMotivo,
+		cancelacionEstatus: f.cancelacionEstatus,
+		cancelacionMotivo: f.cancelacionMotivo,
+		cancelacionSustituye: f.cancelacionSustituye,
 		notas: f.notas,
 		pagos: f.pagos.map((p) => ({
 			id: p.id,
@@ -730,6 +759,26 @@ export async function crearFactura(input: { actor: Actor; body: Record<string, u
 	let iva = 0n;
 	let total = 0n;
 
+	/**
+	 * The invoice's OWN lines, whichever path it came from.
+	 *
+	 * Copied, never read back through the quote: re-quoting or re-classifying a product next year
+	 * must not rewrite what was already invoiced — the same reasoning as copying the credit terms.
+	 * It is also what makes an ad-hoc invoice stampable at all, because a CFDI needs the detail and
+	 * before this the lines were computed, used for a total, and thrown away.
+	 */
+	let lineas: {
+		tipo: string;
+		descripcion: string;
+		cantidad: number;
+		precioUnitario: bigint;
+		importe: bigint;
+		orden: number;
+		productoId: string | null;
+		claveProdServ: string | null;
+		claveUnidad: string | null;
+	}[] = [];
+
 	if (cotizacionId) {
 		const cotizacion = await getCotizacion(cotizacionId);
 		if (cotizacion.estado !== "autorizada") {
@@ -745,9 +794,20 @@ export async function crearFactura(input: { actor: Actor; body: Record<string, u
 		subtotal = aCentavos(cotizacion.subtotal);
 		iva = aCentavos(cotizacion.iva);
 		total = aCentavos(cotizacion.total);
+		lineas = cotizacion.conceptos.map((c, i) => ({
+			tipo: c.tipo,
+			descripcion: c.descripcion,
+			cantidad: Number(c.cantidad.toString()),
+			precioUnitario: aCentavos(c.precioUnitario),
+			importe: aCentavos(c.importe),
+			orden: c.orden ?? i,
+			productoId: c.productoId,
+			claveProdServ: c.claveProdServ,
+			claveUnidad: c.claveUnidad,
+		}));
 	} else {
-		const conceptos = leerConceptos(input.body.conceptos);
-		({ subtotal, iva, total } = totales(conceptos));
+		lineas = await resolverProductos(leerConceptos(input.body.conceptos));
+		({ subtotal, iva, total } = totales(lineas));
 		if (notaId && !clienteId) {
 			const nota = await prisma.nota_servicio.findUnique({
 				where: { id: notaId },
@@ -803,6 +863,22 @@ export async function crearFactura(input: { actor: Actor; body: Record<string, u
 				emitidaAt: new Date(),
 				notas: trim(input.body.notas),
 				creadaPorId: input.actor.id,
+				// Written in the SAME transaction as the invoice: an invoice whose lines committed
+				// separately could exist without them, and that invoice is one nobody can stamp.
+				conceptos: {
+					create: lineas.map((l) => ({
+						id: randomUUID(),
+						tipo: l.tipo,
+						descripcion: l.descripcion,
+						cantidad: new Prisma.Decimal(l.cantidad),
+						precioUnitario: dec(l.precioUnitario),
+						importe: dec(l.importe),
+						orden: l.orden,
+						productoId: l.productoId,
+						claveProdServ: l.claveProdServ,
+						claveUnidad: l.claveUnidad,
+					})),
+				},
 			},
 			include: FACTURA_INCLUDE,
 		});
@@ -846,6 +922,15 @@ export async function cancelarFactura(input: { actor: Actor; id: string; motivo:
 
 	const current = await getFactura(input.id);
 	if (current.estado === "cancelada") throw new ClienteError(409, "Ya está cancelada.");
+	// A stamped invoice exists at the SAT whatever this row says. Flipping the estado here would
+	// leave a live CFDI the shop believes is gone — and would let it be re-invoiced. Cancelling a
+	// stamped invoice goes through `cancelarEnSat`, which asks the SAT first.
+	if (current.uuid) {
+		throw new ClienteError(
+			409,
+			"Esa factura ya está timbrada: hay que cancelarla ante el SAT, con su motivo (01–04).",
+		);
+	}
 	if (current.pagos.length > 0) {
 		throw new ClienteError(
 			409,

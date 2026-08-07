@@ -29,6 +29,10 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
 			id: params.id!,
 			texto: body.texto,
 			interno: body.interno,
+			// Ids of evidence already uploaded and registered for THIS note — see
+			// POST ../evidencias. Anything belonging to another note, or already stapled to another
+			// comment, is silently skipped rather than stolen.
+			adjuntos: body.adjuntos,
 		});
 		return json(
 			{

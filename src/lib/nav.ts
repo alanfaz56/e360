@@ -22,7 +22,8 @@ export type NavItem = {
 		| "clipboard-list"
 		| "receipt-text"
 		| "wrench"
-		| "package";
+		| "package"
+		| "settings";
 	permission: Permission;
 	/**
 	 * Hide the entry from anybody who ALSO holds this permission.
@@ -33,6 +34,14 @@ export type NavItem = {
 	 * the narrow screen on a permission only one role holds would be a lie about what it does.
 	 */
 	ocultarSi?: Permission;
+	/**
+	 * Additionally require the caller to be on the `OWNER_EMAILS` list.
+	 *
+	 * For the settings screen, which is Admin in the registry AND narrowed to whoever runs the
+	 * software. Hiding the link is a courtesy as always; `requireDueno` on the route is the
+	 * control, and it answers 404 rather than 403 so the screen is not even discoverable.
+	 */
+	soloDueno?: boolean;
 };
 
 export const NAV: readonly NavItem[] = [
@@ -59,4 +68,13 @@ export const NAV: readonly NavItem[] = [
 	{ href: "/panel/talleres", label: "Talleres aliados", icon: "wrench", permission: "taller:read" },
 	{ href: "/panel/usuarios", label: "Usuarios", icon: "users", permission: "user:list" },
 	{ href: "/panel/auditoria", label: "Auditoría", icon: "scroll-text", permission: "audit:read" },
+	// Last, and only for us: the PAC's credentials and what stamping costs. An Admin at the shop
+	// holds `ajustes:read` in the registry and still never sees this row — see `soloDueno`.
+	{
+		href: "/panel/ajustes",
+		label: "Ajustes del sistema",
+		icon: "settings",
+		permission: "ajustes:read",
+		soloDueno: true,
+	},
 ];

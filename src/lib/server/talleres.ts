@@ -11,11 +11,20 @@ import { verifyTurnstile } from "./turnstile";
 import type { Actor } from "./guard";
 
 /**
- * Partner workshops. Estación 360 takes the vehicle in and sources the job out to one of these.
+ * Workshops. Mostly partners Estación 360 sources jobs out to — **and our own bay**, flagged
+ * `esInterno`.
  *
- * External shops only, by decision: internal work needs no transfer. Their own people can now hold
- * accounts — `user.tallerId`, set through `asignarMecanicoATaller` — and only a `taller` role may
- * carry one, enforced by `user_taller_solo_rol_taller_check`.
+ * That flag is why work is always assigned TO A TALLER rather than to a person: a job that stays
+ * in-house takes the same path as one that goes out, and the mechanics who touch it are scoped by
+ * `user.tallerId` either way. Assigning an individual mechanic was a second, parallel way to route
+ * work, and the two disagreed about who could see what.
+ *
+ * Their people hold accounts through `user.tallerId`, set by `asignarMecanicoATaller`; only a
+ * `taller` role may carry one, enforced by `user_taller_solo_rol_taller_check`.
+ *
+ * **The invisibility rule is about PARTNERS, not about us.** `tallerMencionado` skips internal
+ * shops — telling a customer their truck is being worked on at Estación 360 is the opposite of
+ * leaking a supplier.
  */
 
 export const publicSucursal = (s: {
@@ -55,6 +64,7 @@ export const publicTaller = (t: {
 	notas: string | null;
 	origen: string;
 	estado: string;
+	esInterno?: boolean;
 	rfc: string | null;
 	ciudad: string | null;
 	sitioWeb: string | null;
@@ -78,6 +88,8 @@ export const publicTaller = (t: {
 	origen: t.origen,
 	estado: t.estado,
 	estadoLabel: tallerEstadoLabel(t.estado),
+	// Our own bay, not a partner. Screens sort it first and the invisibility rule skips it.
+	esInterno: t.esInterno ?? false,
 	rfc: t.rfc,
 	ciudad: t.ciudad,
 	sitioWeb: t.sitioWeb,
@@ -135,8 +147,9 @@ export async function listTalleres(query: TallerQuery, actor?: Actor) {
 		prisma.taller.count({ where }),
 		prisma.taller.findMany({
 			where,
-			// Applications first: the queue is the thing that goes stale if nobody looks at it.
-			orderBy: [{ estado: "asc" }, { nombre: "asc" }],
+			// Applications first (the queue goes stale if nobody looks), then our own bay, then the
+			// partners — which is also the order somebody picks from when sending a vehicle out.
+			orderBy: [{ estado: "asc" }, { esInterno: "desc" }, { nombre: "asc" }],
 			skip: skipFor(paging),
 			take: paging.perPage,
 			include: { _count: { select: { notas_recibidas: true } } },
@@ -194,6 +207,9 @@ function leerTallerInput(body: Record<string, unknown>) {
 		sitioWeb: trim(body.sitioWeb, 255, "El sitio web"),
 		anosOperando: entero(body.anosOperando, 200, "Los años operando"),
 		empleados: entero(body.empleados, 10000, "El número de empleados"),
+		// Our own bay. Only ever set from the panel — `solicitarTaller` builds its row field by
+		// field from its own whitelist, so an applicant cannot declare itself to be us.
+		esInterno: body.esInterno === "1" || body.esInterno === "on" || body.esInterno === true,
 	};
 }
 
@@ -622,7 +638,11 @@ export async function archivarSucursal(input: { actor: Actor; id: string; archiv
  */
 export async function tallerMencionado(texto: string): Promise<string | null> {
 	const talleres = await prisma.taller.findMany({
-		where: { archivedAt: null },
+		// `esInterno: false` — our OWN bay is not a name to hide. The rule exists so a customer
+		// cannot go straight to the partner that did the work next time; "lo estamos haciendo aquí
+		// en Estación 360" is the opposite of that, and blocking it would make the shop unable to
+		// say where the car is.
+		where: { archivedAt: null, esInterno: false },
 		select: { nombre: true },
 	});
 	if (talleres.length === 0) return null;

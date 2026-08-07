@@ -22,7 +22,7 @@ export type ContactoRole = keyof typeof CONTACTO_ROLES;
 export const CONTACTO_ROLE_KEYS = Object.keys(CONTACTO_ROLES) as ContactoRole[];
 
 export function isContactoRole(value: unknown): value is ContactoRole {
-	return typeof value === "string" && value in CONTACTO_ROLES;
+	return typeof value === "string" && Object.hasOwn(CONTACTO_ROLES, value);
 }
 
 /** Roles that let the holder act on the customer's behalf. */
@@ -30,5 +30,4 @@ export function esRolDeAutoridad(role: string): boolean {
 	return isContactoRole(role) && CONTACTO_ROLES[role].autoridad;
 }
 
-export const contactoRoleLabel = (role: string): string =>
-	isContactoRole(role) ? CONTACTO_ROLES[role].label : role;
+export const contactoRoleLabel = (role: string): string => (isContactoRole(role) ? CONTACTO_ROLES[role].label : role);

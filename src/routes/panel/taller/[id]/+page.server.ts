@@ -74,7 +74,13 @@ export const actions: Actions = {
 		try {
 			// `comentarNota` FORCES interno for a mechanic; the form does not offer the choice, and
 			// the server would ignore it if it did.
-			await comentarNota({ actor, id: params.id!, texto: data.get("texto"), interno: true });
+			await comentarNota({
+				actor,
+				id: params.id!,
+				texto: data.get("texto"),
+				interno: true,
+				adjuntos: data.getAll("adjuntos"),
+			});
 			redirect(303, conFlash(`/panel/taller/${params.id}`, "nota.comentar"));
 		} catch (err) {
 			return fallo(err);

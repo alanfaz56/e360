@@ -1,7 +1,7 @@
 import { redirect, type ServerLoad } from "@sveltejs/kit";
 import { NAV } from "$lib/nav";
 import { ROLE_LABEL, can, permissionsFor } from "$lib/roles";
-import { requireUser } from "$lib/server/guard";
+import { esDueno, requireUser } from "$lib/server/guard";
 import { contarNoLeidas, listarNotificaciones } from "$lib/server/notificaciones";
 
 export const load: ServerLoad = async ({ locals, url }) => {
@@ -19,9 +19,14 @@ export const load: ServerLoad = async ({ locals, url }) => {
 	return {
 		actor: { name: actor.name, email: actor.email, role: actor.role, roleLabel: ROLE_LABEL[actor.role] },
 		permissions: permissionsFor(actor.role),
-		// Filtered server-side: a role never receives links to screens it cannot open.
+		// Filtered server-side: a role never receives links to screens it cannot open. `soloDueno`
+		// narrows past the registry for the system settings — an Admin at the shop holds the key and
+		// still never gets the link, and the route answers 404 to back it up.
 		nav: NAV.filter(
-			(item) => can(actor.role, item.permission) && !(item.ocultarSi && can(actor.role, item.ocultarSi)),
+			(item) =>
+				can(actor.role, item.permission) &&
+				!(item.ocultarSi && can(actor.role, item.ocultarSi)) &&
+				(!item.soloDueno || esDueno(actor)),
 		),
 		avisos: bandeja.notificaciones,
 		noLeidas: bandeja.noLeidas,

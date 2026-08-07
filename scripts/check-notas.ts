@@ -6,6 +6,10 @@
  */
 import assert from "node:assert/strict";
 import {
+	MIME_KEYS,
+	isEvidenciaTipo,
+	limiteDeTipo,
+	tipoDeMime,
 	COMBUSTIBLE_LABELS,
 	COMBUSTIBLE_MAX,
 	EVIDENCIA_TIPO_KEYS,
@@ -106,7 +110,7 @@ assert.equal(inventarioLabel("gato"), "Gato");
 assert.equal(inventarioLabel("desconocido"), "desconocido");
 
 // --- Evidence ---------------------------------------------------------------------------------
-assert.deepEqual(EVIDENCIA_TIPO_KEYS, ["foto", "documento"]);
+assert.deepEqual(EVIDENCIA_TIPO_KEYS, ["foto", "documento", "audio", "video"]);
 // The angles the shop wants on every intake, so a damage claim later has a "before" picture.
 for (const c of ["frente", "trasera", "lateral_izquierdo", "lateral_derecho", "tablero"] as const) {
 	assert.ok(FOTOS_SUGERIDAS.includes(c), `${c} debe sugerirse en toda entrada`);
@@ -172,5 +176,41 @@ for (const estado of NOTA_ESTADO_KEYS) {
 }
 // An unknown estado degrades to something safe rather than exposing the key.
 assert.equal(notaEstadoClienteLabel("inventado"), "En proceso");
+
+// --- Adjuntos: el mime ES la clasificación -----------------------------------------------------
+// Never the caller's word for it. A video labelled `foto` would render inside an `<img>` and a
+// PDF inside a `<video>` — and the allowlist is what keeps `image/svg+xml` and `text/html` out of
+// a bucket that serves them, which is an XSS.
+assert.equal(tipoDeMime("image/jpeg"), "foto");
+assert.equal(tipoDeMime("application/pdf"), "documento");
+assert.equal(tipoDeMime("audio/mp4"), "audio");
+assert.equal(tipoDeMime("video/quicktime"), "video");
+
+for (const peligroso of ["image/svg+xml", "text/html", "application/javascript", "text/xml"]) {
+	assert.equal(esMimePermitido(peligroso), false, `${peligroso} nunca se acepta`);
+}
+assert.equal(esMimePermitido("__proto__"), false, "deny by default incluye lo raro");
+assert.equal(esMimePermitido(""), false);
+assert.equal(esMimePermitido(null), false);
+
+// Every allowed mime maps to a real `tipo`, or the row gets a value no screen knows how to draw.
+for (const mime of MIME_KEYS) {
+	assert.ok(isEvidenciaTipo(tipoDeMime(mime)), `${mime} apunta a un tipo que no existe`);
+}
+// And every `tipo` is reachable: an entry nothing can produce is dead vocabulary.
+for (const tipo of EVIDENCIA_TIPO_KEYS) {
+	assert.ok(
+		MIME_KEYS.some((m) => tipoDeMime(m) === tipo),
+		`ningún mime produce el tipo ${tipo}`,
+	);
+}
+
+// Video gets more room: 20 MB is about eight seconds of 4K, which is the START of a clip, not one.
+assert.equal(limiteDeTipo("foto"), TAMANO_MAXIMO_BYTES);
+assert.equal(limiteDeTipo("documento"), TAMANO_MAXIMO_BYTES);
+assert.equal(limiteDeTipo("audio"), TAMANO_MAXIMO_BYTES);
+assert.ok(limiteDeTipo("video") > TAMANO_MAXIMO_BYTES);
+// An unknown tipo falls to the SMALLER limit — the safe direction when in doubt.
+assert.equal(limiteDeTipo("inventado"), TAMANO_MAXIMO_BYTES);
 
 console.log("check-notas: OK");

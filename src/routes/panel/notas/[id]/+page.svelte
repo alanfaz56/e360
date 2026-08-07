@@ -13,10 +13,13 @@
 	import FilePlus from "@lucide/svelte/icons/file-plus";
 	import FileText from "@lucide/svelte/icons/file-text";
 	import Banknote from "@lucide/svelte/icons/banknote";
+	import Stamp from "@lucide/svelte/icons/stamp";
 	import Send from "@lucide/svelte/icons/send";
 	import ThumbsUp from "@lucide/svelte/icons/thumbs-up";
 	import ThumbsDown from "@lucide/svelte/icons/thumbs-down";
 	import Plus from "@lucide/svelte/icons/plus";
+	import Adjuntos from "$lib/components/Adjuntos.svelte";
+	import AdjuntarArchivos from "$lib/components/AdjuntarArchivos.svelte";
 	import Badge from "$lib/components/Badge.svelte";
 	import Button from "$lib/components/Button.svelte";
 	import Drawer from "$lib/components/Drawer.svelte";
@@ -41,7 +44,6 @@
 		qaResultadoTone,
 	} from "$lib/notas";
 	import Package from "@lucide/svelte/icons/package";
-	import HardHat from "@lucide/svelte/icons/hard-hat";
 	import {
 		CONCEPTO_TIPOS,
 		CONCEPTO_TIPO_KEYS,
@@ -62,6 +64,12 @@
 	} from "$lib/comercial";
 	import { solicitudEstadoLabel, solicitudEstadoTone } from "$lib/inventario";
 	import { fechaLarga, horaCorta } from "$lib/agenda";
+	import {
+		MOTIVOS_CANCELACION,
+		MOTIVO_CANCELACION_KEYS,
+		requiereSustituto,
+		type MotivoCancelacion,
+	} from "$lib/facturacion";
 	import { searchHref } from "$lib/url";
 	import { page } from "$app/state";
 
@@ -69,6 +77,10 @@
 
 	const n = $derived(data.nota);
 	const drawer = $derived(page.url.searchParams.get("drawer"));
+
+	// Which SAT clave is picked. Drives the description and whether `sustituye` is required —
+	// only `01` names a replacement.
+	let motivoSat = $state<MotivoCancelacion>("02");
 	const closeDrawer = $derived(searchHref(page.url, { drawer: null }));
 
 	const INPUT =
@@ -568,81 +580,23 @@
 		{/if}
 	</section>
 
-	<!-- Mecánico y refacciones -->
-	<section class="rounded-lg border border-sand-200 bg-white p-5 md:col-span-2">
-		<h2 class="font-display flex items-center gap-2 text-lg text-sand-950">
-			<HardHat
-				size={18}
-				aria-hidden="true"
-			/>
-			Mecánico
-		</h2>
+	<!--
+		Refacciones pedidas.
 
-		<p class="mt-2 flex flex-wrap items-center gap-2 text-sm">
-			{#if n.mecanicoNombre}
-				<span class="font-medium text-sand-950">{n.mecanicoNombre}</span>
-				{#if n.trabajoTerminadoAt}
-					<Badge tone="ok">Terminó su trabajo</Badge>
-				{:else}
-					<Badge tone="brand">Trabajando</Badge>
-				{/if}
-			{:else}
-				<span class="text-sand-500">Sin asignar</span>
-			{/if}
-		</p>
-
-		{#if data.puede.asignarMecanico}
-			<form
-				method="POST"
-				action="?/mecanico"
-				class="mt-3 flex flex-wrap items-end gap-2"
-			>
-				<div class="min-w-48 flex-1">
-					<Field
-						label="Asignar a"
-						name="mecanicoId"
-					>
-						{#snippet children(id)}
-							<select
-								{id}
-								name="mecanicoId"
-								class={INPUT}
-							>
-								<option value="">Sin asignar</option>
-								{#each data.mecanicos as m (m.id)}
-									<option
-										value={m.id}
-										selected={n.mecanicoId === m.id}>{m.name}</option
-									>
-								{/each}
-							</select>
-						{/snippet}
-					</Field>
-				</div>
-				<Button
-					size="sm"
-					variant="outline">Guardar</Button
-				>
-			</form>
-			{#if data.mecanicos.length === 0}
-				<p class="mt-2 text-xs text-sand-500">
-					No hay cuentas con rol Taller Mecánico todavía.
-					<a
-						class="underline"
-						href="/panel/usuarios">Invita a una</a
-					>.
-				</p>
-			{/if}
-		{/if}
-
-		{#if data.solicitudes.length > 0}
-			<h3 class="mt-5 flex items-center gap-2 text-sm font-medium text-sand-900">
+		There is deliberately NO "assign a mechanic" block here any more. Work is assigned to a
+		TALLER — including our own bay, the one flagged `esInterno` — and the mechanics who can see
+		a note are the ones whose `user.tallerId` matches whoever is holding it. One route for the
+		job instead of two that disagreed about who could open what.
+	-->
+	{#if data.solicitudes.length > 0}
+		<section class="rounded-lg border border-sand-200 bg-white p-5 md:col-span-2">
+			<h2 class="font-display flex items-center gap-2 text-lg text-sand-950">
 				<Package
-					size={16}
+					size={18}
 					aria-hidden="true"
 				/>
 				Refacciones pedidas
-			</h3>
+			</h2>
 			<ul class="mt-2 space-y-2">
 				{#each data.solicitudes as s (s.id)}
 					<li class="rounded border border-sand-200 p-2.5 text-sm">
@@ -717,8 +671,8 @@
 					</li>
 				{/each}
 			</ul>
-		{/if}
-	</section>
+		</section>
+	{/if}
 
 	<!-- Dinero -->
 	{#if data.puede.verDinero}
@@ -980,6 +934,26 @@
 								<p class="mt-1 text-xs text-danger">Cancelada: {f.canceladoMotivo}</p>
 							{/if}
 
+							<!--
+								The folio fiscal, once it exists. `timbrada` and `emitida` are different facts:
+								the shop issues, the SAT stamps, and there is a window where only the first
+								happened — so the UUID is what says the document is real.
+							-->
+							{#if f.timbrada}
+								<p class="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-sand-600">
+									<Badge tone={f.entorno === "produccion" ? "ok" : "warn"}>
+										{f.entorno === "produccion" ? "Timbrada" : "Sandbox (sin validez fiscal)"}
+									</Badge>
+									<span class="font-mono">{f.uuid}</span>
+								</p>
+								{#if f.cancelacionEstatus === "en_proceso"}
+									<p class="mt-1 text-xs text-accent-700">
+										Cancelación en proceso: el SAT espera que el cliente la acepte. Hasta entonces
+										la factura sigue vigente.
+									</p>
+								{/if}
+							{/if}
+
 							{#if f.pagos.length > 0}
 								<ul class="mt-2 space-y-0.5 text-xs text-sand-600">
 									{#each f.pagos as p (p.id)}
@@ -1006,17 +980,68 @@
 										Registrar pago
 									</Button>
 								{/if}
-								<!--
-									Cancelling is refused once a payment exists — that case is a credit note,
-									a different document — so the button goes away instead of 409-ing.
-								-->
-								{#if data.puede.cancelarFactura && f.estado !== "cancelada" && f.pagos.length === 0}
+								<!-- One click, no drawer: everything the CFDI needs is already on the invoice,
+								     so there is nothing left to ask. A second click answers 409 with the UUID
+								     it already has instead of spending another timbre. -->
+								{#if data.puede.timbrar && !f.timbrada && f.estado !== "cancelada"}
+									<form
+										method="POST"
+										action="?/timbrar"
+									>
+										<input
+											type="hidden"
+											name="facturaId"
+											value={f.id}
+										/>
+										<Button size="sm">
+											<Stamp
+												size={14}
+												aria-hidden="true"
+											/>
+											Timbrar
+										</Button>
+									</form>
+								{/if}
+
+								{#if f.timbrada}
 									<Button
-										href={searchHref(page.url, { drawer: "cancelarFactura", fac: f.id })}
+										href="/api/facturas/{f.id}/documento?formato=pdf"
+										size="sm"
+										variant="outline"
+									>
+										<FileText
+											size={14}
+											aria-hidden="true"
+										/>
+										PDF
+									</Button>
+									<Button
+										href="/api/facturas/{f.id}/documento?formato=xml"
 										size="sm"
 										variant="ghost"
 									>
-										Cancelar factura
+										XML
+									</Button>
+								{/if}
+
+								<!--
+									Cancelling is refused once a payment exists — that case is a credit note,
+									a different document — so the button goes away instead of 409-ing.
+
+									A STAMPED invoice goes through the SAT, which needs a clave 01–04 and
+									sometimes a replacement UUID. Two different drawers because they are two
+									different acts, not one with an extra field.
+								-->
+								{#if data.puede.cancelarFactura && f.estado !== "cancelada" && f.pagos.length === 0}
+									<Button
+										href={searchHref(page.url, {
+											drawer: f.timbrada ? "cancelarSat" : "cancelarFactura",
+											fac: f.id,
+										})}
+										size="sm"
+										variant="ghost"
+									>
+										{f.timbrada ? "Cancelar ante el SAT" : "Cancelar factura"}
 									</Button>
 								{/if}
 							</div>
@@ -1024,9 +1049,6 @@
 					{/each}
 				</ul>
 			{/if}
-			<p class="mt-3 text-xs text-sand-500">
-				Todavía no se timbra ante el SAT: esto registra la cuenta por cobrar, no el CFDI.
-			</p>
 		</section>
 	{/if}
 
@@ -1053,7 +1075,10 @@
 							{c.autorEmail} · {fechaHora(c.createdAt)}
 							{#if !c.interno}<Badge tone="brand">Visible al cliente</Badge>{/if}
 						</span>
-						<p class="mt-1 whitespace-pre-wrap text-sand-800">{c.texto}</p>
+						{#if c.texto}
+							<p class="mt-1 whitespace-pre-wrap text-sand-800">{c.texto}</p>
+						{/if}
+						<Adjuntos adjuntos={c.adjuntos} />
 					</li>
 				{/each}
 			</ul>
@@ -1070,15 +1095,18 @@
 					name="texto"
 				>
 					{#snippet children(id)}
+						<!-- Not `required`: a voice note IS the comment, and demanding text beside one
+						     is asking somebody with greasy hands to type what they just said. The server
+						     refuses only when nothing at all came with it. -->
 						<textarea
 							{id}
 							name="texto"
-							required
 							rows="2"
 							class={INPUT}
 						></textarea>
 					{/snippet}
 				</Field>
+				<AdjuntarArchivos notaId={n.id} />
 				<label class="flex items-center gap-2 text-sm text-sand-700">
 					<input
 						type="checkbox"
@@ -1925,6 +1953,82 @@
 				hint="Máximo 255 caracteres. Una factura con pagos ya no se cancela: eso es una nota de crédito."
 			/>
 			<Button full>Cancelar la factura</Button>
+		</form>
+	</Drawer>
+{/if}
+
+<!--
+	Cancelling a STAMPED invoice. Its own drawer because the SAT asks for things the internal
+	cancellation does not: a clave from its own list, and — for `01` only — the UUID of the invoice
+	that replaces this one.
+
+	The `sustituye` field renders always and is only `required` once 01 is picked: a field that
+	appears out of nowhere is a field nobody sees with JavaScript off, and one that is `required`
+	while hidden blocks a submit on something the user cannot fill (Rule 7).
+-->
+{#if drawer === "cancelarSat" && data.puede.cancelarFactura && facturaEnFoco}
+	<Drawer
+		title="Cancelar ante el SAT"
+		description="Factura #{facturaEnFoco.folio} · UUID {facturaEnFoco.uuid}"
+		closeHref={closeDrawer}
+	>
+		<form
+			method="POST"
+			action="?/cancelarSat"
+			class="space-y-4"
+		>
+			<input
+				type="hidden"
+				name="facturaId"
+				value={facturaEnFoco.id}
+			/>
+
+			<Field
+				label="Motivo del SAT"
+				name="motivo"
+				hint="Es la clave que el SAT pide, no la explicación."
+			>
+				{#snippet children(id)}
+					<select
+						{id}
+						name="motivo"
+						required
+						class={INPUT}
+						onchange={(e) => (motivoSat = e.currentTarget.value as MotivoCancelacion)}
+					>
+						{#each MOTIVO_CANCELACION_KEYS as k (k)}
+							<option
+								value={k}
+								selected={motivoSat === k}>{k} · {MOTIVOS_CANCELACION[k].label}</option
+							>
+						{/each}
+					</select>
+				{/snippet}
+			</Field>
+
+			<p class="text-xs text-sand-600">{MOTIVOS_CANCELACION[motivoSat].descripcion}</p>
+
+			<Field
+				label="UUID de la factura que la sustituye"
+				name="sustituye"
+				required={requiereSustituto(motivoSat)}
+				placeholder="3336cbb9-ebd4-45e8-b60b-e7bfa6f6b5e0"
+				hint="Sólo para el motivo 01. Esa factura ya debe estar timbrada."
+			/>
+
+			<Field
+				label="¿Por qué se cancela?"
+				name="explicacion"
+				required
+				hint="En tus palabras, para el expediente. La clave del SAT nunca dice por qué."
+			/>
+
+			<p class="rounded border border-sand-200 bg-sand-50 px-3 py-2 text-xs text-sand-700">
+				El SAT puede dejar la cancelación esperando a que el cliente la acepte. Mientras eso pase, la factura
+				sigue vigente y aquí se marca «en proceso», no cancelada.
+			</p>
+
+			<Button full>Solicitar cancelación</Button>
 		</form>
 	</Drawer>
 {/if}

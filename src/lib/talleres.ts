@@ -35,7 +35,7 @@ export type TallerEstado = keyof typeof TALLER_ESTADOS;
 export const TALLER_ESTADO_KEYS = Object.keys(TALLER_ESTADOS) as TallerEstado[];
 
 export const isTallerEstado = (v: unknown): v is TallerEstado =>
-	typeof v === "string" && v in TALLER_ESTADOS;
+	typeof v === "string" && Object.hasOwn(TALLER_ESTADOS, v);
 
 /** The only estado that may receive a vehicle. Enforced in `transferirNota`. */
 export const TALLER_PUEDE_RECIBIR: TallerEstado = "aprobado";

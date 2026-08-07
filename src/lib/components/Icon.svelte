@@ -14,6 +14,7 @@
 	import ReceiptText from "@lucide/svelte/icons/receipt-text";
 	import Wrench from "@lucide/svelte/icons/wrench";
 	import Package from "@lucide/svelte/icons/package";
+	import Settings from "@lucide/svelte/icons/settings";
 	import type { NavItem } from "$lib/nav";
 
 	const ICONS = {
@@ -28,6 +29,7 @@
 		"clipboard-list": ClipboardList,
 		"receipt-text": ReceiptText,
 		wrench: Wrench,
+		settings: Settings,
 	};
 
 	let { name, ...rest }: { name: NavItem["icon"]; [key: string]: unknown } = $props();

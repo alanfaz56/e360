@@ -241,7 +241,8 @@ export type NotificacionEvento = keyof typeof NOTIFICACION_EVENTOS;
 
 export const NOTIFICACION_EVENTO_KEYS = Object.keys(NOTIFICACION_EVENTOS) as NotificacionEvento[];
 
-export const isEvento = (v: unknown): v is NotificacionEvento => typeof v === "string" && v in NOTIFICACION_EVENTOS;
+export const isEvento = (v: unknown): v is NotificacionEvento =>
+	typeof v === "string" && Object.hasOwn(NOTIFICACION_EVENTOS, v);
 
 /** Events a person can switch on and off. Customer events are not in the preferences screen. */
 export const EVENTOS_EMPLEADO = NOTIFICACION_EVENTO_KEYS.filter(
