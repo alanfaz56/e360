@@ -1,4 +1,3 @@
-import { env } from "$env/dynamic/private";
 import prisma from "$lib/prisma";
 import { peticionPush, type Suscripcion, type VapidKeys } from "$lib/webpush";
 
@@ -13,7 +12,18 @@ import { peticionPush, type Suscripcion, type VapidKeys } from "$lib/webpush";
  * endpoint nobody asked to be notified from.
  */
 
-export function vapidKeys(): VapidKeys | null {
+/**
+ * `$env/dynamic/private` is a real SvelteKit virtual module — it does not exist as a file, so it
+ * cannot resolve outside Vite. Read it lazily (never at module top level) so this file, and
+ * everything that imports it, stays loadable from a plain `tsx` script — the import-mitaller
+ * script goes through `crearNota`/`avanzarNota`/etc., which pull this module in transitively.
+ */
+async function leerEnv() {
+	return (await import("$env/dynamic/private")).env;
+}
+
+export async function vapidKeys(): Promise<VapidKeys | null> {
+	const env = await leerEnv();
 	const publicKey = env.VAPID_PUBLIC_KEY;
 	const privateKey = env.VAPID_PRIVATE_KEY;
 	if (!publicKey || !privateKey) return null;
@@ -22,7 +32,7 @@ export function vapidKeys(): VapidKeys | null {
 }
 
 /** What the browser needs to call `pushManager.subscribe`. Empty string means push is off. */
-export const clavePublicaVapid = (): string => env.VAPID_PUBLIC_KEY ?? "";
+export const clavePublicaVapid = async (): Promise<string> => (await leerEnv()).VAPID_PUBLIC_KEY ?? "";
 
 export type PayloadPush = {
 	titulo: string;
@@ -93,7 +103,7 @@ export async function enviarPush(
 	destinatarios: { userIds?: string[]; clienteIds?: string[] },
 	payload: PayloadPush,
 ): Promise<number> {
-	const keys = vapidKeys();
+	const keys = await vapidKeys();
 	if (!keys) return 0;
 
 	const userIds = destinatarios.userIds?.filter(Boolean) ?? [];

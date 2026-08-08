@@ -45,6 +45,7 @@ assert.equal(can("taller", "cliente:read"), false);
 for (const key of [
 	"cliente:archive",
 	"cliente:delete",
+	"cliente:merge",
 	"unidad:archive",
 	"unidad:delete",
 	"unidad:transfer",

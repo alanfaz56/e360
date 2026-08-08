@@ -19,7 +19,7 @@ export const load: ServerLoad = async ({ params, setHeaders }) => {
 		return {
 			...(await seguimientoPorToken(params.token!)),
 			token: params.token!,
-			clavePublica: clavePublicaVapid(),
+			clavePublica: await clavePublicaVapid(),
 		};
 	} catch (err) {
 		fallaEnCarga(err);

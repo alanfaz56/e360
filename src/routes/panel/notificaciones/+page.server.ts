@@ -38,7 +38,7 @@ export const load: ServerLoad = async ({ locals, url }) => {
 		...bandeja,
 		preferencias: prefs,
 		dispositivos,
-		clavePublica: clavePublicaVapid(),
+		clavePublica: await clavePublicaVapid(),
 		soloNoLeidas: query.noLeidas === true,
 	};
 };

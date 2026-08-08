@@ -14,7 +14,7 @@ import { clavePublicaVapid } from "$lib/server/push";
 export const GET: RequestHandler = async ({ locals }) => {
 	const actor = requireUser(locals);
 	return json({
-		clavePublica: clavePublicaVapid(),
+		clavePublica: await clavePublicaVapid(),
 		dispositivos: await listarDispositivos(actor.id),
 	});
 };

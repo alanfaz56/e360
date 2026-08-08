@@ -215,6 +215,7 @@ model cliente {
   updatedAt  DateTime  @updatedAt
 
   contactos   cliente_contacto[]
+  telefonos   cliente_telefono[]
   unidades    unidad[]
   propiedades unidad_propietario[]
   citas       cita[]
@@ -264,6 +265,30 @@ model cliente_contacto {
   @@index([clienteId])
   @@index([archivedAt])
   @@map("cliente_contacto")
+}
+
+/// Several phone numbers per customer, one marked principal. `cliente.telefono` caches that
+/// principal — same denormalization as `unidad.kilometraje` caching `unidad_kilometraje`'s
+/// latest reading — so the ~15 sites that already read `cliente.telefono` never had to change.
+/// `cliente_telefono_principal_unica` (a partial unique index the migration adds, Prisma cannot
+/// express it) guarantees at most one live principal per customer, mirroring
+/// `taller_sucursal_principal_unica`.
+model cliente_telefono {
+  id        String  @id
+  clienteId String
+  cliente   cliente @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+
+  telefono String  @db.VarChar(32)
+  /// "casa", "whatsapp"… optional, free text.
+  etiqueta String? @db.VarChar(40)
+
+  esPrincipal Boolean @default(false)
+
+  archivedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([clienteId])
+  @@map("cliente_telefono")
 }
 
 /// Which units a contact may collect. Only consulted when alcanceUnidades = "especificas".

@@ -176,6 +176,9 @@ export async function listClientes(query: ClienteQuery) {
 						{ nombreCompleto: { contains: query.q, mode: "insensitive" } },
 						{ rfc: { contains: query.q, mode: "insensitive" } },
 						{ telefono: { contains: query.q } },
+						// El principal ya está en `telefono` (denormalizado); esto alcanza los
+						// secundarios sin duplicar la búsqueda.
+						{ telefonos: { some: { telefono: { contains: query.q }, archivedAt: null } } },
 						{ email: { contains: query.q, mode: "insensitive" } },
 					],
 				}
@@ -346,4 +349,193 @@ export async function deleteCliente(input: { actor: Actor; id: string }) {
 	});
 
 	return cliente;
+}
+
+/**
+ * Combine two customers: everything the duplicate owned moves to the keeper, and the
+ * duplicate is archived (reversible — merges are corrections, not judgments).
+ *
+ * Modeled on `transferUnidad` in unidades.ts: one `motivo`, one transaction, one audit entry
+ * with the counts of what moved. `rfc` and `facturaComUid`/`facturaComEntorno` are never
+ * touched — neither has a uniqueness constraint, so there is nothing to collide, and the
+ * keeper's own values simply stand.
+ */
+/** Scalar fields the admin may pull from the duplicate instead of leaving the keeper's own value. */
+export const CAMPOS_FUSIONABLES = [
+	"nombre",
+	"apellidos",
+	"razonSocial",
+	"email",
+	"direccion",
+	"rfc",
+	"regimenFiscal",
+	"codigoPostal",
+	"notas",
+] as const;
+export type CampoFusionable = (typeof CAMPOS_FUSIONABLES)[number];
+
+export async function mergeClientes(input: {
+	actor: Actor;
+	keeperId: string;
+	duplicadoId: string;
+	motivo: unknown;
+	/** cliente_contacto ids of the duplicate that SURVIVE, repointed to the keeper. The rest are archived. */
+	contactosAConservar: string[];
+	/** cliente_telefono ids of the duplicate that SURVIVE, repointed to the keeper. The rest are archived. */
+	telefonosAConservar: string[];
+	/** The duplicate itself becomes a `general` contact of the keeper — a phone number worth keeping, no authority. */
+	crearContactoDelDuplicado?: boolean;
+	/** Per field: keep the keeper's own value (default) or take the duplicate's. `telefono` is handled by `telefonosAConservar` instead. */
+	camposElegidos?: Partial<Record<CampoFusionable, "keeper" | "duplicado">>;
+}) {
+	if (!can(input.actor.role, "cliente:merge")) {
+		throw new ClienteError(403, "Sin permiso: cliente:merge");
+	}
+
+	const motivo = trim(input.motivo, 255, "El motivo");
+	if (!motivo) throw new ClienteError(400, "El motivo de la fusión es obligatorio");
+	if (input.keeperId === input.duplicadoId) {
+		throw new ClienteError(400, "No se puede fusionar un cliente consigo mismo");
+	}
+
+	const keeper = await getCliente(input.keeperId);
+	const duplicado = await getCliente(input.duplicadoId);
+	if (duplicado.archivedAt) {
+		throw new ClienteError(409, "Ese cliente ya está archivado — probablemente ya se fusionó.");
+	}
+
+	const contactosDelDuplicado = await prisma.cliente_contacto.findMany({
+		where: { clienteId: duplicado.id, archivedAt: null },
+		select: { id: true },
+	});
+	const idsValidos = new Set(contactosDelDuplicado.map((c) => c.id));
+	const aConservar = input.contactosAConservar.filter((id) => idsValidos.has(id));
+
+	const telefonosDelDuplicado = await prisma.cliente_telefono.findMany({
+		where: { clienteId: duplicado.id, archivedAt: null },
+		select: { id: true },
+	});
+	const idsTelefonoValidos = new Set(telefonosDelDuplicado.map((t) => t.id));
+	const telefonosAConservar = input.telefonosAConservar.filter((id) => idsTelefonoValidos.has(id));
+
+	const resultado = await prisma.$transaction(async (tx) => {
+		const ahora = new Date();
+
+		// `cotizacion` hangs off `notaId`, not its own `clienteId` — it moves for free once the
+		// nota does, nothing to repoint here.
+		const [unidades, propietarios, citas, notas, facturas] = await Promise.all([
+			tx.unidad.updateMany({ where: { clienteId: duplicado.id }, data: { clienteId: keeper.id } }),
+			tx.unidad_propietario.updateMany({ where: { clienteId: duplicado.id }, data: { clienteId: keeper.id } }),
+			tx.cita.updateMany({ where: { clienteId: duplicado.id }, data: { clienteId: keeper.id } }),
+			tx.nota_servicio.updateMany({ where: { clienteId: duplicado.id }, data: { clienteId: keeper.id } }),
+			tx.factura.updateMany({ where: { clienteId: duplicado.id }, data: { clienteId: keeper.id } }),
+		]);
+		await tx.notificacion.updateMany({ where: { clienteId: duplicado.id }, data: { clienteId: keeper.id } });
+		await tx.push_suscripcion.updateMany({ where: { clienteId: duplicado.id }, data: { clienteId: keeper.id } });
+
+		let contactosMovidos = 0;
+		if (aConservar.length > 0) {
+			const movidos = await tx.cliente_contacto.updateMany({
+				where: { id: { in: aConservar }, clienteId: duplicado.id },
+				data: { clienteId: keeper.id },
+			});
+			contactosMovidos = movidos.count;
+		}
+		const contactosArchivados = await tx.cliente_contacto.updateMany({
+			where: { clienteId: duplicado.id, archivedAt: null, id: { notIn: aConservar } },
+			data: { archivedAt: ahora },
+		});
+
+		// Teléfonos elegidos del duplicado se repuntan; los demás se archivan. Ninguno se marca
+		// principal aquí — el principal del keeper (la columna denormalizada) nunca cambia solo
+		// porque se fusionó algo, así como no cambia su nombre o su RFC salvo que se elija.
+		let telefonosMovidos = 0;
+		if (telefonosAConservar.length > 0) {
+			await tx.cliente_telefono.updateMany({
+				where: { id: { in: telefonosAConservar }, clienteId: duplicado.id, esPrincipal: true },
+				data: { esPrincipal: false },
+			});
+			const movidos = await tx.cliente_telefono.updateMany({
+				where: { id: { in: telefonosAConservar }, clienteId: duplicado.id },
+				data: { clienteId: keeper.id },
+			});
+			telefonosMovidos = movidos.count;
+		}
+		const telefonosArchivados = await tx.cliente_telefono.updateMany({
+			where: { clienteId: duplicado.id, archivedAt: null, id: { notIn: telefonosAConservar } },
+			data: { archivedAt: ahora },
+		});
+
+		// Campos propios: por default el keeper se queda como está. Solo se toca lo que el admin
+		// marcó explícitamente "duplicado".
+		const camposElegidos = input.camposElegidos ?? {};
+		const datosElegidos: Record<string, string | null> = {};
+		for (const campo of CAMPOS_FUSIONABLES) {
+			if (camposElegidos[campo] === "duplicado") datosElegidos[campo] = duplicado[campo];
+		}
+		if (Object.keys(datosElegidos).length > 0) {
+			const tipo = keeper.tipo as ClienteTipo;
+			const nombreCompleto = buildNombreCompleto({
+				tipo,
+				nombre: (datosElegidos.nombre ?? keeper.nombre) as string | null,
+				apellidos: (datosElegidos.apellidos ?? keeper.apellidos) as string | null,
+				razonSocial: (datosElegidos.razonSocial ?? keeper.razonSocial) as string | null,
+			});
+			await tx.cliente.update({ where: { id: keeper.id }, data: { ...datosElegidos, nombreCompleto } });
+		}
+
+		const duplicadoArchivado = await tx.cliente.update({
+			where: { id: duplicado.id },
+			data: { archivedAt: ahora },
+		});
+
+		// El cliente fusionado desaparece como cliente, pero sigue siendo alguien real que llamó
+		// antes — se conserva como contacto sin autoridad, no como una persona olvidada.
+		let contactoDelDuplicadoId: string | null = null;
+		if (input.crearContactoDelDuplicado) {
+			const contacto = await tx.cliente_contacto.create({
+				data: {
+					id: randomUUID(),
+					clienteId: keeper.id,
+					nombre: duplicado.nombreCompleto,
+					telefono: duplicado.telefono,
+					email: duplicado.email,
+					roles: ["general"],
+					alcanceUnidades: "todas",
+					notas: `Antes era su propio registro de cliente. Fusionado el ${ahora.toLocaleDateString("es-MX")}.`,
+				},
+			});
+			contactoDelDuplicadoId = contacto.id;
+		}
+
+		await recordAudit(tx, {
+			action: "cliente.merge",
+			actor: input.actor,
+			entityId: keeper.id,
+			entityLabel: keeper.nombreCompleto,
+			summary: `${duplicado.nombreCompleto} fusionado con ${keeper.nombreCompleto}. Motivo: ${motivo}`,
+			before: { duplicadoId: duplicado.id, duplicado: duplicado.nombreCompleto },
+			after: {
+				keeperId: keeper.id,
+				motivo,
+				movidos: {
+					unidades: unidades.count,
+					unidadPropietario: propietarios.count,
+					citas: citas.count,
+					notas: notas.count,
+					facturas: facturas.count,
+					contactosMovidos,
+					contactosArchivados: contactosArchivados.count,
+					contactoDelDuplicadoId,
+					telefonosMovidos,
+					telefonosArchivados: telefonosArchivados.count,
+					camposTomadosDelDuplicado: Object.keys(datosElegidos),
+				},
+			},
+		});
+
+		return duplicadoArchivado;
+	});
+
+	return resultado;
 }

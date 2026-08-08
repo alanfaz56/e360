@@ -62,6 +62,10 @@ export const PERMISSIONS = {
 	"cliente:update": ["admin", "gerente", "operador"],
 	"cliente:archive": ["admin"],
 	"cliente:delete": ["admin"],
+	// Combines two customers into one, repointing everything the duplicate owned. Comparable
+	// or greater blast radius than unidad:transfer and cliente:delete — Admin only, motivo
+	// required — enforced in mergeClientes.
+	"cliente:merge": ["admin"],
 	// Creating and editing contacts. Granting a role that carries authority over the
 	// customer's property needs `contacto:grant-authority` on top — see canAssignContactoRole.
 	"contacto:manage": ["admin", "gerente", "operador"],

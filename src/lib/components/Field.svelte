@@ -9,6 +9,8 @@
 	import Eye from "@lucide/svelte/icons/eye";
 	import EyeOff from "@lucide/svelte/icons/eye-off";
 	import type { Snippet } from "svelte";
+	import type { Iti } from "intl-tel-input";
+	import "intl-tel-input/styles";
 
 	let {
 		label,
@@ -31,6 +33,7 @@
 	} = $props();
 
 	const isPassword = $derived(type === "password");
+	const isTel = $derived(type === "tel");
 	let revealed = $state(false);
 
 	// The toggle is useless without JavaScript, so it is only rendered once the component
@@ -38,6 +41,42 @@
 	let hydrated = $state(false);
 	$effect(() => {
 		hydrated = true;
+	});
+
+	// País por default México, EUA/Canadá y el resto de LATAM como favoritos arriba de la
+	// lista. El input REAL sigue llamándose `name` y sigue siendo texto plano — con JS
+	// apagado se ve y funciona exactamente igual que antes. Con JS, se reescribe su propio
+	// valor a E.164 justo antes de que el formulario lo serialice, así el server nunca tiene
+	// que saber que este widget existe.
+	let telEl: HTMLInputElement | undefined = $state();
+	$effect(() => {
+		if (!isTel || !telEl) return;
+		const input = telEl;
+		let iti: Iti | undefined;
+		let form: HTMLFormElement | null = null;
+		const onSubmit = () => {
+			const numero = iti?.getNumber("E164");
+			if (numero) input.value = numero;
+		};
+
+		let cancelado = false;
+		(async () => {
+			const [{ default: intlTelInput }] = await Promise.all([import("intl-tel-input")]);
+			if (cancelado) return;
+			iti = intlTelInput(input, {
+				initialCountry: "mx",
+				countryOrder: ["mx", "us", "ca", "gt", "hn", "sv", "ni", "cr", "pa", "co", "ve", "ec", "pe", "br", "cl", "ar"],
+				loadUtils: () => import("intl-tel-input/utils"),
+			});
+			form = input.form;
+			form?.addEventListener("submit", onSubmit, true);
+		})();
+
+		return () => {
+			cancelado = true;
+			form?.removeEventListener("submit", onSubmit, true);
+			iti?.destroy();
+		};
 	});
 </script>
 
@@ -49,6 +88,7 @@
 		<div class="relative">
 			<input
 				{...rest}
+				bind:this={telEl}
 				id={name}
 				{name}
 				type={isPassword && revealed ? "text" : type}

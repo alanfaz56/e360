@@ -479,14 +479,13 @@
 						placeholder="Ej. Juan Pérez (chofer)"
 					/>
 				</label>
-				<label class="mt-2 block text-xs text-sand-600">
-					Teléfono
-					<input
-						type="tel"
+				<div class="mt-2">
+					<Field
+						label="Teléfono"
 						name="entregoTelefono"
-						class={INPUT}
+						type="tel"
 					/>
-				</label>
+				</div>
 				<p class="mt-2 text-xs text-sand-500">
 					Opcional, pero es el registro de quién estuvo aquí. Elegir un contacto gana sobre el nombre escrito.
 				</p>

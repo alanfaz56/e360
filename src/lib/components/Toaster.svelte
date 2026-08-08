@@ -40,8 +40,8 @@
 				role={toast.tono === "error" ? "alert" : "status"}
 				class="toast pointer-events-auto flex items-start gap-2 rounded-lg border px-3 py-2.5 text-sm shadow-lg {toast.tono ===
 				'error'
-					? 'border-danger/40 bg-danger/10 text-sand-900'
-					: 'border-ok bg-ok/15 text-sand-900'}"
+					? 'border-danger bg-sand-50 text-sand-900'
+					: 'border-ok bg-sand-50 text-sand-900'}"
 			>
 				{#if toast.tono === "error"}
 					<TriangleAlert

@@ -7,11 +7,15 @@
 	import ArchiveRestore from "@lucide/svelte/icons/archive-restore";
 	import Trash2 from "@lucide/svelte/icons/trash-2";
 	import ShieldCheck from "@lucide/svelte/icons/shield-check";
+	import Combine from "@lucide/svelte/icons/combine";
+	import Phone from "@lucide/svelte/icons/phone";
+	import Star from "@lucide/svelte/icons/star";
 	import Badge from "$lib/components/Badge.svelte";
 	import Button from "$lib/components/Button.svelte";
 	import DataTable from "$lib/components/DataTable.svelte";
 	import Drawer from "$lib/components/Drawer.svelte";
 	import Field from "$lib/components/Field.svelte";
+	import EntitySearch, { type Opcion } from "$lib/components/EntitySearch.svelte";
 	import PageHeader from "$lib/components/PageHeader.svelte";
 	import SatSelect from "$lib/components/SatSelect.svelte";
 	import Flash from "$lib/components/Flash.svelte";
@@ -23,7 +27,7 @@
 
 	const drawer = $derived(page.url.searchParams.get("drawer"));
 	const editando = $derived(data.contactos.find((c) => c.id === page.url.searchParams.get("contacto")));
-	const closeDrawer = $derived(searchHref(page.url, { drawer: null, contacto: null }));
+	const closeDrawer = $derived(searchHref(page.url, { drawer: null, contacto: null, duplicado: null }));
 
 	// Two selects drive which fields render. Each is "whatever the user picked, else what the
 	// record says" — derived rather than copied into state, so the server-rendered HTML is
@@ -39,6 +43,45 @@
 		"mt-1 w-full rounded-md border border-sand-300 bg-white px-3 py-2 text-sm focus:border-brand-600 focus:outline-none";
 
 	const activas = $derived(data.unidades.filter((u) => !u.archivado));
+
+	const CAMPO_LABELS: Record<string, string> = {
+		nombre: "Nombre",
+		apellidos: "Apellidos",
+		razonSocial: "Razón social",
+		email: "Correo",
+		direccion: "Dirección",
+		rfc: "RFC",
+		regimenFiscal: "Régimen fiscal",
+		codigoPostal: "Código postal",
+		notas: "Notas",
+	};
+	// Solo vale la pena preguntar por un campo si el duplicado trae algo Y es distinto de lo que
+	// ya tiene el que se conserva — si son iguales o el duplicado no tiene nada, no hay nada que
+	// elegir.
+	const camposConflicto = $derived(
+		data.duplicado
+			? data.camposFusionables.filter((campo) => {
+					const delDuplicado = (data.duplicado!.cliente as Record<string, unknown>)[campo];
+					const delKeeper = (data.cliente as Record<string, unknown>)[campo];
+					return delDuplicado && delDuplicado !== delKeeper;
+				})
+			: [],
+	);
+
+	// Búsqueda del duplicado a fusionar — excluye este mismo cliente de los resultados.
+	const buscarClientes = async (q: string, signal: AbortSignal): Promise<Opcion[]> => {
+		const res = await fetch(`/api/clientes?q=${encodeURIComponent(q)}&perPage=8`, { signal });
+		if (!res.ok) throw new Error("No pudimos buscar clientes.");
+		const body = await res.json();
+		return (body.clientes ?? [])
+			.filter((c: { id: string }) => c.id !== data.cliente.id)
+			.map((c: { id: string; nombreCompleto: string; tipoLabel: string; telefono: string | null; rfc: string | null }) => ({
+				id: c.id,
+				label: c.nombreCompleto,
+				hint: c.tipoLabel,
+				detalles: [c.telefono, c.rfc],
+			}));
+	};
 </script>
 
 <svelte:head><title>{data.cliente.nombreCompleto} — Estación 360</title></svelte:head>
@@ -70,6 +113,19 @@
 					aria-hidden="true"
 				/>
 				Editar
+			</Button>
+		{/if}
+		{#if data.puede.fusionar}
+			<Button
+				href={searchHref(page.url, { drawer: "fusionar" })}
+				variant="ghost"
+				size="sm"
+			>
+				<Combine
+					size={16}
+					aria-hidden="true"
+				/>
+				Fusionar con otro cliente
 			</Button>
 		{/if}
 		{#if data.puede.archivar}
@@ -160,6 +216,119 @@
 		{/if}
 	</dl>
 </section>
+
+<!-- Teléfonos -->
+<div class="mt-6 flex flex-wrap items-center gap-3">
+	<h2 class="font-display text-lg text-sand-950">Teléfonos</h2>
+	{#if data.puede.editar}
+		<Button
+			href={searchHref(page.url, { drawer: "telefono" })}
+			variant="ghost"
+			size="sm"
+			class="ml-auto"
+		>
+			<Phone
+				size={14}
+				aria-hidden="true"
+			/>
+			Agregar teléfono
+		</Button>
+	{/if}
+</div>
+{#if data.telefonos.length === 0}
+	<p class="mt-2 text-sm text-sand-500">Solo el principal ({data.cliente.telefono ?? "sin capturar"}).</p>
+{:else}
+	<ul class="mt-2 divide-y divide-sand-100 rounded-lg border border-sand-200 bg-white">
+		{#each data.telefonos as t (t.id)}
+			<li class="flex items-center justify-between gap-3 px-4 py-2.5 text-sm">
+				<span class="flex items-center gap-2">
+					{#if t.principal}
+						<Star
+							size={14}
+							class="fill-brand-500 text-brand-500"
+							aria-hidden="true"
+						/>
+					{/if}
+					<span class="text-sand-950">{t.telefono}</span>
+					{#if t.etiqueta}<span class="text-xs text-sand-500">{t.etiqueta}</span>{/if}
+				</span>
+				{#if data.puede.editar}
+					<span class="flex items-center gap-2">
+						{#if !t.principal}
+							<form
+								method="POST"
+								action="?/marcarPrincipal"
+							>
+								<input
+									type="hidden"
+									name="telefonoId"
+									value={t.id}
+								/>
+								<button
+									type="submit"
+									class="text-xs text-sand-500 hover:text-brand-700"
+								>
+									Hacer principal
+								</button>
+							</form>
+						{/if}
+						<form
+							method="POST"
+							action="?/eliminarTelefono"
+						>
+							<input
+								type="hidden"
+								name="telefonoId"
+								value={t.id}
+							/>
+							<button
+								type="submit"
+								class="text-xs text-danger hover:underline"
+							>
+								Eliminar
+							</button>
+						</form>
+					</span>
+				{/if}
+			</li>
+		{/each}
+	</ul>
+{/if}
+
+{#if drawer === "telefono" && data.puede.editar}
+	<Drawer
+		title="Agregar teléfono"
+		description={data.cliente.nombreCompleto}
+		closeHref={closeDrawer}
+	>
+		<form
+			method="POST"
+			action="?/agregarTelefono"
+			class="space-y-4"
+		>
+			<Field
+				label="Teléfono"
+				name="telefono"
+				type="tel"
+				required
+			/>
+			<Field
+				label="Etiqueta"
+				name="etiqueta"
+				hint="Opcional: casa, WhatsApp, etc."
+			/>
+			<label class="flex items-start gap-2 text-sm text-sand-800">
+				<input
+					type="checkbox"
+					name="principal"
+					class="mt-0.5"
+				/>
+				Hacer principal
+			</label>
+			<Button full>Agregar</Button>
+		</form>
+	</Drawer>
+{/if}
 
 <!-- Contactos -->
 <div class="mt-10 flex flex-wrap items-center gap-3">
@@ -615,5 +784,174 @@
 			/>
 			<Button full>Registrar unidad</Button>
 		</form>
+	</Drawer>
+{/if}
+
+{#if drawer === "fusionar" && data.puede.fusionar}
+	<Drawer
+		title="Fusionar con otro cliente"
+		description={data.cliente.nombreCompleto}
+		closeHref={closeDrawer}
+	>
+		{#if !data.duplicado}
+			<!-- Paso 1: elegir el duplicado. Form GET: sin JS navega igual a ?duplicado=<id>. -->
+			<form
+				method="GET"
+				class="space-y-4"
+			>
+				<input
+					type="hidden"
+					name="drawer"
+					value="fusionar"
+				/>
+				<EntitySearch
+					label="Cliente duplicado"
+					name="duplicado"
+					hint="Todo lo que le pertenece pasará a {data.cliente.nombreCompleto}. Se archiva, no se borra."
+					opciones={data.posiblesDuplicados.map((c) => ({
+						id: c.id,
+						label: c.nombreCompleto,
+						hint: c.tipoLabel,
+						detalles: [c.telefono, c.rfc],
+					}))}
+					buscar={buscarClientes}
+					required
+				/>
+				{#if data.posiblesDuplicados.length > 0}
+					<p class="text-xs text-sand-500">
+						Posibles duplicados por teléfono o nombre: {data.posiblesDuplicados
+							.map((c) => c.nombreCompleto)
+							.join(", ")}.
+					</p>
+				{/if}
+				<Button full>Continuar</Button>
+			</form>
+		{:else}
+			<!-- Paso 2: confirmar y elegir qué contactos del duplicado sobreviven. -->
+			<form
+				method="POST"
+				action="?/fusionar"
+				class="space-y-4"
+			>
+				<input
+					type="hidden"
+					name="duplicadoId"
+					value={data.duplicado.cliente.id}
+				/>
+				<p class="rounded border border-danger/30 bg-danger/5 p-3 text-sm text-sand-800">
+					<strong>{data.duplicado.cliente.nombreCompleto}</strong> se archivará. Sus unidades, citas, notas
+					y facturas pasan a <strong>{data.cliente.nombreCompleto}</strong>.
+				</p>
+
+				{#if camposConflicto.length > 0}
+					<fieldset class="rounded border border-sand-200 p-3">
+						<legend class="px-1 text-sm font-medium text-sand-700">Qué dato usar</legend>
+						{#each camposConflicto as campo (campo)}
+							{@const delKeeper = (data.cliente as Record<string, unknown>)[campo] as string | null}
+							{@const delDuplicado = (data.duplicado.cliente as Record<string, unknown>)[campo] as string | null}
+							<div class="mt-2">
+								<p class="text-xs font-medium text-sand-600">{CAMPO_LABELS[campo]}</p>
+								<label class="mt-1 flex items-start gap-2 text-sm text-sand-800">
+									<input
+										type="radio"
+										name="campo_{campo}"
+										value="keeper"
+										checked
+										class="mt-0.5"
+									/>
+									{delKeeper ?? "(vacío)"}
+								</label>
+								<label class="mt-1 flex items-start gap-2 text-sm text-sand-800">
+									<input
+										type="radio"
+										name="campo_{campo}"
+										value="duplicado"
+										class="mt-0.5"
+									/>
+									{delDuplicado} <span class="text-xs text-sand-500">(del duplicado)</span>
+								</label>
+							</div>
+						{/each}
+					</fieldset>
+				{/if}
+
+				{#if data.duplicado.telefonos.length > 0}
+					<fieldset class="rounded border border-sand-200 p-3">
+						<legend class="px-1 text-sm font-medium text-sand-700">
+							Teléfonos de {data.duplicado.cliente.nombreCompleto} a conservar
+						</legend>
+						<p class="text-xs text-sand-500">Los que no marques se archivan junto con el cliente.</p>
+						{#each data.duplicado.telefonos as t (t.id)}
+							<label class="mt-2 flex items-start gap-2 text-sm text-sand-800">
+								<input
+									type="checkbox"
+									name="telefonosAConservar"
+									value={t.id}
+									class="mt-0.5"
+								/>
+								<span>
+									{t.telefono}
+									{#if t.etiqueta}<span class="text-xs text-sand-500">{t.etiqueta}</span>{/if}
+								</span>
+							</label>
+						{/each}
+					</fieldset>
+				{/if}
+
+				{#if data.duplicado.contactos.length > 0}
+					<fieldset class="rounded border border-sand-200 p-3">
+						<legend class="px-1 text-sm font-medium text-sand-700">
+							Contactos de {data.duplicado.cliente.nombreCompleto} a conservar
+						</legend>
+						<p class="text-xs text-sand-500">Los que no marques se archivan junto con el cliente.</p>
+						{#each data.duplicado.contactos as ct (ct.id)}
+							<label class="mt-2 flex items-start gap-2 text-sm text-sand-800">
+								<input
+									type="checkbox"
+									name="contactosAConservar"
+									value={ct.id}
+									class="mt-0.5"
+								/>
+								<span>
+									<span class="font-medium">{ct.nombre}</span>
+									<span class="block text-xs text-sand-500">{ct.rolesLabel.join(", ")}</span>
+								</span>
+							</label>
+						{/each}
+					</fieldset>
+				{/if}
+
+				<label class="flex items-start gap-2 text-sm text-sand-800">
+					<input
+						type="checkbox"
+						name="crearContactoDelDuplicado"
+						class="mt-0.5"
+					/>
+					<span>
+						Convertir a <strong>{data.duplicado.cliente.nombreCompleto}</strong> en contacto de
+						{data.cliente.nombreCompleto}
+						<span class="block text-xs text-sand-500">
+							Sin autoridad — solo un teléfono de contacto, para no perder quién era.
+						</span>
+					</span>
+				</label>
+
+				<Field
+					label="Motivo"
+					name="motivo"
+					required
+					hint="Por qué son el mismo cliente."
+				/>
+
+				<Button full>Fusionar y archivar a {data.duplicado.cliente.nombreCompleto}</Button>
+				<Button
+					href={searchHref(page.url, { duplicado: null })}
+					variant="ghost"
+					full
+				>
+					Elegir otro
+				</Button>
+			</form>
+		{/if}
 	</Drawer>
 {/if}

@@ -16,7 +16,7 @@ import { clavePublicaVapid } from "$lib/server/push";
 /** GET /api/seguimiento/[token] — the note as the customer may see it. */
 export const GET: RequestHandler = async ({ params }) => {
 	try {
-		return json({ ...(await seguimientoPorToken(params.token!)), clavePublica: clavePublicaVapid() });
+		return json({ ...(await seguimientoPorToken(params.token!)), clavePublica: await clavePublicaVapid() });
 	} catch (err) {
 		if (err instanceof ClienteError) error(err.status, err.message);
 		throw err;

@@ -86,6 +86,8 @@ async function administradores(): Promise<string[]> {
  * row is (Rule 3 covers the audit trail; this is a courtesy message on top of it).
  */
 export async function notificar(input: AvisoInput): Promise<void> {
+	// ponytail: bulk historical import must not spam push/inbox for years-old events.
+	if (process.env.IMPORT_MODE === "1") return;
 	try {
 		// Widened to the declared shape: `as const satisfies` keeps each entry's literal type, so
 		// reading `permiso` off the union would only compile for the entries that happen to have it.
