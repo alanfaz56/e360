@@ -28,6 +28,11 @@ export const GRUPOS = {
 		label: "Facturación (factura.com)",
 		descripcion: "El PAC que timbra los CFDI. Sin estas llaves, timbrar responde 503 en vez de fallar callado.",
 	},
+	correo: {
+		label: "Correo (Resend)",
+		descripcion:
+			"Cotizaciones, facturas, avisos de unidad, invitaciones y recuperación de contraseña. Sin estas llaves, esos correos simplemente no salen — el resto del taller sigue funcionando.",
+	},
 } as const satisfies Record<string, { label: string; descripcion: string }>;
 
 export type GrupoAjuste = keyof typeof GRUPOS;
@@ -71,6 +76,20 @@ export const AJUSTES = {
 		tipo: "texto",
 		grupo: "facturacion",
 		ayuda: "Es un número (el id), no la letra de la serie. Sale de Configuración → Series.",
+	},
+	"correo.apiKey": {
+		label: "API key",
+		descripcion: "La API key de la cuenta de Resend.",
+		tipo: "secreto",
+		grupo: "correo",
+		ayuda: "Del panel de Resend, en API Keys.",
+	},
+	"correo.remitente": {
+		label: "Remitente",
+		descripcion: "Quién aparece como remitente, en el formato que Resend espera.",
+		tipo: "texto",
+		grupo: "correo",
+		ayuda: 'Ej. "Estación 360 <no-reply@tudominio.com>" — el dominio debe estar verificado en Resend.',
 	},
 } as const satisfies Record<string, DefinicionAjuste>;
 

@@ -74,6 +74,14 @@ export function createAuth(
 			// auth.api.createUser, which src/lib/server/invitations.ts calls after validating
 			// an invite token.
 			disableSignUp: true,
+			// Dynamic import, not a top-level one: this file must stay loadable by tsx with no
+			// $lib/$env resolution (prisma/seed.ts runs it directly), and `correo/index.ts`
+			// pulls in $lib/prisma and $env/dynamic/private transitively. A static import would
+			// break the seed even though it never triggers a password reset.
+			sendResetPassword: async ({ user, url }) => {
+				const { enviarRestablecerPassword } = await import("./correo/index.js");
+				await enviarRestablecerPassword({ email: user.email, nombre: user.name || user.email, url });
+			},
 		},
 		plugins: [
 			adminPlugin({

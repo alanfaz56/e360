@@ -40,6 +40,12 @@ export type EventoDef = {
 	 * Reserved for things that cost money or block a vehicle if they are missed.
 	 */
 	prioritario?: boolean;
+	/**
+	 * `cliente_*` events only. Sends the same `titulo`/`cuerpo` by email too — a curated set, not
+	 * every event: high-value moments a customer might miss if push is off or unconfigured, not
+	 * high-frequency internal noise. See src/lib/server/correo/.
+	 */
+	correoCliente?: boolean;
 };
 
 export const NOTIFICACION_EVENTOS = {
@@ -191,6 +197,7 @@ export const NOTIFICACION_EVENTOS = {
 		alcance: "directo",
 		icon: "scroll-text",
 		prioritario: true,
+		correoCliente: true,
 	},
 	cliente_avance: {
 		label: "Avance de su servicio",
@@ -206,6 +213,7 @@ export const NOTIFICACION_EVENTOS = {
 		alcance: "directo",
 		icon: "car",
 		prioritario: true,
+		correoCliente: true,
 	},
 	cliente_unidad_entregada: {
 		label: "Entregamos su unidad",
@@ -213,6 +221,7 @@ export const NOTIFICACION_EVENTOS = {
 		audiencia: "cliente",
 		alcance: "directo",
 		icon: "car",
+		correoCliente: true,
 	},
 	cliente_factura: {
 		label: "Su factura",
@@ -220,6 +229,7 @@ export const NOTIFICACION_EVENTOS = {
 		audiencia: "cliente",
 		alcance: "directo",
 		icon: "scroll-text",
+		correoCliente: true,
 	},
 	cliente_pago: {
 		label: "Recibimos su pago",

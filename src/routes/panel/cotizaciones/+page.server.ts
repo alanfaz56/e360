@@ -1,4 +1,4 @@
-import type { ServerLoad } from "@sveltejs/kit";
+import { redirect, type Actions, type ServerLoad } from "@sveltejs/kit";
 import {
 	COTIZACION_ESTADOS,
 	COTIZACION_ESTADO_KEYS,
@@ -6,10 +6,11 @@ import {
 	COTIZACION_INTERNO_KEYS,
 } from "$lib/comercial";
 import { hoy, sumarDias } from "$lib/agenda";
+import { conFlash } from "$lib/flash";
 import { can } from "$lib/roles";
-import { fallaEnCarga } from "$lib/server/errores";
-import { requirePermission } from "$lib/server/guard";
-import { listCotizaciones, listFacturas, resumenDinero } from "$lib/server/comercial";
+import { fallaEnCarga, fallo } from "$lib/server/errores";
+import { requirePermission, requireUser } from "$lib/server/guard";
+import { listCotizaciones, listFacturas, reenviarCotizacionCorreo, resumenDinero } from "$lib/server/comercial";
 
 /**
  * The money screen: quotes and invoices over a period, on both axes.
@@ -63,9 +64,27 @@ export const load: ServerLoad = async ({ locals, url }) => {
 			filtros: { estado, estadoInterno, desde, hasta },
 			estados: COTIZACION_ESTADO_KEYS.map((k) => ({ value: k, label: COTIZACION_ESTADOS[k].label })),
 			internos: COTIZACION_INTERNO_KEYS.map((k) => ({ value: k, label: COTIZACION_INTERNOS[k].label })),
-			puede: { verFacturas: can(actor.role, "factura:read"), timbrar: can(actor.role, "factura:timbrar") },
+			puede: {
+				verFacturas: can(actor.role, "factura:read"),
+				timbrar: can(actor.role, "factura:timbrar"),
+				enviarCotizacion: can(actor.role, "cotizacion:send"),
+			},
 		};
 	} catch (err) {
 		fallaEnCarga(err);
 	}
+};
+
+export const actions: Actions = {
+	/** Same shared function the nota detail's "Reenviar correo" button calls (Rule 4/5). */
+	reenviarCotizacionCorreo: async ({ locals, request, url }) => {
+		const actor = requireUser(locals);
+		const data = await request.formData();
+		try {
+			await reenviarCotizacionCorreo({ actor, id: String(data.get("cotizacionId")) });
+			redirect(303, conFlash(`/panel/cotizaciones${url.search}`, "cotizacion.reenviar"));
+		} catch (err) {
+			return fallo(err);
+		}
+	},
 };

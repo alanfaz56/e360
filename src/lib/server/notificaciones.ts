@@ -10,6 +10,7 @@ import {
 } from "$lib/notificaciones";
 import { recordAudit } from "./audit";
 import { ClienteError, trim } from "./clientes";
+import { enviarCorreoCliente } from "./correo/index";
 import { pageMeta, parsePageParams, skipFor, type PageParams } from "./paginate";
 import { enviarPush } from "./push";
 import type { Actor } from "./guard";
@@ -186,6 +187,11 @@ export async function notificar(input: AvisoInput): Promise<void> {
 
 		// Push carries the row id so a click can mark it read without another round trip.
 		await enviarPush({ userIds: conPush, clienteIds }, { ...base, id: filas[0]?.id, prioritario: def.prioritario });
+
+		// A curated subset of cliente_* events additionally goes by email — see EventoDef.correoCliente.
+		if (def.correoCliente && clienteIds.length > 0) {
+			await enviarCorreoCliente(clienteIds, base);
+		}
 	} catch (err) {
 		// A notification that failed to send is not a reason to fail the work it was about.
 		console.error("notificar falló:", err);

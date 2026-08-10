@@ -11,7 +11,7 @@
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"format": "prettier --write .",
-		"test": "tsx scripts/check-roles.ts && tsx scripts/check-errores.ts && tsx scripts/check-facturacion.ts && tsx scripts/check-sat.ts && tsx scripts/check-agenda.ts && tsx scripts/check-comercial.ts && tsx scripts/check-r2.ts && tsx scripts/check-notas.ts && tsx scripts/check-push.ts && tsx scripts/check-inventario.ts",
+		"test": "tsx scripts/check-roles.ts && tsx scripts/check-errores.ts && tsx scripts/check-facturacion.ts && tsx scripts/check-sat.ts && tsx scripts/check-agenda.ts && tsx scripts/check-comercial.ts && tsx scripts/check-r2.ts && tsx scripts/check-notas.ts && tsx scripts/check-push.ts && tsx scripts/check-inventario.ts && tsx scripts/check-correo.ts",
 		"vapid": "tsx scripts/gen-vapid.ts",
 		"llave": "tsx scripts/gen-llave.ts"
 	},

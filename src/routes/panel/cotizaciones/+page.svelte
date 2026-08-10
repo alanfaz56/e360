@@ -6,11 +6,13 @@
 	import Stamp from "@lucide/svelte/icons/stamp";
 	import ChevronLeft from "@lucide/svelte/icons/chevron-left";
 	import ChevronRight from "@lucide/svelte/icons/chevron-right";
+	import Mail from "@lucide/svelte/icons/mail";
 	import Badge from "$lib/components/Badge.svelte";
 	import Button from "$lib/components/Button.svelte";
 	import DataTable from "$lib/components/DataTable.svelte";
 	import EmptyState from "$lib/components/EmptyState.svelte";
 	import Field from "$lib/components/Field.svelte";
+	import Flash from "$lib/components/Flash.svelte";
 	import PageHeader from "$lib/components/PageHeader.svelte";
 	import StatCard from "$lib/components/StatCard.svelte";
 	import {
@@ -24,7 +26,7 @@
 	import { searchHref } from "$lib/url";
 	import { page } from "$app/state";
 
-	let { data } = $props();
+	let { data, form } = $props();
 
 	const INPUT =
 		"mt-1 w-full rounded-md border border-sand-300 bg-white px-3 py-2 text-sm focus:border-brand-600 focus:outline-none";
@@ -46,6 +48,8 @@
 	title="Dinero"
 	description="Lo cotizado, lo autorizado, lo facturado y lo que sí entró."
 />
+
+<Flash {form} />
 
 <!--
 	The four numbers, in the order money moves through the shop: quoted → approved → invoiced →
@@ -353,6 +357,15 @@
 							variant="ghost"
 							size="sm">Abrir</Button
 						>
+					{/if}
+					{#if data.puede.enviarCotizacion && c.estado !== "borrador"}
+						<form method="POST" action="?/reenviarCotizacionCorreo">
+							<input type="hidden" name="cotizacionId" value={c.id} />
+							<Button variant="ghost" size="sm">
+								<Mail size={14} aria-hidden="true" />
+								Reenviar correo
+							</Button>
+						</form>
 					{/if}
 				</span>
 			</td>

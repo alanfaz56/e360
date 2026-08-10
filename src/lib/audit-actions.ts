@@ -93,6 +93,7 @@ export const AUDIT_ACTIONS = {
 	"cotizacion.create": "Cotización creada",
 	"cotizacion.update": "Cotización actualizada",
 	"cotizacion.send": "Cotización enviada al cliente",
+	"cotizacion.reenviar": "Correo de cotización reenviado",
 	"cotizacion.authorize": "Cotización autorizada por el cliente",
 	"cotizacion.reject": "Cotización rechazada",
 	"factura.create": "Factura emitida",

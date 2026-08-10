@@ -41,6 +41,9 @@
 
 			<Field label="Correo" name="email" type="email" autocomplete="username" required value={form?.email ?? ""} />
 			<Field label="Contraseña" name="password" type="password" autocomplete="current-password" required />
+			<p class="-mt-2 text-right text-xs">
+				<a href="/olvide-password" class="text-sand-600 underline hover:text-sand-800">¿Olvidaste tu contraseña?</a>
+			</p>
 
 			<label class="flex items-start gap-2.5 text-sm text-sand-700">
 				<input

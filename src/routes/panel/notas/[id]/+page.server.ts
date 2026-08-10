@@ -30,6 +30,7 @@ import {
 	listCotizaciones,
 	listFacturas,
 	registrarPago,
+	reenviarCotizacionCorreo,
 	saldoCliente,
 	surtirCotizacion,
 } from "$lib/server/comercial";
@@ -209,6 +210,18 @@ export const actions: Actions = {
 				},
 			});
 			redirect(303, conFlash(`/panel/notas/${params.id}`, "cotizacion.estado"));
+		} catch (err) {
+			return fallo(err);
+		}
+	},
+
+	/** "El cliente dice que no le llegó" — manda el mismo correo de nuevo, sin tocar el estado. */
+	reenviarCotizacionCorreo: async ({ locals, params, request }) => {
+		const actor = requireUser(locals);
+		const data = await request.formData();
+		try {
+			await reenviarCotizacionCorreo({ actor, id: String(data.get("cotizacionId")) });
+			redirect(303, conFlash(`/panel/notas/${params.id}`, "cotizacion.reenviar"));
 		} catch (err) {
 			return fallo(err);
 		}

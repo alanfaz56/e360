@@ -10,6 +10,7 @@
 	import Fuel from "@lucide/svelte/icons/fuel";
 	import TriangleAlert from "@lucide/svelte/icons/triangle-alert";
 	import Share2 from "@lucide/svelte/icons/share-2";
+	import Mail from "@lucide/svelte/icons/mail";
 	import FilePlus from "@lucide/svelte/icons/file-plus";
 	import FileText from "@lucide/svelte/icons/file-text";
 	import Banknote from "@lucide/svelte/icons/banknote";
@@ -837,6 +838,29 @@
 										/>
 										Mandar por WhatsApp
 									</Button>
+								{/if}
+
+								{#if data.puede.enviarCotizacion && c.estado !== "borrador"}
+									<form
+										method="POST"
+										action="?/reenviarCotizacionCorreo"
+									>
+										<input
+											type="hidden"
+											name="cotizacionId"
+											value={c.id}
+										/>
+										<Button
+											size="sm"
+											variant="outline"
+										>
+											<Mail
+												size={14}
+												aria-hidden="true"
+											/>
+											Reenviar correo
+										</Button>
+									</form>
 								{/if}
 
 								{#if data.puede.surtir && c.estado === "autorizada" && faltaSurtir}

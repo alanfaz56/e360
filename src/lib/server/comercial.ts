@@ -581,6 +581,37 @@ export async function cambiarEstadoCotizacion(input: {
 	return cotizacion;
 }
 
+/**
+ * Resend the "cotización lista" email. `cambiarEstadoCotizacion` only fires it on the ONE
+ * borrador→enviada transition — a quote already `enviada` (or later) can never transition back
+ * to `enviada`, so "el cliente dice que no le llegó" has no other way back in. Same permission as
+ * sending it the first time; no state change, no new audit action beyond the resend itself.
+ */
+export async function reenviarCotizacionCorreo(input: { actor: Actor; id: string }) {
+	if (!can(input.actor.role, "cotizacion:send")) throw new ClienteError(403, "Sin permiso: cotizacion:send");
+
+	const current = await getCotizacion(input.id);
+	if (current.estado === "borrador") {
+		throw new ClienteError(409, "Esta cotización todavía no se ha enviado.");
+	}
+
+	await avisarClienteDeNota(current.notaId, {
+		evento: "cliente_cotizacion",
+		titulo: "Tu cotización está lista",
+		cuerpo: `Cotización #${current.folio} por $${monto(current.total)}. Ábrela para autorizarla o rechazarla.`,
+	});
+
+	await recordAudit(prisma, {
+		action: "cotizacion.reenviar",
+		actor: input.actor,
+		entityId: current.id,
+		entityLabel: `Cotización #${current.folio}`,
+		summary: `Cotización #${current.folio}: correo reenviado`,
+	});
+
+	return current;
+}
+
 // --- Crédito ---------------------------------------------------------------------------------
 
 /**

@@ -3,6 +3,7 @@ import prisma from "$lib/prisma";
 import { auth } from "$lib/auth";
 import { ROLE_LABEL, assignableRoles, can, canAssignRole, isRole, type Role } from "$lib/roles";
 import { recordAudit } from "./audit";
+import { enviarInvitacion } from "./correo/index";
 import type { Actor } from "./guard";
 
 export const INVITE_TTL_HOURS = 72;
@@ -34,13 +35,23 @@ export const inviteUrl = (token: string, origin: string) =>
 	new URL(invitePath(token), origin).toString();
 
 /**
- * ponytail: delivery is deliberately a no-op. The API hands the URL back to the
- * inviter, who sends it over WhatsApp by hand. When Resend / Twilio / SendGrid gets
- * picked, replace this body — it is the only place that has to change, because every
- * caller already treats delivery as fire-and-forget.
+ * Sends the invite link by email via Resend. The API still hands the raw URL back to the
+ * inviter regardless of whether this succeeds — WhatsApp-by-hand stays available as a fallback
+ * (or the only channel, if Resend is not configured), so nothing here can strand an invitation.
  */
-export async function deliverInvitation(_email: string, _url: string) {
-	return { delivered: false as const, channel: "manual" as const };
+export async function deliverInvitation(
+	email: string,
+	url: string,
+	inviterName: string,
+	role: Role,
+): Promise<{ delivered: boolean; channel: "resend" | "manual" }> {
+	const enviado = await enviarInvitacion({
+		email,
+		invitadorNombre: inviterName,
+		rolLabel: ROLE_LABEL[role],
+		url,
+	});
+	return enviado ? { delivered: true, channel: "resend" } : { delivered: false, channel: "manual" };
 }
 
 /**
@@ -120,7 +131,7 @@ export async function issueInvitation(input: {
 		invitedById: actor.id,
 	});
 	const url = inviteUrl(token, input.origin);
-	const delivery = await deliverInvitation(invitation.email, url);
+	const delivery = await deliverInvitation(invitation.email, url, actor.name, input.role);
 
 	// Never record the token or the URL — the audit trail must not become a way to redeem
 	// an invitation.
