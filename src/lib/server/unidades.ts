@@ -5,6 +5,7 @@ import { can } from "$lib/roles";
 import { recordAudit } from "./audit";
 import { ClienteError, getCliente, trim } from "./clientes";
 import { registrarKilometraje } from "./notas";
+import { NOTA_ESTADOS_ABIERTOS } from "$lib/notas";
 import { pageMeta, parsePageParams, skipFor, type PageParams } from "./paginate";
 import type { Actor } from "./guard";
 
@@ -453,4 +454,148 @@ export async function transferUnidad(input: {
 
 		return updated;
 	});
+}
+
+/** Scalar fields the admin may pull from the duplicate instead of leaving the keeper's own value. */
+export const CAMPOS_FUSIONABLES_UNIDAD = [
+	"marca",
+	"modelo",
+	"anio",
+	"color",
+	"placas",
+	"vin",
+	"numeroEconomico",
+	"notas",
+] as const;
+export type CampoFusionableUnidad = (typeof CAMPOS_FUSIONABLES_UNIDAD)[number];
+
+/**
+ * Combine two vehicle records: everything the duplicate had (notas, citas, kilometraje,
+ * per-unit pickup authorizations) moves to the keeper, and the duplicate is archived
+ * (reversible). Modeled on `mergeClientes` in clientes.ts — one `motivo`, one transaction, one
+ * audit entry with the counts of what moved.
+ *
+ * `clienteId` is never touched: fusing two vehicle records is not the same decision as
+ * deciding who owns the truck now — that is `transferUnidad`'s job, not this one.
+ */
+export async function mergeUnidades(input: {
+	actor: Actor;
+	keeperId: string;
+	duplicadoId: string;
+	motivo: unknown;
+	camposElegidos?: Partial<Record<CampoFusionableUnidad, "keeper" | "duplicado">>;
+}) {
+	if (!can(input.actor.role, "unidad:merge")) {
+		throw new ClienteError(403, "Sin permiso: unidad:merge");
+	}
+
+	const motivo = trim(input.motivo, 255, "El motivo");
+	if (!motivo) throw new ClienteError(400, "El motivo de la fusión es obligatorio");
+	if (input.keeperId === input.duplicadoId) {
+		throw new ClienteError(400, "No se puede fusionar una unidad consigo misma");
+	}
+
+	const keeper = await getUnidad(input.keeperId);
+	const duplicado = await getUnidad(input.duplicadoId);
+	if (duplicado.archivedAt) {
+		throw new ClienteError(409, "Esa unidad ya está archivada — probablemente ya se fusionó.");
+	}
+
+	// Una sola nota abierta por unidad (nota_servicio_unidad_abierta_key). Si ambas tienen una
+	// abierta a la vez, repuntarlas chocaría con esa regla — se rechaza antes de escribir nada
+	// en vez de forzar el cierre de un trabajo en curso.
+	const [notaAbiertaKeeper, notaAbiertaDuplicado] = await Promise.all([
+		prisma.nota_servicio.findFirst({
+			where: { unidadId: keeper.id, estado: { in: NOTA_ESTADOS_ABIERTOS } },
+			select: { folio: true },
+		}),
+		prisma.nota_servicio.findFirst({
+			where: { unidadId: duplicado.id, estado: { in: NOTA_ESTADOS_ABIERTOS } },
+			select: { folio: true },
+		}),
+	]);
+	if (notaAbiertaKeeper && notaAbiertaDuplicado) {
+		throw new ClienteError(
+			409,
+			`Las dos unidades tienen una nota abierta (#${notaAbiertaKeeper.folio} y #${notaAbiertaDuplicado.folio}). Cierra o entrega una antes de fusionar.`,
+		);
+	}
+
+	const resultado = await prisma.$transaction(async (tx) => {
+		const ahora = new Date();
+
+		const [notas, citas] = await Promise.all([
+			tx.nota_servicio.updateMany({ where: { unidadId: duplicado.id }, data: { unidadId: keeper.id } }),
+			tx.cita.updateMany({ where: { unidadId: duplicado.id }, data: { unidadId: keeper.id } }),
+		]);
+
+		// contacto_unidad tiene PK compuesta (contactoId, unidadId) — un contacto ya autorizado
+		// en ambas chocaría al repuntar. Esas filas del duplicado sobran (ya tiene acceso vía el
+		// keeper); se descartan en vez de fusionarlas.
+		const [autorizacionesKeeper, autorizacionesDuplicado] = await Promise.all([
+			tx.contacto_unidad.findMany({ where: { unidadId: keeper.id }, select: { contactoId: true } }),
+			tx.contacto_unidad.findMany({ where: { unidadId: duplicado.id }, select: { contactoId: true } }),
+		]);
+		const yaAutorizados = new Set(autorizacionesKeeper.map((a) => a.contactoId));
+		const repetidos = autorizacionesDuplicado.filter((a) => yaAutorizados.has(a.contactoId)).map((a) => a.contactoId);
+		if (repetidos.length > 0) {
+			await tx.contacto_unidad.deleteMany({ where: { unidadId: duplicado.id, contactoId: { in: repetidos } } });
+		}
+		const autorizacionesMovidas = await tx.contacto_unidad.updateMany({
+			where: { unidadId: duplicado.id },
+			data: { unidadId: keeper.id },
+		});
+
+		// Kilometraje: se mueven todas las lecturas y el denormalizado del keeper se recalcula
+		// con la más reciente del conjunto ya unido — igual que registrarKilometraje lo mantiene.
+		await tx.unidad_kilometraje.updateMany({ where: { unidadId: duplicado.id }, data: { unidadId: keeper.id } });
+		const lecturaMasReciente = await tx.unidad_kilometraje.findFirst({
+			where: { unidadId: keeper.id },
+			orderBy: { medidoAt: "desc" },
+		});
+
+		// Campos propios: por default el keeper se queda como está. Solo se toca lo que el admin
+		// marcó explícitamente "duplicado".
+		const camposElegidos = input.camposElegidos ?? {};
+		const datosElegidos: Record<string, string | number | null> = {};
+		for (const campo of CAMPOS_FUSIONABLES_UNIDAD) {
+			if (camposElegidos[campo] === "duplicado") datosElegidos[campo] = duplicado[campo];
+		}
+		if (lecturaMasReciente) datosElegidos.kilometraje = lecturaMasReciente.kilometraje;
+
+		const keeperActualizado = await tx.unidad.update({
+			where: { id: keeper.id },
+			data: datosElegidos,
+		});
+
+		const duplicadoArchivado = await tx.unidad.update({
+			where: { id: duplicado.id },
+			data: { archivedAt: ahora },
+		});
+
+		await recordAudit(tx, {
+			action: "unidad.merge",
+			actor: input.actor,
+			entityId: keeper.id,
+			entityLabel: unidadLabel(keeperActualizado),
+			summary: `${unidadLabel(duplicado)} fusionada con ${unidadLabel(keeperActualizado)}. Motivo: ${motivo}`,
+			before: { duplicadoId: duplicado.id, duplicado: unidadLabel(duplicado) },
+			after: {
+				keeperId: keeper.id,
+				motivo,
+				movidos: {
+					notas: notas.count,
+					citas: citas.count,
+					autorizacionesMovidas: autorizacionesMovidas.count,
+					autorizacionesDescartadas: repetidos.length,
+					kilometraje: lecturaMasReciente?.kilometraje ?? null,
+					camposTomadosDelDuplicado: Object.keys(datosElegidos).filter((k) => k !== "kilometraje"),
+				},
+			},
+		});
+
+		return duplicadoArchivado;
+	});
+
+	return resultado;
 }

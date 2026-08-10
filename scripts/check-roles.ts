@@ -49,6 +49,7 @@ for (const key of [
 	"unidad:archive",
 	"unidad:delete",
 	"unidad:transfer",
+	"unidad:merge",
 ] as const) {
 	assert.equal(can("admin", key), true, `admin must hold ${key}`);
 	for (const role of ROLES.filter((r) => r !== "admin")) {
@@ -132,6 +133,7 @@ assert.deepEqual(permissionsFor("operador"), [
 	"unidad:read",
 	"unidad:create",
 	"unidad:update",
+	"recordatorio:manage",
 	"cita:read",
 	"cita:create",
 	"cita:advance",
@@ -141,6 +143,7 @@ assert.deepEqual(permissionsFor("operador"), [
 	"nota:advance",
 	"nota:transfer",
 	"nota:comment",
+	"nota:liberacion",
 	"taller:read",
 	"producto:read",
 	"inventario:read",
@@ -170,6 +173,9 @@ for (const key of [
 	"nota:advance",
 	"nota:transfer",
 	"nota:comment",
+	// The pre-delivery checklist: deliberately as wide as the counter's own work, not narrowed
+	// to nota:close's Admin/Gerente tier.
+	"nota:liberacion",
 ] as const) {
 	for (const role of ["admin", "gerente", "operador"] as const) {
 		assert.equal(can(role, key), true, `${role} debe tener ${key}`);
@@ -181,6 +187,12 @@ for (const key of ["nota:close", "nota:cancel"] as const) {
 	assert.equal(can("gerente", key), true);
 	assert.equal(can("operador", key), false, `operador no debe tener ${key}`);
 }
+
+// Recordatorios: manual follow-ups, same three roles as the rest of the counter's work.
+for (const role of ["admin", "gerente", "operador"] as const) {
+	assert.equal(can(role, "recordatorio:manage"), true, `${role} debe tener recordatorio:manage`);
+}
+assert.equal(can("taller", "recordatorio:manage"), false);
 
 // Partner workshops are onboarded by management; the counter only reads the list.
 assert.equal(can("operador", "taller:read"), true);

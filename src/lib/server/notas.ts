@@ -4,6 +4,7 @@ import prisma from "$lib/prisma";
 import { can } from "$lib/roles";
 import {
 	INVENTARIO_ITEM_KEYS,
+	LIBERACION_ITEM_KEYS,
 	NOTA_ESTADOS_ABIERTOS,
 	limiteDeTipo,
 	megas,
@@ -12,9 +13,11 @@ import {
 	esMimePermitido,
 	isFotoCategoria,
 	isInventarioItem,
+	isLiberacionItem,
 	isNotaEstado,
 	isQaDestino,
 	isQaResultado,
+	isRespuestaLiberacion,
 	notaEstadoClienteLabel,
 	notaEstadoLabel,
 	puedeTransicionarNota,
@@ -64,6 +67,7 @@ const INCLUDE = {
 	mecanico: { select: { id: true, name: true, email: true } },
 	tallerActual: { select: { nombre: true, telefono: true } },
 	entregadaAContacto: { select: { nombre: true } },
+	liberadaPor: { select: { name: true } },
 	cita: { select: { folio: true } },
 	_count: { select: { evidencias: true, comentarios: true, cotizaciones: true, facturas: true } },
 } satisfies Prisma.nota_servicioInclude;
@@ -111,6 +115,10 @@ export const publicNota = (n: NotaRow) => ({
 	entregadaAt: n.entregadaAt?.toISOString() ?? null,
 	entregadaANombre: n.entregadaAContacto?.nombre ?? null,
 	canceladoMotivo: n.canceladoMotivo,
+	unidadLiberada: n.unidadLiberada,
+	liberacionAt: n.liberacionAt?.toISOString() ?? null,
+	liberadaPorNombre: n.liberadaPor?.name ?? null,
+	observacionesLiberacion: n.observacionesLiberacion,
 	etiqueta: notaLabel(n),
 	evidencias: n._count.evidencias,
 	comentarios: n._count.comentarios,
@@ -334,8 +342,9 @@ export async function getNota(id: string) {
 export async function getNotaDetalle(id: string) {
 	const nota = await getNota(id);
 
-	const [inventario, evidencias, comentarios, transferencias] = await Promise.all([
+	const [inventario, liberaciones, evidencias, comentarios, transferencias] = await Promise.all([
 		prisma.nota_inventario.findMany({ where: { notaId: nota.id } }),
+		prisma.nota_liberacion.findMany({ where: { notaId: nota.id } }),
 		prisma.nota_evidencia.findMany({
 			where: { notaId: nota.id },
 			orderBy: { createdAt: "asc" },
@@ -364,6 +373,7 @@ export async function getNotaDetalle(id: string) {
 		// it here, on the one screen where they send the link to the customer.
 		seguimientoToken: nota.seguimientoToken,
 		inventario: inventario.map((i) => ({ item: i.item, presente: i.presente, notas: i.notas })),
+		liberaciones: liberaciones.map((l) => ({ item: l.item, respuesta: l.respuesta, notas: l.notas })),
 		evidencias: evidencias.map((e) => ({
 			id: e.id,
 			tipo: e.tipo,
@@ -916,6 +926,71 @@ export async function faltantesInventario(notaId: string): Promise<string[]> {
 	return INVENTARIO_ITEM_KEYS.filter((k) => !set.has(k));
 }
 
+/**
+ * "Liberación 360" — the 15-point pre-delivery checklist. Deliberately WIDER than `nota:close`
+ * (Admin/Gerente): the Operador at the counter is usually who walks around the vehicle, but
+ * formally entregar-ing it stays with whoever already held that authority.
+ *
+ * Same delete-then-recreate shape as `inspeccionarNota`'s inventory, but the note's own verdict
+ * (`unidadLiberada`) lives on `nota_servicio` — that is the single field `entregarNota` checks,
+ * so the gate never has to re-derive it from 15 rows.
+ */
+export async function guardarLiberacion(input: { actor: Actor; id: string; body: Record<string, unknown> }) {
+	if (!can(input.actor.role, "nota:liberacion")) throw new ClienteError(403, "Sin permiso: nota:liberacion");
+
+	const current = await getNota(input.id);
+	if (current.estado === "cancelada" || current.estado === "entregada") {
+		throw new ClienteError(409, `Una nota ${notaEstadoLabel(current.estado).toLowerCase()} ya no se libera.`);
+	}
+
+	const items = leerLiberacion(input.body);
+	const unidadLiberada = input.body.unidadLiberada === true || input.body.unidadLiberada === "1";
+	const observaciones = trim(input.body.observacionesLiberacion);
+
+	const nota = await prisma.$transaction(async (tx) => {
+		await tx.nota_liberacion.deleteMany({ where: { notaId: current.id } });
+		if (items.length > 0) {
+			await tx.nota_liberacion.createMany({ data: items.map((i) => ({ ...i, notaId: current.id })) });
+		}
+
+		const actualizada = await tx.nota_servicio.update({
+			where: { id: current.id },
+			data: {
+				unidadLiberada,
+				liberacionAt: new Date(),
+				liberadaPorId: input.actor.id,
+				observacionesLiberacion: observaciones,
+			},
+			include: INCLUDE,
+		});
+
+		await recordAudit(tx, {
+			action: "nota.liberacion",
+			actor: input.actor,
+			entityId: actualizada.id,
+			entityLabel: notaLabel(actualizada),
+			summary: `Checklist de liberación de la nota #${actualizada.folio}: ${unidadLiberada ? "liberada" : "NO liberada"}`,
+			after: { unidadLiberada, items: items.length },
+		});
+
+		return actualizada;
+	});
+
+	return nota;
+}
+
+/** `respuesta_<item>` / `notas_<item>` — the flat shape a plain `<form>` posts and the JSON API mirrors. */
+function leerLiberacion(body: Record<string, unknown>): { item: string; respuesta: string; notas: string | null }[] {
+	const resultado: { item: string; respuesta: string; notas: string | null }[] = [];
+	for (const item of LIBERACION_ITEM_KEYS) {
+		if (!isLiberacionItem(item)) continue;
+		const respuesta = body[`respuesta_${item}`];
+		if (!isRespuestaLiberacion(respuesta)) continue;
+		resultado.push({ item, respuesta, notas: trim(body[`notas_${item}`], 255, "La nota") });
+	}
+	return resultado;
+}
+
 // --- Estados ---------------------------------------------------------------------------------
 
 export async function avanzarNota(input: { actor: Actor; id: string; estado: unknown }) {
@@ -1420,6 +1495,13 @@ export async function entregarNota(input: { actor: Actor; id: string; contactoId
 		throw new ClienteError(
 			409,
 			`Una nota ${notaEstadoLabel(current.estado).toLowerCase()} no se puede entregar. Márcala como lista primero.`,
+		);
+	}
+	// "Liberación 360": nada sale del taller sin el checklist de 15 puntos dicho "liberada: sí".
+	if (current.unidadLiberada !== true) {
+		throw new ClienteError(
+			409,
+			"Completa el checklist de liberación antes de entregar — falta marcar la unidad como liberada.",
 		);
 	}
 

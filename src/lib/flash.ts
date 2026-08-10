@@ -33,6 +33,7 @@ export const FLASH: Record<string, string> = {
 	"nota.transferir": "Unidad enviada al taller aliado.",
 	"nota.recibirTaller": "Recepción registrada con su control de calidad.",
 	"nota.entregar": "Unidad entregada al cliente.",
+	"nota.liberacion": "Checklist de liberación guardado.",
 	"nota.cancelar": "Nota cancelada.",
 	"nota.comentar": "Comentario agregado.",
 	"nota.mecanico": "Mecánico asignado.",
@@ -75,6 +76,11 @@ export const FLASH: Record<string, string> = {
 
 	// --- Clientes ------------------------------------------------------------------------------
 	"cliente.crear": "Cliente dado de alta.",
+
+	// --- Recordatorios ---------------------------------------------------------------------------
+	"recordatorio.crear": "Recordatorio agregado.",
+	"recordatorio.marcar": "Recordatorio marcado.",
+	"recordatorio.reabrir": "Recordatorio reabierto.",
 
 	// --- Avisos --------------------------------------------------------------------------------
 	"aviso.leidos": "Avisos marcados como leídos.",

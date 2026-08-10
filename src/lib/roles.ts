@@ -78,6 +78,12 @@ export const PERMISSIONS = {
 	// Moving a vehicle between customers is rare and moves an asset. Admin only, motivo
 	// required — enforced in transferUnidad.
 	"unidad:transfer": ["admin"],
+	// Combines two duplicate vehicle records into one. Admin only, motivo required — enforced
+	// in mergeUnidades.
+	"unidad:merge": ["admin"],
+	// Manual follow-ups on a vehicle — create, list, mark done. One key covers all three, same
+	// granularity as contacto:manage.
+	"recordatorio:manage": ["admin", "gerente", "operador"],
 	// Agenda. The whole counter reads and books; only Admin/Gerente reshape an existing
 	// appointment. There is deliberately NO permission for the public booking form — it is
 	// anonymous by design and gated by Turnstile, not by this registry.
@@ -103,6 +109,10 @@ export const PERMISSIONS = {
 	"nota:comment": ["admin", "gerente", "operador", "taller"],
 	"nota:close": ["admin", "gerente"],
 	"nota:cancel": ["admin", "gerente"],
+	// Filling the pre-delivery checklist is deliberately WIDER than nota:close: the Operador at
+	// the counter is usually who walks around the vehicle, but formally handing it over stays
+	// Admin/Gerente, unchanged.
+	"nota:liberacion": ["admin", "gerente", "operador"],
 
 	// Partner workshops Estación 360 sources jobs for. The `taller` ROLE still holds nothing —
 	// onboarding those shops as users is its own change, with its own permission decisions.

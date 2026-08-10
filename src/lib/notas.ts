@@ -77,6 +77,32 @@ export function puedeTransicionarNota(desde: string, hasta: string): boolean {
 export const NOTA_ESTADOS_ABIERTOS = NOTA_ESTADO_KEYS.filter((e) => e !== "entregada" && e !== "cancelada");
 
 /**
+ * Board drop rules, mirroring `puedeMoverCita` in citas.ts. `en_taller` is never a source: leaving
+ * a partner shop is a QA verdict (`recibirDeTaller`), not a column a card lands in — `avanzarNota`
+ * itself refuses to move a note out of `en_taller` no matter what `NOTA_TRANSICIONES` allows.
+ */
+export function puedeMoverNota(
+	nota: { estado: string },
+	destino: string,
+	permisos: { avanzar: boolean; cancelar: boolean; entregar: boolean; transferir: boolean },
+): boolean {
+	if (!puedeTransicionarNota(nota.estado, destino)) return false;
+	if (nota.estado === "en_taller") return false;
+	if (destino === "cancelada") return permisos.cancelar;
+	if (destino === "entregada") return permisos.entregar;
+	if (destino === "en_taller") return permisos.transferir;
+	return permisos.avanzar;
+}
+
+export type PasoMoverNota = "cancelar" | "entregar" | "transferir" | "avanzar";
+export function pasoParaMoverNota(destino: string): PasoMoverNota {
+	if (destino === "cancelada") return "cancelar";
+	if (destino === "entregada") return "entregar";
+	if (destino === "en_taller") return "transferir";
+	return "avanzar";
+}
+
+/**
  * The fuel gauge, in eighths — what the needle actually shows. Storing a percentage would invent
  * precision nobody can read off a dashboard.
  */
@@ -125,6 +151,45 @@ export const isInventarioItem = (v: unknown): v is InventarioItem =>
 	typeof v === "string" && Object.hasOwn(INVENTARIO_ITEMS, v);
 export const inventarioLabel = (v: string) => (isInventarioItem(v) ? INVENTARIO_ITEMS[v].label : v);
 export const INVENTARIO_OBLIGATORIOS = INVENTARIO_ITEM_KEYS.filter((k) => INVENTARIO_ITEMS[k].obligatorio);
+
+/**
+ * "Liberación 360" — the 15-point pre-delivery checklist. Same fixed-catalogue shape as
+ * `INVENTARIO_ITEMS`, but each item answers sí/no/n-a instead of a plain boolean: "no aplica" is
+ * a real, different answer from "no" (a unit with no partner-shop work has nothing to report on
+ * that point, which is not the same as failing it).
+ */
+export const LIBERACION_ITEMS = {
+	trabajo_terminado: { label: "Trabajo solicitado terminado y verificado" },
+	motor_ok: { label: "Motor enciende y funciona correctamente" },
+	testigos_tablero: { label: "Tablero sin testigos nuevos de falla" },
+	niveles_tapas: { label: "Niveles revisados y tapas bien colocadas" },
+	sin_fugas: { label: "Sin fugas evidentes debajo de la unidad" },
+	frenos_ok: { label: "Frenos con funcionamiento correcto" },
+	direccion_suspension: { label: "Dirección y suspensión sin anomalías evidentes" },
+	luces_limpiaparabrisas: { label: "Luces, direccionales y limpiaparabrisas funcionando" },
+	llantas_presion: { label: "Llantas revisadas y presión calibrada" },
+	prueba_manejo: { label: "Prueba corta de manejo realizada" },
+	revision_exterior: { label: "Revisión visual exterior de 30 segundos" },
+	cierres_ok: { label: "Cofre, puertas y cajuela bien cerrados" },
+	interior_limpio: { label: "Interior limpio y sin herramientas o piezas" },
+	pertenencias_completas: { label: "Pertenencias y documentación completas" },
+	evidencias_registradas: { label: "Evidencias y recomendaciones registradas" },
+} as const satisfies Record<string, { label: string }>;
+
+export type LiberacionItem = keyof typeof LIBERACION_ITEMS;
+export const LIBERACION_ITEM_KEYS = Object.keys(LIBERACION_ITEMS) as LiberacionItem[];
+export const isLiberacionItem = (v: unknown): v is LiberacionItem =>
+	typeof v === "string" && Object.hasOwn(LIBERACION_ITEMS, v);
+
+export const RESPUESTA_LIBERACION = ["si", "no", "na"] as const;
+export type RespuestaLiberacion = (typeof RESPUESTA_LIBERACION)[number];
+export const isRespuestaLiberacion = (v: unknown): v is RespuestaLiberacion =>
+	typeof v === "string" && (RESPUESTA_LIBERACION as readonly string[]).includes(v);
+export const RESPUESTA_LIBERACION_LABEL: Record<RespuestaLiberacion, string> = {
+	si: "Sí",
+	no: "No",
+	na: "N/A",
+};
 
 /**
  * Evidence attached to a nota: intake photos, a signed quote, a partner shop's report.

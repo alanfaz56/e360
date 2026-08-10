@@ -34,6 +34,7 @@ export const AUDIT_ACTIONS = {
 	"unidad.restore": "Unidad restaurada",
 	"unidad.delete": "Unidad eliminada",
 	"unidad.transfer": "Unidad transferida",
+	"unidad.merge": "Unidad fusionada con otra",
 	// The public form. Recorded with a null actor — see recordAudit.
 	"cita.solicitud": "Cita solicitada (público)",
 	"cita.create": "Cita creada",
@@ -56,6 +57,9 @@ export const AUDIT_ACTIONS = {
 	"nota.evidence_delete": "Evidencia eliminada",
 	"nota.close": "Nota entregada y cerrada",
 	"nota.cancel": "Nota cancelada",
+	"nota.liberacion": "Checklist de liberación guardado",
+	"recordatorio.create": "Recordatorio creado",
+	"recordatorio.hecho": "Recordatorio marcado",
 	"taller.create": "Taller aliado dado de alta",
 	"taller.update": "Taller aliado actualizado",
 	"taller.archive": "Taller aliado archivado",

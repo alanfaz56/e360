@@ -10,15 +10,20 @@
 	import Badge from "$lib/components/Badge.svelte";
 	import Button from "$lib/components/Button.svelte";
 	import DataTable from "$lib/components/DataTable.svelte";
+	import Drawer from "$lib/components/Drawer.svelte";
 	import EmptyState from "$lib/components/EmptyState.svelte";
 	import Field from "$lib/components/Field.svelte";
+	import Flash from "$lib/components/Flash.svelte";
 	import PageHeader from "$lib/components/PageHeader.svelte";
-	import { notaEstadoTone } from "$lib/notas";
+	import { notaEstadoLabel, notaEstadoTone, puedeMoverNota, pasoParaMoverNota } from "$lib/notas";
 	import { fechaLarga } from "$lib/agenda";
 	import { searchHref } from "$lib/url";
+	import { goto } from "$app/navigation";
 	import { page } from "$app/state";
 
-	let { data } = $props();
+	let { data, form } = $props();
+
+	type Nota = (typeof data.notas)[number];
 
 	const INPUT =
 		"mt-1 w-full rounded-md border border-sand-300 bg-white px-3 py-2 text-sm focus:border-brand-600 focus:outline-none";
@@ -28,6 +33,53 @@
 	const to = $derived(Math.min(data.page * data.perPage, data.total));
 
 	const dia = (iso: string) => fechaLarga(iso.slice(0, 10)).replace(/^\w+, /, "");
+
+	// --- Arrastrar una tarjeta -------------------------------------------------------------------
+	//
+	// Same pattern as citas: dragging is an ENHANCEMENT that only ever opens the confirmation drawer
+	// (`?mover=&a=`), which is a plain form. Nothing is reachable by dragging that is not reachable
+	// without it — the card is always a link to the note.
+
+	const puedeSoltar = (nota: Nota, destino: string) => puedeMoverNota(nota, destino, data.puede);
+	const esMovible = (nota: Nota) => data.estados.some((e) => puedeSoltar(nota, e.value));
+
+	let arrastrandoId = $state<string | null>(null);
+	let columnaActiva = $state<string | null>(null);
+	const arrastrada = $derived(data.notas.find((n) => n.id === arrastrandoId) ?? null);
+
+	function alArrastrar(evento: DragEvent, nota: Nota) {
+		arrastrandoId = nota.id;
+		evento.dataTransfer?.setData("text/plain", nota.id);
+		if (evento.dataTransfer) evento.dataTransfer.effectAllowed = "move";
+	}
+
+	function alSobrevolar(evento: DragEvent, destino: string) {
+		if (!arrastrada || !puedeSoltar(arrastrada, destino)) return;
+		evento.preventDefault();
+		if (evento.dataTransfer) evento.dataTransfer.dropEffect = "move";
+		columnaActiva = destino;
+	}
+
+	function alSoltar(evento: DragEvent, destino: string) {
+		evento.preventDefault();
+		const nota = arrastrada;
+		arrastrandoId = null;
+		columnaActiva = null;
+		if (!nota || !puedeSoltar(nota, destino)) return;
+		goto(searchHref(page.url, { mover: nota.id, a: destino }), { noScroll: true, keepFocus: true });
+	}
+
+	// --- La confirmación -------------------------------------------------------------------------
+
+	const moverId = $derived(page.url.searchParams.get("mover"));
+	const aEstado = $derived(page.url.searchParams.get("a"));
+	const enMovimiento = $derived(data.notas.find((n) => n.id === moverId) ?? null);
+	const volver = $derived(searchHref(page.url, { mover: null, a: null }));
+	const movimientoValido = $derived(enMovimiento !== null && aEstado !== null && puedeSoltar(enMovimiento, aEstado));
+	const paso = $derived(enMovimiento && aEstado && movimientoValido ? pasoParaMoverNota(aEstado) : null);
+	const accion = $derived(
+		paso === "cancelar" ? "?/cancelar" : paso === "entregar" ? "?/entregar" : paso === "transferir" ? "?/transferir" : "?/avanzar",
+	);
 </script>
 
 <svelte:head><title>Notas de servicio — Estación 360</title></svelte:head>
@@ -73,6 +125,8 @@
 		</Button>
 	{/snippet}
 </PageHeader>
+
+<Flash {form} />
 
 <!-- Real GET form: the filters ARE the URL, so any view is shareable and works with JS off. -->
 <form
@@ -150,11 +204,11 @@
 		counter asks all day, and it is the one a list sorted by date cannot answer: three units
 		waiting on a partner shop are invisible in a table and impossible to miss as a column.
 
-		No drag and drop here, unlike citas: moving a note is never just a status. `en_taller` needs a
-		workshop and a reason, `entregada` records who collected the vehicle, `cancelada` needs a
-		motivo — `NOTA_TRANSICIONES` makes all three unreachable through the plain advance on purpose.
-		A card that dragged into one of those columns would promise something the drawer behind it
-		still has to ask for. The card opens the note, where every move already lives.
+		Dragging a card opens the confirmation for that move — it never writes on release. Each move
+		still needs what it always needed (a taller and a reason, who received the unit, a motivo to
+		cancel), and a column only accepts a card the server would accept, so nothing drops into a
+		refusal. `en_taller` cards cannot be picked up at all: leaving a partner shop is a QA verdict,
+		not a column a card lands in.
 
 		Columns scroll sideways in their own container; the page never does.
 	-->
@@ -162,9 +216,21 @@
 		<div class="flex min-w-max gap-3">
 			{#each data.estados as col (col.value)}
 				{@const enCol = data.notas.filter((n) => n.estado === col.value)}
+				{@const admite = arrastrada !== null && puedeSoltar(arrastrada, col.value)}
 				<section
-					class="w-64 shrink-0 rounded-lg border border-sand-200 bg-sand-50"
+					role="group"
 					aria-label="Notas {col.label}"
+					ondragover={(e) => alSobrevolar(e, col.value)}
+					ondragleave={() => (columnaActiva = null)}
+					ondrop={(e) => alSoltar(e, col.value)}
+					class="w-64 shrink-0 rounded-lg border bg-sand-50 transition-colors {columnaActiva === col.value &&
+					admite
+						? 'border-brand-600 bg-brand-50'
+						: admite
+							? 'border-dashed border-brand-400'
+							: arrastrada
+								? 'border-sand-200 opacity-50'
+								: 'border-sand-200'}"
 				>
 					<h2
 						class="flex items-center justify-between gap-2 border-b border-sand-200 px-3 py-2 text-sm font-medium text-sand-800"
@@ -177,7 +243,18 @@
 							<li>
 								<a
 									href="/panel/notas/{nota.id}"
-									class="block rounded border border-sand-200 bg-white p-2 text-sm hover:border-brand-600"
+									draggable={esMovible(nota)}
+									ondragstart={(e) => alArrastrar(e, nota)}
+									ondragend={() => {
+										arrastrandoId = null;
+										columnaActiva = null;
+									}}
+									title={esMovible(nota) ? "Arrástrala a otra columna para moverla" : undefined}
+									class="block rounded border border-sand-200 bg-white p-2 text-sm hover:border-brand-600 {esMovible(
+										nota,
+									)
+										? 'cursor-grab active:cursor-grabbing'
+										: ''} {arrastrandoId === nota.id ? 'opacity-40' : ''}"
 								>
 									<span class="flex flex-wrap items-baseline gap-1.5">
 										<span class="font-medium text-sand-950">{nota.clienteNombre}</span>
@@ -226,8 +303,8 @@
 		</div>
 	</div>
 	<p class="mt-3 text-xs text-sand-500">
-		El tablero muestra hasta 200 notas del filtro actual, sin paginar: una columna paginada miente sobre lo que
-		tiene. Abre la nota para moverla — cada paso pide su taller, su motivo o quién recibió la unidad.
+		Arrastra una tarjeta a otra columna para moverla; te pedimos confirmar antes de guardar. El tablero muestra
+		hasta 200 notas del filtro actual, sin paginar: una columna paginada miente sobre lo que tiene.
 	</p>
 {:else}
 	<DataTable
@@ -318,4 +395,146 @@
 			{:else}<span></span>{/if}
 		</nav>
 	{/if}
+{/if}
+
+<!--
+	The confirmation for a dropped card. URL state like every other drawer, so a refresh keeps it and
+	the back button closes it. The form posts to the same server functions the detail screen uses —
+	the board is a shortcut, never a second set of rules.
+-->
+{#if enMovimiento && aEstado}
+	<Drawer
+		title={paso === "cancelar"
+			? "Cancelar nota"
+			: paso === "entregar"
+				? "Entregar unidad"
+				: paso === "transferir"
+					? "Mandar a un taller aliado"
+					: `Mover nota #${enMovimiento.folio}`}
+		description={paso === "avanzar"
+			? `${notaEstadoLabel(enMovimiento.estado)} → ${notaEstadoLabel(aEstado)}`
+			: `Nota #${enMovimiento.folio} · ${enMovimiento.clienteNombre}`}
+		closeHref={volver}
+	>
+		<div class="mb-4 rounded border border-sand-200 bg-sand-50 p-3 text-sm">
+			<span class="block font-medium text-sand-950">{enMovimiento.clienteNombre}</span>
+			<span class="block text-xs text-sand-600">{enMovimiento.unidadEtiqueta}</span>
+		</div>
+
+		{#if !movimientoValido}
+			<!-- Reachable by typing the URL, or by a card somebody else moved first. -->
+			<p class="mb-4 text-sm text-sand-700">Ese movimiento no está disponible para esta nota.</p>
+			<Button
+				href="/panel/notas/{enMovimiento.id}"
+				variant="outline"
+				full>Abrir la nota</Button
+			>
+		{:else}
+			<form
+				method="POST"
+				action={accion}
+				class="space-y-4"
+			>
+				<input
+					type="hidden"
+					name="id"
+					value={enMovimiento.id}
+				/>
+				<!-- The board carries its filters in the URL; without this every move would drop the
+				     operator back onto an unfiltered board. -->
+				<input
+					type="hidden"
+					name="volver"
+					value={volver}
+				/>
+
+				{#if paso === "cancelar"}
+					<Field
+						label="Motivo"
+						name="motivo"
+						required
+						hint="Queda en el expediente."
+					/>
+				{:else if paso === "entregar"}
+					<Field
+						label="¿Quién recibe?"
+						name="contactoId"
+						hint="Solo contactos con rol de Entregador."
+					>
+						{#snippet children(id)}
+							<select
+								{id}
+								name="contactoId"
+								class={INPUT}
+							>
+								<option value="">El cliente mismo</option>
+								{#each data.entregadores as e (e.id)}
+									<option value={e.id}>{e.nombre}{e.telefono ? ` · ${e.telefono}` : ""}</option>
+								{/each}
+							</select>
+						{/snippet}
+					</Field>
+					{#if data.entregadores.length === 0}
+						<p class="text-xs text-sand-500">
+							Este cliente no tiene entregadores registrados.
+							<a
+								class="underline"
+								href="/panel/clientes/{enMovimiento.clienteId}">Agrégalos en su ficha</a
+							>.
+						</p>
+					{/if}
+					<Field
+						label="Observaciones de entrega"
+						name="observaciones"
+					/>
+				{:else if paso === "transferir"}
+					<Field
+						label="Taller"
+						name="tallerId"
+					>
+						{#snippet children(id)}
+							<select
+								{id}
+								name="tallerId"
+								required
+								class={INPUT}
+							>
+								<option value="">Elige…</option>
+								{#each data.talleres as t (t.id)}
+									<option value={t.id}>{t.nombre}{t.especialidades ? ` · ${t.especialidades}` : ""}</option>
+								{/each}
+							</select>
+						{/snippet}
+					</Field>
+					{#if data.talleres.length === 0}
+						<p class="text-xs text-sand-500">
+							No hay talleres dados de alta. <a
+								class="underline"
+								href="/panel/talleres">Agrégalos aquí</a
+							>.
+						</p>
+					{/if}
+					<Field
+						label="¿Para qué?"
+						name="motivo"
+						required
+					/>
+				{:else}
+					<input
+						type="hidden"
+						name="estado"
+						value={aEstado}
+					/>
+					<p class="text-sm text-sand-700">
+						¿Mover la nota a <strong>{notaEstadoLabel(aEstado)}</strong>?
+					</p>
+				{/if}
+
+				<Button full>
+					{#if paso === "cancelar"}Cancelar la nota{:else if paso === "entregar"}Marcar entregada{:else if paso === "transferir"}Enviar
+						al taller{:else}Mover a {notaEstadoLabel(aEstado)}{/if}
+				</Button>
+			</form>
+		{/if}
+	</Drawer>
 {/if}

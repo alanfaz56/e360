@@ -3,17 +3,21 @@ import prisma from "$lib/prisma";
 import { can } from "$lib/roles";
 import { requirePermission, requireUser } from "$lib/server/guard";
 import { historialKilometraje, historialUnidad } from "$lib/server/notas";
+import { crearRecordatorio } from "$lib/server/recordatorios";
 import {
+	CAMPOS_FUSIONABLES_UNIDAD,
 	getUnidad,
 	listPropietarios,
+	mergeUnidades,
 	publicUnidad,
 	setUnidadArchivada,
 	transferUnidad,
 	updateUnidad,
+	type CampoFusionableUnidad,
 } from "$lib/server/unidades";
 import { fallaEnCarga, fallo } from "$lib/server/errores";
 
-export const load: ServerLoad = async ({ locals, params }) => {
+export const load: ServerLoad = async ({ locals, params, url }) => {
 	const actor = requirePermission(locals, "unidad:read");
 
 	let unidad;
@@ -24,6 +28,49 @@ export const load: ServerLoad = async ({ locals, params }) => {
 	}
 
 	const puedeTransferir = can(actor.role, "unidad:transfer");
+	const puedeFusionar = can(actor.role, "unidad:merge");
+
+	// Candidatas a duplicado: mismo VIN, mismas placas o mismo número económico, activas, que no
+	// sean esta misma unidad. Sirve como lista inicial de EntitySearch y como <select> de
+	// respaldo sin JS.
+	const posiblesDuplicados = puedeFusionar
+		? await prisma.unidad.findMany({
+				where: {
+					id: { not: unidad.id },
+					archivedAt: null,
+					OR: [
+						...(unidad.vin ? [{ vin: unidad.vin }] : []),
+						...(unidad.placas ? [{ placas: unidad.placas }] : []),
+						...(unidad.numeroEconomico ? [{ numeroEconomico: unidad.numeroEconomico }] : []),
+					],
+				},
+				select: {
+					id: true,
+					marca: true,
+					modelo: true,
+					anio: true,
+					placas: true,
+					vin: true,
+					numeroEconomico: true,
+					cliente: { select: { nombreCompleto: true } },
+				},
+				take: 10,
+			})
+		: [];
+
+	// Paso 2 de fusionar: ya se eligió un duplicado, se cargan sus datos para el selector campo
+	// por campo.
+	const duplicadoId = url.searchParams.get("duplicado");
+	let duplicado = null;
+	if (puedeFusionar && duplicadoId && duplicadoId !== unidad.id) {
+		try {
+			duplicado = publicUnidad(await getUnidad(duplicadoId));
+		} catch {
+			// Un id inválido o ya borrado no debe tumbar la página — el drawer simplemente
+			// vuelve al paso 1.
+			duplicado = null;
+		}
+	}
 
 	const [propietarios, historial, kilometraje, contactos] = await Promise.all([
 		listPropietarios(unidad.id),
@@ -59,11 +106,25 @@ export const load: ServerLoad = async ({ locals, params }) => {
 					})
 				).map((c) => ({ id: c.id, nombre: c.nombreCompleto }))
 			: [],
+		posiblesDuplicados: posiblesDuplicados.map((u) => ({
+			id: u.id,
+			marca: u.marca,
+			modelo: u.modelo,
+			anio: u.anio,
+			placas: u.placas,
+			vin: u.vin,
+			numeroEconomico: u.numeroEconomico,
+			clienteNombre: u.cliente.nombreCompleto,
+		})),
+		camposFusionables: CAMPOS_FUSIONABLES_UNIDAD,
+		duplicado,
 		puede: {
 			editar: can(actor.role, "unidad:update"),
 			archivar: can(actor.role, "unidad:archive"),
 			transferir: puedeTransferir,
 			verNotas: can(actor.role, "nota:read"),
+			fusionar: puedeFusionar,
+			recordar: can(actor.role, "recordatorio:manage"),
 		},
 	};
 };
@@ -107,6 +168,44 @@ export const actions: Actions = {
 				motivo: form.get("motivo"),
 			});
 			return { ok: "Unidad transferida. Se revocaron las autorizaciones del dueño anterior." };
+		} catch (err) {
+			return fallo(err);
+		}
+	},
+
+	fusionar: async ({ locals, params, request }) => {
+		const actor = requireUser(locals);
+		const form = await request.formData();
+		try {
+			const camposElegidos = Object.fromEntries(
+				CAMPOS_FUSIONABLES_UNIDAD.filter((campo) => form.get(`campo_${campo}`) === "duplicado").map((campo) => [
+					campo,
+					"duplicado",
+				]),
+			) as Partial<Record<CampoFusionableUnidad, "duplicado">>;
+			const duplicado = await mergeUnidades({
+				actor,
+				keeperId: params.id!,
+				duplicadoId: String(form.get("duplicadoId") ?? ""),
+				motivo: form.get("motivo"),
+				camposElegidos,
+			});
+			return { ok: `${duplicado.marca} ${duplicado.modelo} fusionada y archivada.` };
+		} catch (err) {
+			return fallo(err);
+		}
+	},
+
+	agregarRecordatorio: async ({ locals, params, request }) => {
+		const actor = requireUser(locals);
+		const form = await request.formData();
+		try {
+			await crearRecordatorio({
+				actor,
+				unidadId: params.id!,
+				body: { motivo: form.get("motivo"), fecha: form.get("fecha") },
+			});
+			return { ok: "Recordatorio agregado." };
 		} catch (err) {
 			return fallo(err);
 		}

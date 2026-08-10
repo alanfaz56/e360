@@ -4,11 +4,14 @@
 	import Archive from "@lucide/svelte/icons/archive";
 	import ArchiveRestore from "@lucide/svelte/icons/archive-restore";
 	import ArrowLeftRight from "@lucide/svelte/icons/arrow-left-right";
+	import Combine from "@lucide/svelte/icons/combine";
+	import Bell from "@lucide/svelte/icons/bell";
 	import Badge from "$lib/components/Badge.svelte";
 	import Button from "$lib/components/Button.svelte";
 	import DataTable from "$lib/components/DataTable.svelte";
 	import Drawer from "$lib/components/Drawer.svelte";
 	import Field from "$lib/components/Field.svelte";
+	import EntitySearch, { type Opcion } from "$lib/components/EntitySearch.svelte";
 	import PageHeader from "$lib/components/PageHeader.svelte";
 	import Flash from "$lib/components/Flash.svelte";
 	import { notaEstadoTone, origenKilometrajeLabel } from "$lib/notas";
@@ -19,10 +22,56 @@
 	let { data, form } = $props();
 
 	const drawer = $derived(page.url.searchParams.get("drawer"));
-	const closeDrawer = $derived(searchHref(page.url, { drawer: null }));
+	const closeDrawer = $derived(searchHref(page.url, { drawer: null, duplicado: null }));
 
 	const INPUT =
 		"mt-1 w-full rounded-md border border-sand-300 bg-white px-3 py-2 text-sm focus:border-brand-600 focus:outline-none";
+
+	const CAMPO_LABELS: Record<string, string> = {
+		marca: "Marca",
+		modelo: "Modelo",
+		anio: "Año",
+		color: "Color",
+		placas: "Placas",
+		vin: "VIN / NIV",
+		numeroEconomico: "Número económico",
+		notas: "Notas",
+	};
+	const camposConflicto = $derived(
+		data.duplicado
+			? data.camposFusionables.filter((campo) => {
+					const delDuplicado = (data.duplicado! as Record<string, unknown>)[campo];
+					const delKeeper = (data.unidad as Record<string, unknown>)[campo];
+					return delDuplicado !== null && delDuplicado !== undefined && delDuplicado !== "" && delDuplicado !== delKeeper;
+				})
+			: [],
+	);
+
+	// Búsqueda del duplicado a fusionar — excluye esta misma unidad de los resultados.
+	const buscarUnidades = async (q: string, signal: AbortSignal): Promise<Opcion[]> => {
+		const res = await fetch(`/api/unidades?q=${encodeURIComponent(q)}&perPage=8`, { signal });
+		if (!res.ok) throw new Error("No pudimos buscar unidades.");
+		const body = await res.json();
+		return (body.unidades ?? [])
+			.filter((u: { id: string }) => u.id !== data.unidad.id)
+			.map(
+				(u: {
+					id: string;
+					marca: string;
+					modelo: string;
+					anio: number | null;
+					clienteNombre: string | null;
+					placas: string | null;
+					vin: string | null;
+					numeroEconomico: string | null;
+				}) => ({
+					id: u.id,
+					label: `${u.marca} ${u.modelo}${u.anio ? ` ${u.anio}` : ""}`,
+					hint: u.clienteNombre,
+					detalles: [u.numeroEconomico ? `Econ. ${u.numeroEconomico}` : null, u.placas, u.vin ? `VIN ${u.vin}` : null],
+				}),
+			);
+	};
 </script>
 
 <svelte:head><title>{data.unidad.etiqueta} — Estación 360</title></svelte:head>
@@ -67,6 +116,32 @@
 					aria-hidden="true"
 				/>
 				Transferir
+			</Button>
+		{/if}
+		{#if data.puede.fusionar}
+			<Button
+				href={searchHref(page.url, { drawer: "fusionar" })}
+				variant="ghost"
+				size="sm"
+			>
+				<Combine
+					size={16}
+					aria-hidden="true"
+				/>
+				Fusionar con otra unidad
+			</Button>
+		{/if}
+		{#if data.puede.recordar}
+			<Button
+				href={searchHref(page.url, { drawer: "recordatorio" })}
+				variant="ghost"
+				size="sm"
+			>
+				<Bell
+					size={16}
+					aria-hidden="true"
+				/>
+				Agregar recordatorio
 			</Button>
 		{/if}
 		{#if data.puede.archivar}
@@ -475,6 +550,142 @@
 				hint="Obligatorio. Queda en la auditoría. Ej. «Vendida a…», «Captura errónea»."
 			/>
 			<Button full>Transferir unidad</Button>
+		</form>
+	</Drawer>
+{/if}
+
+{#if drawer === "fusionar" && data.puede.fusionar}
+	<Drawer
+		title="Fusionar con otra unidad"
+		description={data.unidad.etiqueta}
+		closeHref={closeDrawer}
+	>
+		{#if !data.duplicado}
+			<!-- Paso 1: elegir el duplicado. Form GET: sin JS navega igual a ?duplicado=<id>. -->
+			<form
+				method="GET"
+				class="space-y-4"
+			>
+				<input
+					type="hidden"
+					name="drawer"
+					value="fusionar"
+				/>
+				<EntitySearch
+					label="Unidad duplicada"
+					name="duplicado"
+					hint="Todo lo que tiene pasará a {data.unidad.etiqueta}. Se archiva, no se borra."
+					opciones={data.posiblesDuplicados.map((u) => ({
+						id: u.id,
+						label: `${u.marca} ${u.modelo}${u.anio ? ` ${u.anio}` : ""}`,
+						hint: u.clienteNombre,
+						detalles: [u.numeroEconomico ? `Econ. ${u.numeroEconomico}` : null, u.placas, u.vin ? `VIN ${u.vin}` : null],
+					}))}
+					buscar={buscarUnidades}
+					required
+				/>
+				{#if data.posiblesDuplicados.length > 0}
+					<p class="text-xs text-sand-500">
+						Posibles duplicados por VIN, placas o número económico: {data.posiblesDuplicados
+							.map((u) => `${u.marca} ${u.modelo}`)
+							.join(", ")}.
+					</p>
+				{/if}
+				<Button full>Continuar</Button>
+			</form>
+		{:else}
+			<!-- Paso 2: confirmar y elegir qué campos vienen del duplicado. -->
+			<form
+				method="POST"
+				action="?/fusionar"
+				class="space-y-4"
+			>
+				<input
+					type="hidden"
+					name="duplicadoId"
+					value={data.duplicado.id}
+				/>
+				<p class="rounded border border-danger/30 bg-danger/5 p-3 text-sm text-sand-800">
+					<strong>{data.duplicado.marca} {data.duplicado.modelo}</strong> se archivará. Sus notas, citas
+					y kilometraje pasan a <strong>{data.unidad.etiqueta}</strong>.
+				</p>
+
+				{#if camposConflicto.length > 0}
+					<fieldset class="rounded border border-sand-200 p-3">
+						<legend class="px-1 text-sm font-medium text-sand-700">Qué dato usar</legend>
+						{#each camposConflicto as campo (campo)}
+							{@const delKeeper = (data.unidad as Record<string, unknown>)[campo] as string | number | null}
+							{@const delDuplicado = (data.duplicado as Record<string, unknown>)[campo] as string | number | null}
+							<div class="mt-2">
+								<p class="text-xs font-medium text-sand-600">{CAMPO_LABELS[campo]}</p>
+								<label class="mt-1 flex items-start gap-2 text-sm text-sand-800">
+									<input
+										type="radio"
+										name="campo_{campo}"
+										value="keeper"
+										checked
+										class="mt-0.5"
+									/>
+									{delKeeper ?? "(vacío)"}
+								</label>
+								<label class="mt-1 flex items-start gap-2 text-sm text-sand-800">
+									<input
+										type="radio"
+										name="campo_{campo}"
+										value="duplicado"
+										class="mt-0.5"
+									/>
+									{delDuplicado} <span class="text-xs text-sand-500">(del duplicado)</span>
+								</label>
+							</div>
+						{/each}
+					</fieldset>
+				{/if}
+
+				<Field
+					label="Motivo"
+					name="motivo"
+					required
+					hint="Por qué son el mismo vehículo."
+				/>
+
+				<Button full>Fusionar y archivar {data.duplicado.marca} {data.duplicado.modelo}</Button>
+				<Button
+					href={searchHref(page.url, { duplicado: null })}
+					variant="ghost"
+					full
+				>
+					Elegir otra
+				</Button>
+			</form>
+		{/if}
+	</Drawer>
+{/if}
+
+{#if drawer === "recordatorio" && data.puede.recordar}
+	<Drawer
+		title="Agregar recordatorio"
+		description={data.unidad.etiqueta}
+		closeHref={closeDrawer}
+	>
+		<form
+			method="POST"
+			action="?/agregarRecordatorio"
+			class="space-y-4"
+		>
+			<Field
+				label="Motivo"
+				name="motivo"
+				required
+				hint="Ej. «Recordar próximo cambio de aceite»."
+			/>
+			<Field
+				label="Fecha"
+				name="fecha"
+				type="date"
+				required
+			/>
+			<Button full>Agregar</Button>
 		</form>
 	</Drawer>
 {/if}

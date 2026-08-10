@@ -57,6 +57,9 @@ model user {
   movimientosRegistrados inventario_movimiento[] @relation("movimientoRegistradoPor")
   refaccionesSolicitadas solicitud_refaccion[]  @relation("refaccionSolicitadaPor")
   refaccionesResueltas   solicitud_refaccion[]  @relation("refaccionResueltaPor")
+  notasLiberadas         nota_servicio[]        @relation("notaLiberadaPor")
+  recordatoriosHechos    recordatorio[]         @relation("recordatorioHechoPor")
+  recordatoriosCreados   recordatorio[]         @relation("recordatorioCreadoPor")
 
   /// Declared because it is USED: `alcanceDeTaller` and `mecanicosDeTaller` both query
   /// `user WHERE tallerId = …`, which is the boundary that decides which notes a partner shop's
@@ -222,6 +225,7 @@ model cliente {
   /// Not `notas` — that name is already the free-text field above.
   notasServicio nota_servicio[]
   facturas      factura[]
+  recordatorios recordatorio[]
 
   notificaciones    notificacion[]     @relation("notificacionCliente")
   suscripcionesPush push_suscripcion[] @relation("pushSuscripcionCliente")
@@ -336,6 +340,7 @@ model unidad {
   citas        cita[]
   notasServicio nota_servicio[]
   lecturasKm    unidad_kilometraje[]
+  recordatorios recordatorio[]
 
   @@index([clienteId])
   @@index([placas])
@@ -587,6 +592,17 @@ model nota_servicio {
   entregadaAContactoId String?
   entregadaAContacto   cliente_contacto? @relation("notaEntregadaA", fields: [entregadaAContactoId], references: [id], onDelete: SetNull)
 
+  /// "Liberación 360" — the 15-point checklist that must say `true` before `entregarNota` will
+  /// move the note to `entregada`. `null` means nobody has filled it yet, which is why the gate
+  /// checks `!== true` rather than a plain falsy check. See `nota_liberacion` for the per-item
+  /// answers; these columns hold the checklist's OWN verdict, the way `inspeccionAt` holds the
+  /// intake inspection's.
+  unidadLiberada          Boolean?
+  liberacionAt            DateTime?
+  liberadaPorId           String?
+  liberadaPor             user?     @relation("notaLiberadaPor", fields: [liberadaPorId], references: [id], onDelete: SetNull)
+  observacionesLiberacion String?
+
   canceladoMotivo String? @db.VarChar(255)
 
   /// Opaque follow-along token, 256 bits, base64url. Handed to the customer by WhatsApp as
@@ -601,12 +617,14 @@ model nota_servicio {
   updatedAt DateTime @updatedAt
 
   inventario     nota_inventario[]
+  liberaciones   nota_liberacion[]
   evidencias     nota_evidencia[]
   comentarios    nota_comentario[]
   transferencias nota_transferencia[]
   cotizaciones   cotizacion[]
   facturas       factura[]
   lecturas       unidad_kilometraje[]
+  recordatorios  recordatorio[]
 
   /// The mechanic working on it. This is the ONLY thing the `taller` role can see: their own
   /// assigned notes. Without it that role has no screen at all.
@@ -641,6 +659,24 @@ model nota_inventario {
 
   @@id([notaId, item])
   @@map("nota_inventario")
+}
+
+/// "Liberación 360" — the 15-point pre-delivery checklist. Same shape as `nota_inventario`
+/// (fixed catalogue, delete-then-recreate per save) but a three-state answer instead of a
+/// boolean, since "no aplica" is a real, different answer from "no". The checklist's own verdict
+/// (`unidadLiberada`) lives on `nota_servicio`, not here — this table is the 15 individual
+/// answers behind that verdict.
+model nota_liberacion {
+  notaId String
+  nota   nota_servicio @relation(fields: [notaId], references: [id], onDelete: Cascade)
+  /// Key from LIBERACION_ITEMS in src/lib/notas.ts.
+  item      String  @db.VarChar(40)
+  /// si | no | na
+  respuesta String  @db.VarChar(4)
+  notas     String? @db.VarChar(255)
+
+  @@id([notaId, item])
+  @@map("nota_liberacion")
 }
 
 /// Photos and documents backing the note, stored in Cloudflare R2.
@@ -776,6 +812,40 @@ model unidad_kilometraje {
   /// as well as in SQL so Prisma stops proposing to drop it — see the note on cita.entregadorId.
   @@index([unidadId, medidoAt(sort: Desc), kilometraje], map: "unidad_kilometraje_reporte_idx")
   @@map("unidad_kilometraje")
+}
+
+/// A manual follow-up: "call this customer on this date about this vehicle." Staff-created only
+/// — there is no data on service intervals to compute one automatically, and no cron/scheduler in
+/// this app to fire it at the right moment anyway. `vencido` is never stored: it is `!hecho &&
+/// fecha < hoy()`, computed at read time exactly like `motivoVencida` on `cita` — nothing to
+/// sweep, nothing to go stale.
+model recordatorio {
+  id        String   @id
+  unidadId  String
+  unidad    unidad   @relation(fields: [unidadId], references: [id], onDelete: Cascade)
+  /// Copied from the unit's current owner at creation — a snapshot, same reasoning as
+  /// nota_servicio.clienteId not following a later transfer.
+  clienteId String
+  cliente   cliente  @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  notaId    String?
+  nota      nota_servicio? @relation(fields: [notaId], references: [id], onDelete: SetNull)
+
+  motivo String   @db.VarChar(500)
+  fecha  DateTime @db.Date
+
+  hecho      Boolean   @default(false)
+  hechoAt    DateTime?
+  hechoPorId String?
+  hechoPor   user?     @relation("recordatorioHechoPor", fields: [hechoPorId], references: [id], onDelete: SetNull)
+
+  creadoPorId String?
+  creadoPor   user?    @relation("recordatorioCreadoPor", fields: [creadoPorId], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+
+  @@index([fecha])
+  @@index([unidadId])
+  @@index([hecho])
+  @@map("recordatorio")
 }
 
 /// A quote for the work. Editable only while `borrador`: once the customer has seen it, changing

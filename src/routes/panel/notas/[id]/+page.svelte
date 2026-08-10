@@ -32,6 +32,10 @@
 		FOTO_CATEGORIAS,
 		INVENTARIO_ITEMS,
 		INVENTARIO_ITEM_KEYS,
+		LIBERACION_ITEMS,
+		LIBERACION_ITEM_KEYS,
+		RESPUESTA_LIBERACION,
+		RESPUESTA_LIBERACION_LABEL,
 		QA_DESTINOS,
 		QA_DESTINO_KEYS,
 		QA_RESULTADOS,
@@ -1123,6 +1127,26 @@
 	</section>
 </div>
 
+{#if n.unidadLiberada !== null}
+	<div
+		class="mt-5 rounded-lg border p-3 text-sm {n.unidadLiberada
+			? 'border-ok/40 bg-ok/5'
+			: 'border-danger/40 bg-danger/5'}"
+	>
+		<p class="font-medium text-sand-950">
+			Checklist de liberación: {n.unidadLiberada ? "Unidad liberada" : "NO liberada"}
+		</p>
+		<p class="text-xs text-sand-600">
+			{n.liberadaPorNombre ?? "—"} · {n.liberacionAt ? fechaLarga(n.liberacionAt.slice(0, 10)) : ""}
+		</p>
+		{#if data.liberaciones.some((l) => l.respuesta === "no")}
+			<p class="mt-1 text-xs text-danger">
+				{data.liberaciones.filter((l) => l.respuesta === "no").length} punto(s) marcados "No".
+			</p>
+		{/if}
+	</div>
+{/if}
+
 <!-- Acciones -->
 <div class="mt-5 flex flex-wrap items-center gap-2">
 	{#if data.puede.avanzar}
@@ -1143,16 +1167,16 @@
 			</form>
 		{/each}
 	{/if}
-	{#if data.puede.entregar && n.estado === "lista"}
+	{#if (data.puede.entregar || data.puede.liberar) && n.estado === "lista"}
 		<Button
-			href={searchHref(page.url, { drawer: "entregar" })}
+			href={searchHref(page.url, { drawer: n.unidadLiberada ? "entregar" : "liberacion" })}
 			size="sm"
 		>
 			<PackageCheck
 				size={16}
 				aria-hidden="true"
 			/>
-			Entregar unidad
+			{n.unidadLiberada ? "Entregar unidad" : "Checklist de liberación"}
 		</Button>
 	{/if}
 	{#if data.puede.cancelar && n.estado !== "cancelada" && n.estado !== "entregada"}
@@ -1451,6 +1475,91 @@
 			</p>
 
 			<Button full>Registrar recepción</Button>
+		</form>
+	</Drawer>
+{/if}
+
+{#if drawer === "liberacion" && data.puede.liberar}
+	<Drawer
+		title="Checklist de liberación"
+		description="Recórrelo antes de entregar. Solo con «liberada: sí» se puede entregar la unidad."
+		closeHref={closeDrawer}
+	>
+		<form
+			method="POST"
+			action="?/liberacion"
+			class="space-y-4"
+		>
+			{#each LIBERACION_ITEM_KEYS as item (item)}
+				{@const previa = data.liberaciones.find((l) => l.item === item)}
+				<fieldset class="rounded border border-sand-200 p-3">
+					<legend class="px-1 text-xs font-medium text-sand-700">{LIBERACION_ITEMS[item].label}</legend>
+					<div class="flex flex-wrap gap-3">
+						{#each RESPUESTA_LIBERACION as r (r)}
+							<label class="flex items-center gap-1.5 text-sm text-sand-800">
+								<input
+									type="radio"
+									name="respuesta_{item}"
+									value={r}
+									checked={(previa?.respuesta ?? "si") === r}
+									class="size-4 accent-brand-600"
+								/>
+								{RESPUESTA_LIBERACION_LABEL[r]}
+							</label>
+						{/each}
+					</div>
+					<input
+						type="text"
+						name="notas_{item}"
+						value={previa?.notas ?? ""}
+						placeholder="Observación de este punto (opcional)"
+						class="mt-2 w-full rounded-md border border-sand-300 bg-white px-2 py-1 text-xs focus:border-brand-600 focus:outline-none"
+					/>
+				</fieldset>
+			{/each}
+
+			<Field
+				label="Observaciones generales"
+				name="observacionesLiberacion"
+				value={n.observacionesLiberacion ?? ""}
+			>
+				{#snippet children(id)}
+					<textarea
+						{id}
+						name="observacionesLiberacion"
+						rows="2"
+						class={INPUT}>{n.observacionesLiberacion ?? ""}</textarea
+					>
+				{/snippet}
+			</Field>
+
+			<fieldset class="rounded border border-sand-200 p-3">
+				<legend class="px-1 text-sm font-medium text-sand-700">¿Unidad liberada?</legend>
+				<div class="flex gap-4">
+					<label class="flex items-center gap-1.5 text-sm text-sand-800">
+						<input
+							type="radio"
+							name="unidadLiberada"
+							value="1"
+							checked={n.unidadLiberada === true}
+							class="size-4 accent-brand-600"
+						/>
+						Sí
+					</label>
+					<label class="flex items-center gap-1.5 text-sm text-sand-800">
+						<input
+							type="radio"
+							name="unidadLiberada"
+							value="0"
+							checked={n.unidadLiberada !== true}
+							class="size-4 accent-brand-600"
+						/>
+						No
+					</label>
+				</div>
+			</fieldset>
+
+			<Button full>Guardar checklist</Button>
 		</form>
 	</Drawer>
 {/if}

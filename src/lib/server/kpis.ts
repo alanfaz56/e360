@@ -238,5 +238,36 @@ export async function kpisPara(actor: Actor): Promise<BloqueKpi[]> {
 		});
 	}
 
+	// --- Recordatorios --------------------------------------------------------------------------
+	if (can(actor.role, "recordatorio:manage")) {
+		const [vencidos, estaSemana] = await Promise.all([
+			prisma.recordatorio.count({ where: { hecho: false, fecha: { lt: dia } } }),
+			prisma.recordatorio.count({ where: { hecho: false, fecha: { gte: dia, lte: finSemana } } }),
+		]);
+
+		bloques.push({
+			titulo: "Recordatorios",
+			kpis: [
+				{
+					clave: "recordatorios_vencidos",
+					label: "Recordatorios vencidos",
+					valor: vencidos,
+					hint: vencidos > 0 ? "Ya pasó la fecha de seguimiento" : "Al corriente",
+					href: "/panel/recordatorios?vencidos=1",
+					icon: "list",
+					tone: vencidos > 0 ? "danger" : "ok",
+				},
+				{
+					clave: "recordatorios_semana",
+					label: "Pendientes esta semana",
+					valor: estaSemana,
+					href: "/panel/recordatorios",
+					icon: "list",
+					tone: estaSemana > 0 ? "brand" : "neutral",
+				},
+			],
+		});
+	}
+
 	return bloques;
 }

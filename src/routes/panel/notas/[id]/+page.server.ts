@@ -16,6 +16,7 @@ import {
 	entregarNota,
 	faltantesInventario,
 	getNotaDetalle,
+	guardarLiberacion,
 	inspeccionarNota,
 	recibirDeTaller,
 	transferirNota,
@@ -115,6 +116,7 @@ export const load: ServerLoad = async ({ locals, params }) => {
 			transferir: can(actor.role, "nota:transfer"),
 			comentar: can(actor.role, "nota:comment"),
 			entregar: can(actor.role, "nota:close"),
+			liberar: can(actor.role, "nota:liberacion"),
 			cancelar: can(actor.role, "nota:cancel"),
 			cotizar: can(actor.role, "cotizacion:create"),
 			// Telling the customer something is its own key: an Operador may build and record the
@@ -372,6 +374,19 @@ export const actions: Actions = {
 		try {
 			await inspeccionarNota({ actor, id: params.id!, body });
 			redirect(303, conFlash(`/panel/notas/${params.id}`, "nota.inspeccionar"));
+		} catch (err) {
+			return fallo(err);
+		}
+	},
+
+	liberacion: async ({ locals, params, request }) => {
+		const actor = requireUser(locals);
+		const data = await request.formData();
+		const body = Object.fromEntries(data) as Record<string, unknown>;
+		body.unidadLiberada = data.get("unidadLiberada") === "1";
+		try {
+			await guardarLiberacion({ actor, id: params.id!, body });
+			redirect(303, conFlash(`/panel/notas/${params.id}`, "nota.liberacion"));
 		} catch (err) {
 			return fallo(err);
 		}
