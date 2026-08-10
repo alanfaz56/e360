@@ -2,6 +2,7 @@ import { error, redirect, type ServerLoad } from "@sveltejs/kit";
 import { NAV } from "$lib/nav";
 import { can } from "$lib/roles";
 import { kpisPara } from "$lib/server/kpis";
+import { ultimosMovimientos } from "$lib/server/movimientos";
 import { requireUser } from "$lib/server/guard";
 
 /**
@@ -32,5 +33,12 @@ export const load: ServerLoad = async ({ locals }) => {
 		redirect(303, first.href);
 	}
 
-	return { bloques, nombre: actor.name, puedeAgenda: can(actor.role, "cita:read") };
+	const movimientos = can(actor.role, "movimientos:read") ? await ultimosMovimientos() : [];
+
+	return {
+		bloques,
+		nombre: actor.name,
+		puedeAgenda: can(actor.role, "cita:read"),
+		movimientos,
+	};
 };

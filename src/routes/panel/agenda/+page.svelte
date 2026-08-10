@@ -185,9 +185,14 @@
 				the start — same rule confirming a public request follows. Searching the registry is
 				the default; creating either side is one radio away.
 			-->
+			<!-- "Convertir en cita" from un recordatorio llega con la unidad (y su dueño) ya elegidos. -->
 			<ClienteUnidadPicker
 				clientes={data.clientes}
 				unidades={data.unidades}
+				clienteId={data.prefillCita.clienteId}
+				clienteNombre={data.prefillCita.clienteNombre}
+				unidadId={data.prefillCita.unidadId}
+				unidadEtiqueta={data.prefillCita.unidadEtiqueta}
 				prefill={{
 					nombre: v("nombre"),
 					telefono: v("telefono"),
@@ -199,6 +204,14 @@
 				fichaClienteHref="/panel/clientes"
 			/>
 
+			{#if data.prefillCita.recordatorioId}
+				<input
+					type="hidden"
+					name="recordatorioId"
+					value={data.prefillCita.recordatorioId}
+				/>
+			{/if}
+
 			<Field
 				label="¿Qué necesita?"
 				name="motivo"
@@ -209,7 +222,7 @@
 						name="motivo"
 						required
 						rows="2"
-						class={INPUT}>{v("motivo")}</textarea
+						class={INPUT}>{v("motivo") || data.prefillCita.motivo}</textarea
 					>
 				{/snippet}
 			</Field>
@@ -220,7 +233,7 @@
 					name="inicio"
 					type="datetime-local"
 					required
-					value={v("inicio")}
+					value={v("inicio") || (data.prefillCita.recordatorioId ? `${data.fecha}T09:00` : "")}
 				/>
 				<Field
 					label="Fin"

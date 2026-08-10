@@ -16,6 +16,7 @@
 	import Flash from "$lib/components/Flash.svelte";
 	import { notaEstadoTone, origenKilometrajeLabel } from "$lib/notas";
 	import { contactoRoleLabel } from "$lib/contacto-roles";
+	import { RECORDATORIO_TIPOS, RECORDATORIO_TIPO_KEYS } from "$lib/recordatorios";
 	import { searchHref } from "$lib/url";
 	import { page } from "$app/state";
 
@@ -685,6 +686,22 @@
 				type="date"
 				required
 			/>
+			<Field
+				label="Tipo"
+				name="tipo"
+			>
+				{#snippet children(id)}
+					<select
+						{id}
+						name="tipo"
+						class={INPUT}
+					>
+						{#each RECORDATORIO_TIPO_KEYS as t (t)}
+							<option value={t}>{RECORDATORIO_TIPOS[t].label}</option>
+						{/each}
+					</select>
+				{/snippet}
+			</Field>
 			<Button full>Agregar</Button>
 		</form>
 	</Drawer>

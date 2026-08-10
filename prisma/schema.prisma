@@ -432,6 +432,12 @@ model cita {
   asignado   user?   @relation("citaAsignada", fields: [asignadoId], references: [id], onDelete: SetNull)
 
   canceladoMotivo String? @db.VarChar(255)
+  /// Why this appointment was closed WITHOUT a nota_servicio ever opening — a car that never
+  /// showed up still has to explain itself. Only set on that path; a cita completed through
+  /// crearNota/entregarNota never asks for it.
+  completadoSinNotaMotivo String? @db.VarChar(255)
+
+  recordatorios recordatorio[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -827,11 +833,18 @@ model recordatorio {
   /// nota_servicio.clienteId not following a later transfer.
   clienteId String
   cliente   cliente  @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  /// Where this reminder came from, for later reference — never more than one of these at once,
+  /// since a nota only ever exists off a cita and a reminder converted to a cita only carries
+  /// the cita until it links a nota of its own.
   notaId    String?
   nota      nota_servicio? @relation(fields: [notaId], references: [id], onDelete: SetNull)
+  citaId    String?
+  cita      cita?          @relation(fields: [citaId], references: [id], onDelete: SetNull)
 
   motivo String   @db.VarChar(500)
   fecha  DateTime @db.Date
+  /// proximo_servicio | seguimiento | cobro | otro — src/lib/recordatorios.ts
+  tipo   String   @default("otro") @db.VarChar(20)
 
   hecho      Boolean   @default(false)
   hechoAt    DateTime?
@@ -845,6 +858,7 @@ model recordatorio {
   @@index([fecha])
   @@index([unidadId])
   @@index([hecho])
+  @@index([citaId])
   @@map("recordatorio")
 }
 

@@ -70,6 +70,7 @@
 			modelo?: string;
 			anio?: number | null;
 			placas?: string;
+			numeroEconomico?: string;
 		};
 		fichaClienteHref?: string;
 	} = $props();
@@ -91,19 +92,32 @@
 	const mostrarCrearUnidad = $derived(!hydrated || creandoUnidad);
 
 	let clienteElegido = $state<string | null>(null);
+	let clienteElegidoNombre = $state<string | null>(null);
 	const clienteActual = $derived(clienteElegido ?? clienteId);
+	// So picking a unit fills the visible "Buscar cliente" box too, not just the id posted on
+	// submit — otherwise the customer looked unchosen even though the server would have derived
+	// it correctly from the unit anyway.
+	const clienteActualNombre = $derived(
+		clientes.find((c) => c.id === clienteActual)?.nombreCompleto ??
+			(clienteElegido ? (clienteElegidoNombre ?? "") : clienteNombre),
+	);
 
-	// Remounting the unit search clears a selection that belonged to the previous customer.
+	// Remounting the unit search clears a selection that belonged to the previous customer — but
+	// only when the CUSTOMER box is what changed. When picking a unit is what determined the
+	// customer (`alElegirUnidad`), the unit just chosen already belongs to it; remounting there
+	// would wipe the very selection that triggered the change.
 	let unidadKey = $state(0);
-	function cambiarCliente(id: string) {
+	function cambiarCliente(id: string, nombre?: string | null, opts: { remontarUnidad?: boolean } = {}) {
 		if (id === clienteActual) return;
 		clienteElegido = id;
-		unidadKey += 1;
+		clienteElegidoNombre = nombre ?? nombresPorCliente.get(id) ?? null;
+		if (opts.remontarUnidad ?? true) unidadKey += 1;
 	}
 
 	// Which customer each searched vehicle belongs to, so picking one across the whole registry
 	// also fills the customer instead of posting a mismatched pair the server rejects.
 	const duenos = new Map<string, string>();
+	const nombresPorCliente = new Map<string, string>();
 
 	const INPUT =
 		"mt-1 w-full rounded-md border border-sand-300 bg-white px-3 py-2 text-sm focus:border-brand-600 focus:outline-none";
@@ -156,6 +170,7 @@
 				numeroEconomico: string | null;
 			}) => {
 				duenos.set(u.id, u.clienteId);
+				if (u.clienteNombre) nombresPorCliente.set(u.clienteId, u.clienteNombre);
 				return {
 					id: u.id,
 					label: `${u.marca} ${u.modelo}${u.anio ? ` ${u.anio}` : ""}`,
@@ -172,8 +187,12 @@
 
 	function alElegirUnidad(id: string) {
 		const dueno = duenos.get(id);
-		if (dueno) cambiarCliente(dueno);
+		if (dueno) cambiarCliente(dueno, undefined, { remontarUnidad: false });
 	}
+
+	// Empty-query fetches the customer's fleet, so `minimo={0}` for the unit box works. With no
+	// customer chosen yet, an empty query would return the whole registry — noise, not help.
+	const minimoUnidad = $derived(clienteActual ? 0 : 2);
 </script>
 
 <fieldset class="rounded border border-sand-200 p-3">
@@ -206,11 +225,11 @@
 				label="Buscar cliente"
 				name="clienteId"
 				placeholder="Nombre, teléfono, RFC…"
-				value={clienteId}
-				valueLabel={clienteNombre}
+				value={clienteActual}
+				valueLabel={clienteActualNombre}
 				opciones={clientes.map((c) => ({ id: c.id, label: c.nombreCompleto, hint: c.tipoLabel }))}
 				buscar={buscarClientes}
-				onselect={cambiarCliente}
+				onselect={(id, op) => cambiarCliente(id, op?.label)}
 			/>
 			{#if fichaClienteHref}
 				<p class="mt-1 text-xs text-sand-500">
@@ -375,6 +394,7 @@
 					label="Buscar unidad"
 					name="unidadId"
 					placeholder="Número económico, placas, VIN, marca…"
+					minimo={minimoUnidad}
 					value={unidadId}
 					valueLabel={unidadEtiqueta}
 					opciones={unidades
@@ -441,6 +461,11 @@
 					name="anio"
 					type="number"
 					value={prefill.anio ? String(prefill.anio) : ""}
+				/>
+				<Field
+					label="Número económico"
+					name="numeroEconomico"
+					value={prefill.numeroEconomico ?? ""}
 				/>
 			</div>
 			<Field

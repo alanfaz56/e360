@@ -3,6 +3,7 @@
 	import Plus from "@lucide/svelte/icons/plus";
 	import Check from "@lucide/svelte/icons/check";
 	import Undo2 from "@lucide/svelte/icons/undo-2";
+	import CalendarPlus from "@lucide/svelte/icons/calendar-plus";
 	import Badge from "$lib/components/Badge.svelte";
 	import Button from "$lib/components/Button.svelte";
 	import DataTable from "$lib/components/DataTable.svelte";
@@ -13,8 +14,12 @@
 	import Flash from "$lib/components/Flash.svelte";
 	import PageHeader from "$lib/components/PageHeader.svelte";
 	import { fechaLarga } from "$lib/agenda";
+	import { RECORDATORIO_TIPOS, RECORDATORIO_TIPO_KEYS } from "$lib/recordatorios";
 	import { searchHref } from "$lib/url";
 	import { page } from "$app/state";
+
+	const INPUT =
+		"mt-1 w-full rounded-md border border-sand-300 bg-white px-3 py-2 text-sm focus:border-brand-600 focus:outline-none";
 
 	let { data, form } = $props();
 
@@ -97,7 +102,7 @@
 	</EmptyState>
 {:else}
 	<DataTable
-		columns={["Fecha", "Unidad", "Cliente", "Motivo", "Creado por", ""]}
+		columns={["Fecha", "Unidad", "Cliente", "Tipo", "Motivo", "Creado por", ""]}
 		items={data.recordatorios}
 	>
 		{#snippet row(r)}
@@ -112,42 +117,60 @@
 				>
 			</td>
 			<td class="px-4 py-2.5 text-sand-600">{r.clienteNombre}</td>
+			<td class="px-4 py-2.5"><Badge tone="neutral">{r.tipoLabel}</Badge></td>
 			<td class="px-4 py-2.5 text-sand-600">{r.motivo}</td>
 			<td class="px-4 py-2.5 text-sand-600">{r.creadoPorNombre ?? "—"}</td>
 			<td class="px-4 py-2.5 text-right">
-				<form
-					method="POST"
-					action="?/marcar"
-				>
-					<input
-						type="hidden"
-						name="id"
-						value={r.id}
-					/>
-					<input
-						type="hidden"
-						name="hecho"
-						value={r.hecho ? "0" : "1"}
-					/>
-					<Button
-						variant="ghost"
-						size="sm"
+				<div class="flex justify-end gap-1">
+					{#if !r.hecho}
+						<Button
+							href="/panel/agenda?vista=dia&fecha={r.fecha}&drawer=nueva&unidadId={r.unidadId}&motivo={encodeURIComponent(
+								r.motivo,
+							)}&recordatorioId={r.id}"
+							variant="ghost"
+							size="sm"
+						>
+							<CalendarPlus
+								size={14}
+								aria-hidden="true"
+							/>
+							Convertir en cita
+						</Button>
+					{/if}
+					<form
+						method="POST"
+						action="?/marcar"
 					>
-						{#if r.hecho}
-							<Undo2
-								size={14}
-								aria-hidden="true"
-							/>
-							Reabrir
-						{:else}
-							<Check
-								size={14}
-								aria-hidden="true"
-							/>
-							Marcar hecho
-						{/if}
-					</Button>
-				</form>
+						<input
+							type="hidden"
+							name="id"
+							value={r.id}
+						/>
+						<input
+							type="hidden"
+							name="hecho"
+							value={r.hecho ? "0" : "1"}
+						/>
+						<Button
+							variant="ghost"
+							size="sm"
+						>
+							{#if r.hecho}
+								<Undo2
+									size={14}
+									aria-hidden="true"
+								/>
+								Reabrir
+							{:else}
+								<Check
+									size={14}
+									aria-hidden="true"
+								/>
+								Marcar hecho
+							{/if}
+						</Button>
+					</form>
+				</div>
 			</td>
 		{/snippet}
 	</DataTable>
@@ -182,6 +205,22 @@
 				type="date"
 				required
 			/>
+			<Field
+				label="Tipo"
+				name="tipo"
+			>
+				{#snippet children(id)}
+					<select
+						{id}
+						name="tipo"
+						class={INPUT}
+					>
+						{#each RECORDATORIO_TIPO_KEYS as t (t)}
+							<option value={t}>{RECORDATORIO_TIPOS[t].label}</option>
+						{/each}
+					</select>
+				{/snippet}
+			</Field>
 			<Button full>Agregar</Button>
 		</form>
 	</Drawer>

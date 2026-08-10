@@ -94,7 +94,12 @@ export const actions: Actions = {
 		const actor = requireUser(locals);
 		const data = await request.formData();
 		try {
-			await avanzarCita({ actor, id: String(data.get("id") ?? ""), estado: data.get("estado") });
+			await avanzarCita({
+				actor,
+				id: String(data.get("id") ?? ""),
+				estado: data.get("estado"),
+				motivo: data.get("motivo"),
+			});
 		} catch (err) {
 			return fallo(err);
 		}

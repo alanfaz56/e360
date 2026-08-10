@@ -9,6 +9,7 @@
 	import TriangleAlert from "@lucide/svelte/icons/triangle-alert";
 	import LinkIcon from "@lucide/svelte/icons/link";
 	import ClipboardList from "@lucide/svelte/icons/clipboard-list";
+	import Bell from "@lucide/svelte/icons/bell";
 	import Badge from "$lib/components/Badge.svelte";
 	import Button from "$lib/components/Button.svelte";
 	import Drawer from "$lib/components/Drawer.svelte";
@@ -17,6 +18,7 @@
 	import PageHeader from "$lib/components/PageHeader.svelte";
 	import Flash from "$lib/components/Flash.svelte";
 	import { CITA_TIPOS, CITA_TIPO_KEYS, citaEstadoLabel, citaEstadoTone, franjaLabel, horaSugerida } from "$lib/citas";
+	import { RECORDATORIO_TIPOS, RECORDATORIO_TIPO_KEYS } from "$lib/recordatorios";
 	import { fechaLarga, horaCorta, paraDatetimeLocal } from "$lib/agenda";
 	import { searchHref } from "$lib/url";
 	import { page } from "$app/state";
@@ -29,6 +31,23 @@
 
 	let tipoElegido = $state<string | null>(null);
 	const tipo = $derived(tipoElegido ?? c.tipo);
+
+	// Who drops off the vehicle: a native <datalist> autocomplete over the registered contacts,
+	// typing anything else creates it as free text (Rule 7 — works with no JS at all). The hidden
+	// id is a JS enhancement only: an exact match to a suggestion links the record; nothing here
+	// is required, so a no-JS submit still posts a fine `entregoNombre`.
+	let entregoContactoId = $state("");
+	function alEscribirEntrego(e: Event & { currentTarget: HTMLInputElement }) {
+		entregoContactoId = data.contactos.find((ct) => ct.nombre === e.currentTarget.value)?.id ?? "";
+	}
+
+	// "recibida" asks first whether the unit showed up — reset every time the drawer reopens, so a
+	// leftover "No" from a previous visit never carries into the next one.
+	let recibioUnidad = $state<"si" | "no" | null>(null);
+	$effect(() => {
+		drawer;
+		recibioUnidad = null;
+	});
 
 	const INPUT =
 		"mt-1 w-full rounded-md border border-sand-300 bg-white px-3 py-2 text-sm focus:border-brand-600 focus:outline-none";
@@ -378,6 +397,10 @@
 			<h3 class="mt-4 text-sm font-medium text-sand-700">Notas internas</h3>
 			<p class="mt-1 whitespace-pre-wrap text-sm text-sand-600">{c.notas}</p>
 		{/if}
+		{#if c.completadoSinNotaMotivo}
+			<h3 class="mt-4 text-sm font-medium text-sand-700">Completada sin recibir la unidad</h3>
+			<p class="mt-1 whitespace-pre-wrap text-sm text-sand-600">{c.completadoSinNotaMotivo}</p>
+		{/if}
 	</section>
 </div>
 
@@ -385,20 +408,31 @@
 <div class="mt-5 flex flex-wrap items-center gap-2">
 	{#if data.puede.avanzar}
 		{#each data.siguientes as estado (estado)}
-			<form
-				method="POST"
-				action="?/avanzar"
-			>
-				<input
-					type="hidden"
-					name="estado"
-					value={estado}
-				/>
+			{#if estado === "completada"}
+				<!-- A cita that already has a nota_servicio was completed automatically at intake and
+				     never reaches this list — so this button only ever means "the vehicle never came in",
+				     which needs its own reason, same as cancelling. -->
 				<Button
+					href={searchHref(page.url, { drawer: "recibida" })}
 					variant="outline"
-					size="sm">Marcar {citaEstadoLabel(estado).toLowerCase()}</Button
+					size="sm">Marcar completada</Button
 				>
-			</form>
+			{:else}
+				<form
+					method="POST"
+					action="?/avanzar"
+				>
+					<input
+						type="hidden"
+						name="estado"
+						value={estado}
+					/>
+					<Button
+						variant="outline"
+						size="sm">Marcar {citaEstadoLabel(estado).toLowerCase()}</Button
+					>
+				</form>
+			{/if}
 		{/each}
 	{/if}
 	{#if data.puede.asignar}
@@ -427,7 +461,64 @@
 			Cancelar cita
 		</Button>
 	{/if}
+	{#if data.puede.recordar && c.unidadId}
+		<Button
+			href={searchHref(page.url, { drawer: "recordatorio" })}
+			variant="ghost"
+			size="sm"
+		>
+			<Bell
+				size={16}
+				aria-hidden="true"
+			/>
+			Agregar recordatorio
+		</Button>
+	{/if}
 </div>
+
+{#if drawer === "recordatorio" && data.puede.recordar && c.unidadId}
+	<Drawer
+		title="Agregar recordatorio"
+		description={c.unidadEtiqueta ?? ""}
+		closeHref={closeDrawer}
+	>
+		<form
+			method="POST"
+			action="?/agregarRecordatorio"
+			class="space-y-4"
+		>
+			<Field
+				label="Motivo"
+				name="motivo"
+				required
+				hint="Ej. «Recordar próximo cambio de aceite»."
+			/>
+			<Field
+				label="Fecha"
+				name="fecha"
+				type="date"
+				required
+			/>
+			<Field
+				label="Tipo"
+				name="tipo"
+			>
+				{#snippet children(id)}
+					<select
+						{id}
+						name="tipo"
+						class={INPUT}
+					>
+						{#each RECORDATORIO_TIPO_KEYS as t (t)}
+							<option value={t}>{RECORDATORIO_TIPOS[t].label}</option>
+						{/each}
+					</select>
+				{/snippet}
+			</Field>
+			<Button full>Agregar</Button>
+		</form>
+	</Drawer>
+{/if}
 
 {#if drawer === "recibir" && data.puede.recibir}
 	<Drawer
@@ -456,29 +547,29 @@
 			-->
 			<fieldset class="rounded border border-sand-200 p-3">
 				<legend class="px-1 text-sm font-medium text-sand-700">¿Quién entrega la unidad?</legend>
-				{#if data.contactos.length > 0}
-					<label class="block text-xs text-sand-600">
-						Contacto registrado
-						<select
-							name="entregoContactoId"
-							class={INPUT}
-						>
-							<option value="">Otra persona / el cliente mismo</option>
-							{#each data.contactos as ct (ct.id)}
-								<option value={ct.id}>{ct.nombre} · {ct.rolesLabel}</option>
-							{/each}
-						</select>
-					</label>
-				{/if}
-				<label class="mt-2 block text-xs text-sand-600">
-					Si no está registrada, su nombre
+				<label class="block text-xs text-sand-600">
+					Nombre
 					<input
 						type="text"
 						name="entregoNombre"
+						list="entregadores-recibir"
 						class={INPUT}
 						placeholder="Ej. Juan Pérez (chofer)"
+						oninput={alEscribirEntrego}
 					/>
 				</label>
+				{#if data.contactos.length > 0}
+					<datalist id="entregadores-recibir">
+						{#each data.contactos as ct (ct.id)}
+							<option value={ct.nombre}>{ct.rolesLabel}</option>
+						{/each}
+					</datalist>
+				{/if}
+				<input
+					type="hidden"
+					name="entregoContactoId"
+					value={entregoContactoId}
+				/>
 				<div class="mt-2">
 					<Field
 						label="Teléfono"
@@ -487,7 +578,7 @@
 					/>
 				</div>
 				<p class="mt-2 text-xs text-sand-500">
-					Opcional, pero es el registro de quién estuvo aquí. Elegir un contacto gana sobre el nombre escrito.
+					Si ya está registrada, elige la sugerencia — así queda vinculada en el expediente.
 				</p>
 			</fieldset>
 
@@ -776,6 +867,55 @@
 			<p class="text-xs text-sand-500">Un Operador solo puede avanzar el estado de las citas asignadas a él.</p>
 			<Button full>Guardar</Button>
 		</form>
+	</Drawer>
+{/if}
+
+{#if drawer === "recibida" && data.puede.avanzar}
+	<Drawer
+		title="Completar la cita"
+		description="Primero: ¿la unidad ya está en el taller?"
+		closeHref={closeDrawer}
+	>
+		{#if recibioUnidad === null}
+			<div class="flex flex-col gap-2 sm:flex-row">
+				{#if data.puede.recibir}
+					<Button
+						href={searchHref(page.url, { drawer: "recibir" })}
+						variant="outline"
+						full
+					>
+						Sí, recibirla
+					</Button>
+				{/if}
+				<Button
+					type="button"
+					onclick={() => (recibioUnidad = "no")}
+					variant="ghost"
+					full
+				>
+					No se recibió
+				</Button>
+			</div>
+		{:else}
+			<form
+				method="POST"
+				action="?/avanzar"
+				class="space-y-4"
+			>
+				<input
+					type="hidden"
+					name="estado"
+					value="completada"
+				/>
+				<Field
+					label="¿Por qué no se recibió la unidad?"
+					name="motivo"
+					required
+					hint="Máximo 255 caracteres."
+				/>
+				<Button full>Completar sin recibir</Button>
+			</form>
+		{/if}
 	</Drawer>
 {/if}
 

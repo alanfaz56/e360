@@ -203,7 +203,7 @@ export const actions: Actions = {
 			await crearRecordatorio({
 				actor,
 				unidadId: params.id!,
-				body: { motivo: form.get("motivo"), fecha: form.get("fecha") },
+				body: { motivo: form.get("motivo"), fecha: form.get("fecha"), tipo: form.get("tipo") },
 			});
 			return { ok: "Recordatorio agregado." };
 		} catch (err) {

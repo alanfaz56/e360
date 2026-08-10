@@ -1,8 +1,10 @@
 <script lang="ts">
 	import CalendarDays from "@lucide/svelte/icons/calendar-days";
+	import Activity from "@lucide/svelte/icons/activity";
 	import Button from "$lib/components/Button.svelte";
 	import PageHeader from "$lib/components/PageHeader.svelte";
 	import StatCard from "$lib/components/StatCard.svelte";
+	import { haceCuanto } from "$lib/notificaciones";
 
 	let { data } = $props();
 
@@ -64,3 +66,35 @@
 		</div>
 	</section>
 {/each}
+
+{#if data.movimientos.length > 0}
+	<!-- Admin/Gerente only (movimientos:read) — a live read of citas/notas/pagos, not the audit
+	     trail. `data.movimientos` is `[]` for anybody else, so this section is simply absent. -->
+	<section class="mb-6">
+		<h2 class="mb-2 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-sand-500">
+			<Activity
+				size={14}
+				aria-hidden="true"
+			/>
+			Últimos movimientos
+		</h2>
+		<div class="rounded-lg border border-sand-200 bg-white">
+			<ul>
+				{#each data.movimientos as m (m.id)}
+					<li class="border-b border-sand-100 last:border-b-0">
+						<a
+							href={m.href}
+							class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 px-3 py-2.5 text-sm hover:bg-sand-50"
+						>
+							<span class="min-w-0">
+								<span class="block truncate text-sand-950">{m.texto}</span>
+								<span class="block text-xs text-sand-500">{m.detalle}</span>
+							</span>
+							<span class="shrink-0 whitespace-nowrap text-xs text-sand-500">{haceCuanto(m.fecha)}</span>
+						</a>
+					</li>
+				{/each}
+			</ul>
+		</div>
+	</section>
+{/if}

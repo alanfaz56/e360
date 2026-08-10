@@ -1010,6 +1010,16 @@ export async function avanzarNota(input: { actor: Actor; id: string; estado: unk
 
 	const current = await getNota(input.id);
 
+	// "Liberación 360": nada se marca lista para entrega sin el checklist de 15 puntos dicho
+	// "liberada: sí" — no sólo al momento de entregar. Antes de esto, una nota podía llegar a
+	// "lista" sin que nadie hubiera revisado la unidad.
+	if (destino === "lista" && current.unidadLiberada !== true) {
+		throw new ClienteError(
+			409,
+			"Completa el checklist de liberación antes de marcar la unidad como lista — falta marcar la unidad como liberada.",
+		);
+	}
+
 	// Coming back from a partner shop is NOT a plain status change: somebody has to sign off on
 	// the work first. Routing it through `recibirDeTaller` is what makes the QA step unavoidable
 	// rather than optional — see the constraint `nota_transferencia_cerrada_qa_check`.

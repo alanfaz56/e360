@@ -429,6 +429,17 @@
 				variant="outline"
 				full>Abrir la nota</Button
 			>
+		{:else if aEstado === "lista" && !enMovimiento.unidadLiberada}
+			<!-- "Liberación 360": el servidor rechaza este movimiento sin el checklist en "sí", así que
+			     el drop manda directo al checklist en vez de a una confirmación que de todos modos
+			     va a fallar. -->
+			<p class="mb-4 text-sm text-sand-700">
+				Falta el checklist de liberación — no se puede marcar lista para entrega sin él.
+			</p>
+			<Button
+				href="/panel/notas/{enMovimiento.id}?drawer=liberacion"
+				full>Llenar el checklist</Button
+			>
 		{:else}
 			<form
 				method="POST"

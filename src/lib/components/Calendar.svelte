@@ -15,6 +15,7 @@
 -->
 <script lang="ts">
 	import Truck from "@lucide/svelte/icons/truck";
+	import Bell from "@lucide/svelte/icons/bell";
 	import { HORA_ABRE, HORA_CIERRA, ZONA, horaCorta, hoy, posicion, type Vista } from "$lib/agenda";
 
 	// Structural, not imported from $lib/server — this component runs in the browser and must
@@ -29,8 +30,17 @@
 		marca: string | null;
 		modelo: string | null;
 	};
+	/** A manual follow-up due this day. Never has an hour, so it never touches the time grid. */
+	type Recordatorio = {
+		id: string;
+		unidadId: string;
+		unidadEtiqueta: string;
+		clienteNombre: string;
+		motivo: string;
+		tipoLabel: string;
+	};
 	type Bloque = { cita: Cita; inicio: Date; fin: Date; col: number; cols: number };
-	type Dia = { fecha: string; sinHora: Cita[]; bloques: Bloque[] };
+	type Dia = { fecha: string; sinHora: Cita[]; bloques: Bloque[]; recordatorios?: Recordatorio[] };
 
 	let {
 		dias,
@@ -55,7 +65,9 @@
 
 	const mesAncla = $derived(fecha.slice(0, 7));
 	// Only days with something on them. An agenda listing 30 empty rows is a wall of nothing.
-	const conAlgo = $derived(dias.filter((d) => d.bloques.length > 0 || d.sinHora.length > 0));
+	const conAlgo = $derived(
+		dias.filter((d) => d.bloques.length > 0 || d.sinHora.length > 0 || (d.recordatorios?.length ?? 0) > 0),
+	);
 
 	// Estado drives the block's colour so the calendar reads at a glance. `solicitada` is drawn
 	// dashed and pale — it does not have a real hour yet, it only has one because staff will pick.
@@ -126,6 +138,18 @@
 								class="block text-[10px] text-sand-500 hover:underline"
 							>
 								+{todas.length - 3} más
+							</a>
+						{/if}
+						{#if dia.recordatorios?.length}
+							<a
+								href="?vista=dia&fecha={dia.fecha}"
+								class="mt-0.5 flex items-center gap-0.5 text-[10px] text-amber-700 hover:underline"
+							>
+								<Bell
+									size={9}
+									aria-hidden="true"
+								/>
+								{dia.recordatorios.length}
 							</a>
 						{/if}
 					</div>
@@ -214,6 +238,32 @@
 							</li>
 						{/each}
 					</ul>
+					{#if dia.recordatorios?.length}
+						<ul class="border-t border-sand-100 bg-amber-50/40">
+							{#each dia.recordatorios as r (r.id)}
+								<li class="border-b border-sand-100 last:border-b-0">
+									<a
+										href="/panel/recordatorios?unidadId={r.unidadId}"
+										class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 px-3 py-2 text-sm hover:bg-amber-100/60"
+									>
+										<span class="w-20 shrink-0 text-xs font-medium text-amber-700">Recordar</span>
+										<Bell
+											size={12}
+											class="inline shrink-0"
+											aria-hidden="true"
+										/>
+										<span class="min-w-0 flex-1">
+											<span class="block truncate text-sand-950">
+												{r.unidadEtiqueta}
+												<span class="text-sand-500">· {r.tipoLabel}</span>
+											</span>
+											<span class="block truncate text-xs text-sand-600">{r.clienteNombre} · {r.motivo}</span>
+										</span>
+									</a>
+								</li>
+							{/each}
+						</ul>
+					{/if}
 				</section>
 			{/each}
 		{/if}
@@ -267,6 +317,36 @@
 											aria-label="Recolección"
 										/>
 									{/if}
+								</a>
+							{/each}
+						</div>
+					{/each}
+				</div>
+			{/if}
+
+			<!-- Manual follow-ups due this day. Never has an hour, so it never competes for a grid slot. -->
+			{#if dias.some((d) => d.recordatorios?.length)}
+				<div
+					class="grid border-b border-sand-200 bg-amber-50/60"
+					style="grid-template-columns: 3.5rem repeat({dias.length}, minmax(0, 1fr))"
+				>
+					<div class="border-r border-sand-200 px-1 py-2 text-right text-[10px] leading-tight text-amber-700">
+						Recordar
+					</div>
+					{#each dias as dia (dia.fecha)}
+						<div class="space-y-1 border-r border-sand-200 p-1 last:border-r-0">
+							{#each dia.recordatorios ?? [] as r (r.id)}
+								<a
+									href="/panel/recordatorios?unidadId={r.unidadId}"
+									class="block rounded border border-amber-300 bg-amber-100 px-1.5 py-1 text-[11px] leading-tight text-amber-900"
+									title="{r.clienteNombre} · {r.motivo}"
+								>
+									<Bell
+										size={10}
+										class="inline"
+										aria-hidden="true"
+									/>
+									{r.unidadEtiqueta}
 								</a>
 							{/each}
 						</div>

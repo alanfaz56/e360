@@ -111,6 +111,17 @@
 					? "?/vincular"
 					: "?/avanzar",
 	);
+
+	// "recibida" asks first whether the unit showed up before anything else — reset every time a
+	// different card (or a different target) is opened, so a leftover "No" from a previous move
+	// never carries into the next one.
+	let recibioUnidad = $state<"si" | "no" | null>(null);
+	$effect(() => {
+		moverId;
+		aEstado;
+		recibioUnidad = null;
+	});
+
 </script>
 
 <svelte:head><title>Citas — Estación 360</title></svelte:head>
@@ -628,6 +639,37 @@
 						required
 						hint="Queda en el expediente y es lo que se le explica al cliente."
 					/>
+				{:else if paso === "recibida" && recibioUnidad === null}
+					<p class="text-sm text-sand-700">¿La unidad ya está en el taller?</p>
+					<div class="flex flex-col gap-2 sm:flex-row">
+						<Button
+							href="/panel/citas/{enMovimiento.id}?drawer=recibir"
+							variant="outline"
+							full
+						>
+							Sí, recibirla
+						</Button>
+						<Button
+							type="button"
+							onclick={() => (recibioUnidad = "no")}
+							variant="ghost"
+							full
+						>
+							No se recibió
+						</Button>
+					</div>
+				{:else if paso === "recibida" && recibioUnidad === "no"}
+					<input
+						type="hidden"
+						name="estado"
+						value={aEstado}
+					/>
+					<Field
+						label="¿Por qué no se recibió la unidad?"
+						name="motivo"
+						required
+						hint="Queda en el expediente de la cita."
+					/>
 				{:else if paso === "hora"}
 					<Field
 						label="Inicio"
@@ -650,10 +692,13 @@
 					</p>
 				{/if}
 
-				<Button full>
-					{#if paso === "vincular"}Guardar y seguir{:else if paso === "motivo"}Cancelar la cita{:else if paso === "hora"}Confirmar
-						cita{:else}Mover a {citaEstadoLabel(aEstado)}{/if}
-				</Button>
+				{#if !(paso === "recibida" && recibioUnidad === null)}
+					<Button full>
+						{#if paso === "vincular"}Guardar y seguir{:else if paso === "motivo"}Cancelar la cita{:else if paso === "recibida"}Completar
+							sin recibir{:else if paso === "hora"}Confirmar
+							cita{:else}Mover a {citaEstadoLabel(aEstado)}{/if}
+					</Button>
+				{/if}
 			</form>
 		{/if}
 	</Drawer>

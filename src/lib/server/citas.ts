@@ -83,6 +83,7 @@ type CitaRow = {
 	asignadoId: string | null;
 	entregadorId: string | null;
 	canceladoMotivo: string | null;
+	completadoSinNotaMotivo: string | null;
 	createdAt: Date;
 	cliente?: { nombreCompleto: string; tipo: string } | null;
 	unidad?: { marca: string; modelo: string; placas: string | null } | null;
@@ -131,6 +132,7 @@ export const publicCita = (c: CitaRow) => ({
 	entregadorNombre: c.entregador?.nombre ?? null,
 	entregadorTelefono: c.entregador?.telefono ?? null,
 	canceladoMotivo: c.canceladoMotivo,
+	completadoSinNotaMotivo: c.completadoSinNotaMotivo,
 	etiqueta: citaLabel(c),
 	// A confirmable appointment needs a real customer and a real vehicle on file.
 	vinculada: c.clienteId !== null && c.unidadId !== null,
@@ -922,6 +924,7 @@ async function resolverClienteYUnidad(actor: Actor, body: Record<string, unknown
 				anio: body.anio ?? prefill.anio,
 				placas: trim(body.placas) ?? prefill.placas,
 				vin: trim(body.vin),
+				numeroEconomico: trim(body.numeroEconomico),
 			},
 		});
 		unidadId = unidad.id;
@@ -1082,7 +1085,7 @@ export async function asignarCita(input: { actor: Actor; id: string; asignadoId:
  *
  * Cancelling is deliberately NOT reachable here: it is `cita:cancel` and it requires a reason.
  */
-export async function avanzarCita(input: { actor: Actor; id: string; estado: unknown }) {
+export async function avanzarCita(input: { actor: Actor; id: string; estado: unknown; motivo?: unknown }) {
 	if (!can(input.actor.role, "cita:advance")) throw new ClienteError(403, "Sin permiso: cita:advance");
 
 	const destino = input.estado;
@@ -1110,9 +1113,21 @@ export async function avanzarCita(input: { actor: Actor; id: string; estado: unk
 		throw new ClienteError(403, "Solo puedes avanzar las citas asignadas a ti.");
 	}
 
+	// Completing WITHOUT a nota_servicio means the vehicle never came in — a car that never showed
+	// still has to explain itself. A cita with a nota is completed automatically by crearNota /
+	// entregarNota and never reaches here in that state, but the check is on the data, not on how
+	// the UI thinks it got here.
+	let completadoSinNotaMotivo: string | null = null;
+	if (destino === "completada" && !current.nota) {
+		completadoSinNotaMotivo = trim(input.motivo, 255, "El motivo");
+		if (!completadoSinNotaMotivo) {
+			throw new ClienteError(400, "Indica por qué no se recibió la unidad.");
+		}
+	}
+
 	const cita = await prisma.cita.update({
 		where: { id: current.id },
-		data: { estado: destino as CitaEstado },
+		data: { estado: destino as CitaEstado, ...(completadoSinNotaMotivo ? { completadoSinNotaMotivo } : {}) },
 		include: INCLUDE,
 	});
 
@@ -1121,9 +1136,11 @@ export async function avanzarCita(input: { actor: Actor; id: string; estado: unk
 		actor: input.actor,
 		entityId: cita.id,
 		entityLabel: citaLabel(cita),
-		summary: `Cita #${cita.folio}: ${citaEstadoLabel(current.estado)} → ${citaEstadoLabel(destino)}`,
+		summary:
+			`Cita #${cita.folio}: ${citaEstadoLabel(current.estado)} → ${citaEstadoLabel(destino)}` +
+			(completadoSinNotaMotivo ? ` (sin recibir unidad: ${completadoSinNotaMotivo})` : ""),
 		before: { estado: current.estado },
-		after: { estado: destino },
+		after: { estado: destino, ...(completadoSinNotaMotivo ? { completadoSinNotaMotivo } : {}) },
 	});
 
 	return cita;

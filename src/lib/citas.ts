@@ -105,10 +105,14 @@ export function puedeMoverCita(
  * The alternative — refusing the drop and telling somebody to go open the cita — is the counter
  * being sent away to do by hand exactly what the drawer already knows how to do.
  */
-export type PasoMover = "vincular" | "hora" | "motivo" | "confirmar";
+export type PasoMover = "vincular" | "hora" | "motivo" | "recibida" | "confirmar";
 
 export function pasoParaMover(cita: { vinculada: boolean }, destino: string): PasoMover {
 	if (destino === "cancelada") return "motivo";
+	// Completing asks first whether the vehicle actually showed up. "Sí" belongs to the real
+	// intake flow (crearNota, with kilometraje and who dropped it off) — this drawer only ever
+	// writes the "No" branch, which needs its own reason, same as cancelling.
+	if (destino === "completada") return "recibida";
 	if (destino !== "confirmada") return "confirmar";
 	return cita.vinculada ? "hora" : "vincular";
 }

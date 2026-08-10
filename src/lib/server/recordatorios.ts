@@ -3,6 +3,7 @@ import type { Prisma } from "../../generated/prisma/client.js";
 import prisma from "$lib/prisma";
 import { can } from "$lib/roles";
 import { enZona, hoy } from "$lib/agenda";
+import { RECORDATORIO_TIPO_DEFAULT, isRecordatorioTipo, recordatorioTipoLabel } from "$lib/recordatorios";
 import { recordAudit } from "./audit";
 import { ClienteError, trim } from "./clientes";
 import { getUnidad, unidadLabel } from "./unidades";
@@ -23,8 +24,10 @@ type RecordatorioRow = {
 	unidadId: string;
 	clienteId: string;
 	notaId: string | null;
+	citaId: string | null;
 	motivo: string;
 	fecha: Date;
+	tipo: string;
 	hecho: boolean;
 	hechoAt: Date | null;
 	createdAt: Date;
@@ -43,8 +46,11 @@ export const publicRecordatorio = (r: RecordatorioRow) => ({
 	clienteId: r.clienteId,
 	clienteNombre: r.cliente.nombreCompleto,
 	notaId: r.notaId,
+	citaId: r.citaId,
 	motivo: r.motivo,
 	fecha: r.fecha.toISOString().slice(0, 10),
+	tipo: r.tipo,
+	tipoLabel: recordatorioTipoLabel(r.tipo),
 	hecho: r.hecho,
 	hechoAt: r.hechoAt?.toISOString() ?? null,
 	hechoPorNombre: r.hechoPor?.name ?? null,
@@ -101,10 +107,20 @@ export async function listRecordatorios(query: RecordatorioQuery) {
 	return { recordatorios: rows.map(publicRecordatorio), ...pageMeta(total, paging) };
 }
 
+/** Everything due in a date range, for the agenda's "Recordar" strip. Never `hecho`. */
+export async function recordatoriosEnRango(desde: string, hasta: string) {
+	const rows = await prisma.recordatorio.findMany({
+		where: { hecho: false, fecha: { gte: enZona(desde), lte: enZona(hasta) } },
+		orderBy: { fecha: "asc" },
+		include: INCLUDE,
+	});
+	return rows.map(publicRecordatorio);
+}
+
 export async function crearRecordatorio(input: {
 	actor: Actor;
 	unidadId: string;
-	body: { motivo: unknown; fecha: unknown; notaId?: unknown };
+	body: { motivo: unknown; fecha: unknown; notaId?: unknown; citaId?: unknown; tipo?: unknown };
 }) {
 	if (!can(input.actor.role, "recordatorio:manage")) {
 		throw new ClienteError(403, "Sin permiso: recordatorio:manage");
@@ -118,6 +134,8 @@ export async function crearRecordatorio(input: {
 		throw new ClienteError(400, "La fecha es obligatoria");
 	}
 	const notaId = trim(input.body.notaId);
+	const citaId = trim(input.body.citaId);
+	const tipo = isRecordatorioTipo(input.body.tipo) ? input.body.tipo : RECORDATORIO_TIPO_DEFAULT;
 
 	const recordatorio = await prisma.recordatorio.create({
 		data: {
@@ -125,8 +143,10 @@ export async function crearRecordatorio(input: {
 			unidadId: unidad.id,
 			clienteId: unidad.clienteId,
 			notaId,
+			citaId,
 			motivo,
 			fecha: enZona(fechaTexto),
+			tipo,
 			creadoPorId: input.actor.id,
 		},
 		include: INCLUDE,
@@ -138,7 +158,7 @@ export async function crearRecordatorio(input: {
 		entityId: recordatorio.id,
 		entityLabel: `${unidadLabel(unidad)} · ${fechaTexto}`,
 		summary: `Recordatorio para ${unidadLabel(unidad)} el ${fechaTexto}: ${motivo}`,
-		after: { unidadId: unidad.id, fecha: fechaTexto, motivo },
+		after: { unidadId: unidad.id, fecha: fechaTexto, motivo, tipo },
 	});
 
 	return recordatorio;

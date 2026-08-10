@@ -3,6 +3,7 @@ import { conFlash } from "$lib/flash";
 import { can } from "$lib/roles";
 import { TRANSICIONES, requiereHora, type CitaEstado } from "$lib/citas";
 import {
+	CitaError,
 	actualizarCita,
 	asignarCita,
 	avanzarCita,
@@ -15,6 +16,7 @@ import {
 } from "$lib/server/citas";
 import prisma from "$lib/prisma";
 import { crearNota } from "$lib/server/notas";
+import { crearRecordatorio } from "$lib/server/recordatorios";
 import { listContactos } from "$lib/server/contactos";
 import { requirePermission, requireUser } from "$lib/server/guard";
 import { listUsers } from "$lib/server/users";
@@ -91,6 +93,7 @@ export const load: ServerLoad = async ({ locals, params, url }) => {
 			// Who may open a colleague's profile and its numbers.
 			verPerfil: can(actor.role, "user:stats"),
 			recibir: can(actor.role, "nota:create"),
+			recordar: can(actor.role, "recordatorio:manage"),
 		},
 		// At most one note per appointment, so this is either null or the one to jump to.
 		notaId:
@@ -179,7 +182,7 @@ export const actions: Actions = {
 		const actor = requireUser(locals);
 		const data = await request.formData();
 		try {
-			await avanzarCita({ actor, id: params.id!, estado: data.get("estado") });
+			await avanzarCita({ actor, id: params.id!, estado: data.get("estado"), motivo: data.get("motivo") });
 			redirect(303, conFlash(`/panel/citas/${params.id}`, "cita.avanzar"));
 		} catch (err) {
 			return fallo(err);
@@ -192,6 +195,23 @@ export const actions: Actions = {
 		try {
 			await cancelarCita({ actor, id: params.id!, motivo: data.get("motivo") });
 			redirect(303, conFlash(`/panel/citas/${params.id}`, "cita.cancelar"));
+		} catch (err) {
+			return fallo(err);
+		}
+	},
+
+	agregarRecordatorio: async ({ locals, params, request }) => {
+		const actor = requireUser(locals);
+		const data = await request.formData();
+		try {
+			const cita = await getCita(params.id!);
+			if (!cita.unidadId) throw new CitaError(400, "Esta cita no tiene una unidad vinculada.");
+			await crearRecordatorio({
+				actor,
+				unidadId: cita.unidadId,
+				body: { motivo: data.get("motivo"), fecha: data.get("fecha"), tipo: data.get("tipo"), citaId: cita.id },
+			});
+			redirect(303, conFlash(`/panel/citas/${params.id}`, "recordatorio.crear"));
 		} catch (err) {
 			return fallo(err);
 		}

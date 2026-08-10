@@ -26,7 +26,7 @@ export const actions: Actions = {
 			await crearRecordatorio({
 				actor,
 				unidadId: String(data.get("unidadId") ?? ""),
-				body: { motivo: data.get("motivo"), fecha: data.get("fecha") },
+				body: { motivo: data.get("motivo"), fecha: data.get("fecha"), tipo: data.get("tipo") },
 			});
 			redirect(303, conFlash("/panel/recordatorios", "recordatorio.crear"));
 		} catch (err) {

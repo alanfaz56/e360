@@ -207,7 +207,13 @@
 						value={texto}
 						oninput={alEscribir}
 						onkeydown={alTeclear}
-						onfocus={() => resultados.length && (abierto = true)}
+						onfocus={() => {
+							// `minimo` of 0 means "show a default list even before typing" — a chosen
+							// customer's own fleet, for instance. Only fires once: a result already in
+							// hand just reopens, so refocusing does not re-fetch on every click.
+							if (!texto && minimo === 0 && !resultados.length) correr();
+							else if (resultados.length) abierto = true;
+						}}
 						onblur={() => setTimeout(() => (abierto = false), 120)}
 						class="mt-1 w-full rounded-md border px-3 py-2 pl-8 text-sm focus:outline-none {seleccionado
 							? 'border-ok bg-ok/5'

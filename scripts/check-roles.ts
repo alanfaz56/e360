@@ -194,6 +194,12 @@ for (const role of ["admin", "gerente", "operador"] as const) {
 }
 assert.equal(can("taller", "recordatorio:manage"), false);
 
+// Home's "últimos movimientos" feed: Admin/Gerente only — a shop-wide view, not the audit trail.
+assert.equal(can("admin", "movimientos:read"), true);
+assert.equal(can("gerente", "movimientos:read"), true);
+assert.equal(can("operador", "movimientos:read"), false);
+assert.equal(can("taller", "movimientos:read"), false);
+
 // Partner workshops are onboarded by management; the counter only reads the list.
 assert.equal(can("operador", "taller:read"), true);
 assert.equal(can("operador", "taller:manage"), false);

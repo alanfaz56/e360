@@ -3,10 +3,11 @@ import { hoy, isVista, parseFecha, pasoDeVista } from "$lib/agenda";
 import { can } from "$lib/roles";
 import { agenda, crearCita, resumenAgenda } from "$lib/server/citas";
 import { listClientes } from "$lib/server/clientes";
-import { listUnidades } from "$lib/server/unidades";
+import { listUnidades, getUnidad } from "$lib/server/unidades";
 import { requirePermission, requireUser } from "$lib/server/guard";
 import { listUsers } from "$lib/server/users";
 import { fallo } from "$lib/server/errores";
+import { marcarRecordatorio, recordatoriosEnRango } from "$lib/server/recordatorios";
 
 /**
  * /panel/agenda is the calendar — only the calendar.
@@ -25,6 +26,13 @@ export const load: ServerLoad = async ({ locals, url }) => {
 	const mias = url.searchParams.get("mias") === "1";
 
 	const [datos, resumen] = await Promise.all([agenda(vista, fecha, mias ? actor.id : null), resumenAgenda()]);
+
+	// Manual follow-ups, in the same grid: most of the time one turns into a cita, so seeing it
+	// next to the week it is due is the point. Gated on the same permission that owns them — a
+	// role with no reminders screen never sees a stray "Recordar" strip either.
+	const puedeVerRecordatorios = can(actor.role, "recordatorio:manage");
+	const recordatorios = puedeVerRecordatorios ? await recordatoriosEnRango(datos.desde, datos.hasta) : [];
+	const dias = datos.dias.map((d) => ({ ...d, recordatorios: recordatorios.filter((r) => r.fecha === d.fecha) }));
 
 	// Only fetched when the actor could actually assign somebody — one less query, and the
 	// picker is never populated for a role the server would refuse anyway.
@@ -56,8 +64,14 @@ export const load: ServerLoad = async ({ locals, url }) => {
 			}))
 		: [];
 
+	// "Convertir en cita": the reminders screen links here with the unit already chosen, so the
+	// picker opens on that vehicle instead of an empty search.
+	const prefillUnidadId = puedeCrear ? url.searchParams.get("unidadId") : null;
+	const prefillUnidad = prefillUnidadId ? await getUnidad(prefillUnidadId).catch(() => null) : null;
+
 	return {
 		...datos,
+		dias,
 		resumen,
 		asignables,
 		// Navigation, precomputed so the template stays markup. The week is a rolling seven days
@@ -70,6 +84,16 @@ export const load: ServerLoad = async ({ locals, url }) => {
 		mias,
 		clientes,
 		unidades,
+		prefillCita: {
+			unidadId: prefillUnidad?.id ?? "",
+			unidadEtiqueta: prefillUnidad
+				? [`${prefillUnidad.marca} ${prefillUnidad.modelo}`, prefillUnidad.placas].filter(Boolean).join(" · ")
+				: "",
+			clienteId: prefillUnidad?.clienteId ?? "",
+			clienteNombre: prefillUnidad?.cliente?.nombreCompleto ?? "",
+			motivo: url.searchParams.get("motivo") ?? "",
+			recordatorioId: url.searchParams.get("recordatorioId") ?? "",
+		},
 		puede: {
 			crear: puedeCrear,
 			asignar: can(actor.role, "cita:assign"),
@@ -85,9 +109,18 @@ export const actions: Actions = {
 
 		try {
 			await crearCita({ actor, body });
-			return { creada: true };
 		} catch (err) {
 			return fallo(err, { valores: body });
 		}
+
+		// "Convertir en cita": the reminder did its job, so it is marked done. Best-effort — the
+		// cita is already booked by this point, and a stale or already-handled recordatorioId must
+		// never turn a successful booking into a reported failure.
+		const recordatorioId = String(body.recordatorioId ?? "");
+		if (recordatorioId) {
+			await marcarRecordatorio({ actor, id: recordatorioId, hecho: true }).catch(() => {});
+		}
+
+		return { creada: true };
 	},
 };

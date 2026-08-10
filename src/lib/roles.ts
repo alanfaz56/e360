@@ -84,6 +84,10 @@ export const PERMISSIONS = {
 	// Manual follow-ups on a vehicle — create, list, mark done. One key covers all three, same
 	// granularity as contacto:manage.
 	"recordatorio:manage": ["admin", "gerente", "operador"],
+	// Home's "últimos movimientos" feed — a live read of citas/notas/pagos, not the audit trail
+	// (audit:read stays Admin-only, on purpose). Admin/Gerente only: this is a shop-wide view of
+	// everyone's work, not "what do I have to do today".
+	"movimientos:read": ["admin", "gerente"],
 	// Agenda. The whole counter reads and books; only Admin/Gerente reshape an existing
 	// appointment. There is deliberately NO permission for the public booking form — it is
 	// anonymous by design and gated by Turnstile, not by this registry.

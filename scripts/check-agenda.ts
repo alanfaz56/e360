@@ -255,6 +255,8 @@ assert.equal(FRANJAS.manana.hasta, FRANJAS.tarde.desde);
 	assert.equal(pasoParaMover({ vinculada: true }, "confirmada"), "hora");
 	assert.equal(pasoParaMover({ vinculada: false }, "cancelada"), "motivo");
 	assert.equal(pasoParaMover({ vinculada: true }, "en_proceso"), "confirmar");
+	// Completing asks whether the unit showed up first, before anything else.
+	assert.equal(pasoParaMover({ vinculada: true }, "completada"), "recibida");
 
 	// Cancelling is its own permission, never one more step forward.
 	assert.equal(puedeMoverCita(confirmada, "cancelada", ADMIN), true);
