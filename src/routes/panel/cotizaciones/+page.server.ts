@@ -10,7 +10,13 @@ import { conFlash } from "$lib/flash";
 import { can } from "$lib/roles";
 import { fallaEnCarga, fallo } from "$lib/server/errores";
 import { requirePermission, requireUser } from "$lib/server/guard";
-import { listCotizaciones, listFacturas, reenviarCotizacionCorreo, resumenDinero } from "$lib/server/comercial";
+import {
+	listCotizaciones,
+	listFacturas,
+	reenviarCotizacionCorreo,
+	resumenDinero,
+	utilidadDeCotizacion,
+} from "$lib/server/comercial";
 
 /**
  * The money screen: quotes and invoices over a period, on both axes.
@@ -54,12 +60,22 @@ export const load: ServerLoad = async ({ locals, url }) => {
 			resumenDinero(desde, hasta),
 		]);
 
+		// Admin-only, and only for the page actually on screen — the list is capped at 25, so this
+		// is at most 25 extra reads, not a query over the whole filtered window.
+		const utilidades: Record<string, Awaited<ReturnType<typeof utilidadDeCotizacion>>> = {};
+		if (can(actor.role, "cotizacion:costo")) {
+			for (const c of cotizaciones.cotizaciones) {
+				utilidades[c.id] = await utilidadDeCotizacion(actor, c.id);
+			}
+		}
+
 		return {
 			...cotizaciones,
 			facturas: facturas?.facturas ?? [],
 			facturasTotal: facturas?.total ?? 0,
 			facturasPages: facturas?.totalPages ?? 1,
 			dinero,
+			utilidades,
 			pestana,
 			filtros: { estado, estadoInterno, desde, hasta },
 			estados: COTIZACION_ESTADO_KEYS.map((k) => ({ value: k, label: COTIZACION_ESTADOS[k].label })),
@@ -68,6 +84,7 @@ export const load: ServerLoad = async ({ locals, url }) => {
 				verFacturas: can(actor.role, "factura:read"),
 				timbrar: can(actor.role, "factura:timbrar"),
 				enviarCotizacion: can(actor.role, "cotizacion:send"),
+				verUtilidad: can(actor.role, "cotizacion:costo"),
 			},
 		};
 	} catch (err) {

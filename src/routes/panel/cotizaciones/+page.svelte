@@ -319,7 +319,15 @@
 	</EmptyState>
 {:else}
 	<DataTable
-		columns={["Folio", "Cliente", "Cliente dijo", "Taller va", "Total", ""]}
+		columns={[
+			"Folio",
+			"Cliente",
+			"Cliente dijo",
+			"Taller va",
+			"Total",
+			...(data.puede.verUtilidad ? ["Utilidad", "Margen"] : []),
+			"",
+		]}
 		items={data.cotizaciones}
 	>
 		{#snippet row(c)}
@@ -338,6 +346,14 @@
 				<Badge tone={cotizacionInternoTone(c.estadoInterno)}>{c.estadoInternoLabel}</Badge>
 			</td>
 			<td class="px-4 py-2.5 tabular-nums text-sand-900">{formatoPesos(Number(c.total))}</td>
+			{#if data.puede.verUtilidad}
+				<td class="px-4 py-2.5 tabular-nums text-sand-900">
+					{data.utilidades[c.id] ? formatoPesos(Number(data.utilidades[c.id]?.utilidad)) : "—"}
+				</td>
+				<td class="px-4 py-2.5 tabular-nums {(data.utilidades[c.id]?.margen ?? 0) < 0 ? 'text-danger' : 'text-sand-900'}">
+					{data.utilidades[c.id]?.margen != null ? `${data.utilidades[c.id]?.margen}%` : "—"}
+				</td>
+			{/if}
 			<td class="px-4 py-2.5 text-right">
 				<span class="flex flex-wrap justify-end gap-1">
 					<Button

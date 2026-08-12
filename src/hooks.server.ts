@@ -1,8 +1,15 @@
 import { auth } from "$lib/auth";
 import { MENSAJE_INTERNO, esErrorDeUsuario, registrarFalla } from "$lib/server/errores";
+import { asegurarPermisosCache } from "$lib/server/permisos";
 import type { Handle, HandleServerError } from "@sveltejs/kit";
 
 export const handle: Handle = async ({ event, resolve }) => {
+	// `can()` reads a synchronous in-memory cache (see roles.ts) so hundreds of call sites never
+	// had to become async; this is the one place that cache gets warmed from the database. A
+	// no-op on every request but the first per instance and once an hour after — see the TTL in
+	// server/permisos.ts.
+	await asegurarPermisosCache();
+
 	const session = await auth.api.getSession({
 		headers: event.request.headers,
 	});

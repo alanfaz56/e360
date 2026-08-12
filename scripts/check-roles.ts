@@ -7,7 +7,8 @@
  */
 import assert from "node:assert/strict";
 import {
-	PERMISSIONS,
+	PERMISOS_DEFAULT,
+	PERMISSION_KEYS,
 	ROLES,
 	can,
 	canAssignRole,
@@ -143,6 +144,7 @@ assert.deepEqual(permissionsFor("operador"), [
 	"nota:advance",
 	"nota:transfer",
 	"nota:comment",
+	"nota:close",
 	"nota:liberacion",
 	"taller:read",
 	"producto:read",
@@ -173,20 +175,18 @@ for (const key of [
 	"nota:advance",
 	"nota:transfer",
 	"nota:comment",
-	// The pre-delivery checklist: deliberately as wide as the counter's own work, not narrowed
-	// to nota:close's Admin/Gerente tier.
 	"nota:liberacion",
+	// The counter is who hands the keys over — Operador holds this too.
+	"nota:close",
 ] as const) {
 	for (const role of ["admin", "gerente", "operador"] as const) {
 		assert.equal(can(role, key), true, `${role} debe tener ${key}`);
 	}
 }
-// Closing and cancelling stay with Admin/Gerente, the same split as cita:cancel.
-for (const key of ["nota:close", "nota:cancel"] as const) {
-	assert.equal(can("admin", key), true);
-	assert.equal(can("gerente", key), true);
-	assert.equal(can("operador", key), false, `operador no debe tener ${key}`);
-}
+// Cancelling stays Admin/Gerente only, the same split as cita:cancel.
+assert.equal(can("admin", "nota:cancel"), true);
+assert.equal(can("gerente", "nota:cancel"), true);
+assert.equal(can("operador", "nota:cancel"), false, "operador no debe tener nota:cancel");
 
 // Recordatorios: manual follow-ups, same three roles as the rest of the counter's work.
 for (const role of ["admin", "gerente", "operador"] as const) {
@@ -292,7 +292,7 @@ assert.equal(can("gerente", "notificacion:send"), true);
 assert.equal(can("operador", "notificacion:send"), false);
 assert.equal(can("taller", "notificacion:send"), false);
 assert.equal(
-	Object.keys(PERMISSIONS).some((k) => k.startsWith("notificacion:") && k !== "notificacion:send"),
+	PERMISSION_KEYS.some((k) => k.startsWith("notificacion:") && k !== "notificacion:send"),
 	false,
 	"la bandeja propia no lleva permiso: va por requireUser, no por requirePermission",
 );
@@ -313,7 +313,7 @@ for (const evento of NOTIFICACION_EVENTO_KEYS) {
 	const def = NOTIFICACION_EVENTOS[evento] as { alcance: string; permiso?: string };
 	if (def.alcance !== "difusion") continue;
 	assert.ok(def.permiso, `${evento}: difusión sin permiso`);
-	assert.ok(def.permiso! in PERMISSIONS, `${evento} apunta a ${def.permiso}, que no está en el registro de permisos`);
+	assert.ok(def.permiso! in PERMISOS_DEFAULT, `${evento} apunta a ${def.permiso}, que no está en el registro de permisos`);
 }
 
 // Customer-facing events never fan out by permission — a customer holds none.
@@ -333,6 +333,13 @@ assert.equal(can("gerente", "producto:manage"), true);
 // A mechanic never sees what the shop charges. `buscarParaTaller` is a different mapper with no
 // price at all, which is why this permission is NOT theirs.
 assert.equal(can("taller", "producto:read"), false, "el mecánico no ve precios de venta");
+
+// Cost basis is narrower than producto:manage itself: Gerente can price a product but not see
+// what it costs.
+assert.equal(can("admin", "producto:costo"), true);
+for (const rol of ["gerente", "operador", "taller"] as const) {
+	assert.equal(can(rol, "producto:costo"), false, `${rol} no debe ver el costo del producto`);
+}
 
 // Receiving goods and correcting stock move money; issuing a part to a job is daily work.
 assert.equal(can("gerente", "inventario:entrada"), true);
@@ -400,10 +407,29 @@ assert.equal(can("taller", "cotizacion:interno"), false);
 // the other is what the shop is doing. The mechanic holds neither.
 assert.equal(can("taller", "cotizacion:send"), false);
 assert.notEqual(
-	PERMISSIONS["cotizacion:send"],
-	PERMISSIONS["cotizacion:interno"],
+	PERMISOS_DEFAULT["cotizacion:send"],
+	PERMISOS_DEFAULT["cotizacion:interno"],
 	"son claves distintas aunque hoy coincidan los roles",
 );
+
+// --- Cotización interna: estimación de costo -----------------------------------------------------
+// Almost always Admin/Gerente typing in what a mechanic reported by WhatsApp, not the mechanic's
+// own submission — `taller` holds none of the three.
+for (const key of ["cotizacion_interna:read", "cotizacion_interna:create", "cotizacion_interna:authorize"] as const) {
+	assert.equal(can("admin", key), true, `admin debe tener ${key}`);
+	assert.equal(can("gerente", key), true, `gerente debe tener ${key}`);
+	assert.equal(can("operador", key), false, `operador no debe tener ${key}`);
+	assert.equal(can("taller", key), false, `taller no debe tener ${key}`);
+}
+
+// The asymmetry is deliberate, not a bug: Gerente can create and approve the raw cost lines
+// without being able to see the utilidad figure those approvals feed. Do not "fix" these into
+// matching sets.
+assert.equal(can("gerente", "cotizacion_interna:authorize"), true);
+assert.equal(can("gerente", "cotizacion:costo"), false, "gerente aprueba costos pero no ve la utilidad");
+assert.equal(can("admin", "cotizacion:costo"), true);
+assert.equal(can("operador", "cotizacion:costo"), false);
+assert.equal(can("taller", "cotizacion:costo"), false);
 
 // --- Timbrado y ajustes del sistema -------------------------------------------------------------
 // Stamping is its own key even though it holds the same two roles as `factura:create` today. The
@@ -431,5 +457,28 @@ for (const clave of ["ajustes:read", "ajustes:manage"] as const) {
 // re-checked here because two permission groups were added since.
 assert.equal(can("taller", "ajustes:read"), false);
 assert.equal(can("taller", "factura:read"), false);
+
+// --- Empresa: contacto de la propia empresa ------------------------------------------------------
+// Deliberately NOT gated the same way as ajustes:* — an ordinary Admin/Gerente can change the
+// shop's phone number without being on OWNER_EMAILS; that gate is for PAC/billing secrets only.
+assert.equal(can("admin", "empresa:manage"), true);
+assert.equal(can("gerente", "empresa:manage"), true);
+assert.equal(can("operador", "empresa:manage"), false);
+assert.equal(can("taller", "empresa:manage"), false);
+
+// Bank accounts are Admin-only — narrower than empresa:manage, since a wrong CLABE steals money.
+assert.equal(can("admin", "cuenta_bancaria:manage"), true);
+for (const rol of ["gerente", "operador", "taller"] as const) {
+	assert.equal(can(rol, "cuenta_bancaria:manage"), false, `${rol} no debe administrar cuentas bancarias`);
+}
+
+// The registry that edits every other permission is itself Admin-only — and
+// `actualizarPermisoRol` additionally refuses to ever remove admin from this one key (DB-backed,
+// tested in server/permisos.ts, not here).
+assert.equal(can("admin", "permisos:manage"), true);
+for (const rol of ["gerente", "operador", "taller"] as const) {
+	assert.equal(can(rol, "permisos:manage"), false, `${rol} no debe administrar el registro de permisos`);
+}
+assert.ok(PERMISSION_KEYS.includes("permisos:manage"), "permisos:manage debe estar en su propio catálogo");
 
 console.log("check-roles: OK");

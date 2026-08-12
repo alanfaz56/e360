@@ -25,6 +25,7 @@ export const FLASH: Record<string, string> = {
 	"cita.avanzar": "Estado de la cita actualizado.",
 	"cita.cancelar": "Cita cancelada.",
 	"cita.vincular": "Cliente y unidad vinculados.",
+	"cita.asignarHora": "Hora asignada. Falta vincular cliente y unidad para que se confirme sola.",
 
 	// --- Notas de servicio ---------------------------------------------------------------------
 	"nota.recibir": "Unidad recibida. Levanta la inspección de entrada.",
@@ -48,6 +49,11 @@ export const FLASH: Record<string, string> = {
 	"cotizacion.reenviar": "Correo reenviado.",
 	"cotizacion.interno": "Avance interno registrado.",
 	"cotizacion.surtir": "Refacciones surtidas del almacén.",
+	"cotizacion_interna.crear": "Estimación de costo creada, pendiente de aprobación.",
+	"cotizacion_interna.editar": "Estimación de costo actualizada.",
+	"cotizacion_interna.vincular": "Estimación de costo ligada a la cotización.",
+	"cotizacion_interna.aprobar": "Estimación de costo aprobada.",
+	"cotizacion_interna.rechazar": "Estimación de costo rechazada.",
 	"factura.crear": "Factura emitida.",
 	"factura.cancelar": "Factura cancelada.",
 	"factura.timbrar": "Factura timbrada. Ya tiene folio fiscal.",
@@ -56,6 +62,12 @@ export const FLASH: Record<string, string> = {
 
 	// --- Ajustes del sistema ---------------------------------------------------------------------
 	"ajuste.guardar": "Ajustes guardados.",
+	"empresa.guardar": "Datos de la empresa guardados.",
+	"cuentaBancaria.crear": "Cuenta bancaria agregada.",
+	"cuentaBancaria.editar": "Cuenta bancaria actualizada.",
+	"cuentaBancaria.archivar": "Cuenta bancaria archivada.",
+	"cuentaBancaria.restaurar": "Cuenta bancaria restaurada.",
+	"permisos.guardar": "Permisos actualizados.",
 
 	// --- Inventario y catálogo -----------------------------------------------------------------
 	"producto.crear": "Producto dado de alta.",

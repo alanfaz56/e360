@@ -18,7 +18,6 @@
 	import Send from "@lucide/svelte/icons/send";
 	import ThumbsUp from "@lucide/svelte/icons/thumbs-up";
 	import ThumbsDown from "@lucide/svelte/icons/thumbs-down";
-	import Plus from "@lucide/svelte/icons/plus";
 	import Adjuntos from "$lib/components/Adjuntos.svelte";
 	import AdjuntarArchivos from "$lib/components/AdjuntarArchivos.svelte";
 	import Badge from "$lib/components/Badge.svelte";
@@ -58,15 +57,20 @@
 		METODO_PAGO_KEYS,
 		centavos,
 		condicionPagoLabel,
+		importeConcepto,
+		pesos,
 		totales,
 		siguientesCliente,
 		siguientesInternos,
 		cotizacionEstadoTone,
 		cotizacionInternoLabel,
 		cotizacionInternoTone,
+		cotizacionInternaEstadoLabel,
+		cotizacionInternaEstadoTone,
 		facturaEstadoTone,
 		formatoPesos,
 	} from "$lib/comercial";
+	import ConceptosForm, { type ConceptoFila } from "$lib/components/ConceptosForm.svelte";
 	import { solicitudEstadoLabel, solicitudEstadoTone } from "$lib/inventario";
 	import { fechaLarga, horaCorta } from "$lib/agenda";
 	import {
@@ -103,21 +107,27 @@
 	const mostrarDestino = $derived(!hydrated || qaElegido === "rechazado");
 
 	// --- Constructor de cotizaciones ------------------------------------------------------------
-	// Three rows exist from the first render so the drawer works with JavaScript off; `agregarFila`
-	// is the enhancement. Rows are never removed — a blank row is dropped by the action, which is
-	// simpler than a delete button and behaves the same.
-	const filaVacia = () => ({ productoId: "", tipo: "refaccion", descripcion: "", cantidad: "1", precioUnitario: "" });
-	let filas = $state([filaVacia(), filaVacia(), filaVacia()]);
-	const agregarFila = () => (filas = [...filas, filaVacia()]);
+	// Three rows exist from the first render so the drawer works with JavaScript off; "agregar
+	// renglón" (inside ConceptosForm) is the enhancement. Rows are never removed — a blank row is
+	// dropped by the action, which is simpler than a delete button and behaves the same.
+	const filaVacia = (): ConceptoFila => ({
+		productoId: "",
+		tipo: "refaccion",
+		descripcion: "",
+		cantidad: "1",
+		monto: "",
+	});
+	let filas = $state<ConceptoFila[]>([filaVacia(), filaVacia(), filaVacia()]);
+	const tiposConcepto = CONCEPTO_TIPO_KEYS.map((t) => ({ value: t, label: CONCEPTO_TIPOS[t].label }));
+	const formatoOpcionProducto = (p: Record<string, unknown>) =>
+		`${p.nombre} · ${formatoPesos(Number(p.precioVenta))}${p.controlaInventario ? ` · ${Number(p.existencia)} ${p.unidad}` : ""}`;
 
 	/** Picking a catalogue product fills the line in. The server does the same if JS is off. */
-	function elegirProducto(i: number, id: string) {
-		filas[i].productoId = id;
-		const p = data.productos.find((x) => x.id === id);
+	function alElegirProducto(i: number, p: Record<string, unknown> | undefined) {
 		if (!p) return;
-		filas[i].tipo = p.tipo;
-		if (!filas[i].descripcion) filas[i].descripcion = p.nombre;
-		if (!filas[i].precioUnitario) filas[i].precioUnitario = p.precioVenta;
+		filas[i].tipo = p.tipo as string;
+		if (!filas[i].descripcion) filas[i].descripcion = p.nombre as string;
+		if (!filas[i].monto) filas[i].monto = p.precioVenta as string;
 	}
 
 	// The same money helpers the server uses, so the total shown cannot disagree with the total
@@ -125,9 +135,21 @@
 	const previa = $derived(
 		totales(
 			filas
-				.map((f) => ({ cantidad: Number(f.cantidad), precioUnitario: centavos(f.precioUnitario) ?? 0n }))
+				.map((f) => ({ cantidad: Number(f.cantidad), precioUnitario: centavos(f.monto) ?? 0n }))
 				.filter((f) => Number.isFinite(f.cantidad) && f.cantidad > 0),
 		),
+	);
+
+	// --- Constructor de estimaciones de costo (cotización interna) ------------------------------
+	const filaCostoVacia = (): ConceptoFila => ({ productoId: "", tipo: "", descripcion: "", cantidad: "1", monto: "" });
+	let filasCosto = $state<ConceptoFila[]>([filaCostoVacia(), filaCostoVacia(), filaCostoVacia()]);
+	const formatoOpcionProductoCosto = (p: Record<string, unknown>) =>
+		`${p.nombre}${p.controlaInventario ? ` · ${Number(p.existencia)} ${p.unidad}` : ""}`;
+	const previaCosto = $derived(
+		filasCosto
+			.map((f) => ({ cantidad: Number(f.cantidad), monto: centavos(f.monto) ?? 0n }))
+			.filter((f) => Number.isFinite(f.cantidad) && f.cantidad > 0)
+			.reduce((s, f) => s + importeConcepto(f.cantidad, f.monto), 0n),
 	);
 
 	/** The quote a drawer is acting on, taken from the URL so the drawer survives a reload. */
@@ -205,6 +227,16 @@
 	{#if n.tallerActualNombre}<Badge tone="brand">En {n.tallerActualNombre}</Badge>{/if}
 	{#if n.citaFolio}<Badge tone="neutral">Cita #{n.citaFolio}</Badge>{/if}
 	{#if !n.inspeccionada}<Badge tone="warn">Sin inspección</Badge>{/if}
+	{#if n.garantiaDeId}
+		<a href={searchHref(page.url, { verGarantia: n.garantiaDeId })}>
+			<Badge tone="warn">Garantía de #{n.garantiaDeFolio}</Badge>
+		</a>
+	{/if}
+	{#each n.garantias as g (g.id)}
+		<a href={searchHref(page.url, { verGarantia: g.id })}>
+			<Badge tone="warn">Seguimiento #{g.folio} ({g.estadoLabel})</Badge>
+		</a>
+	{/each}
 </div>
 
 {#if n.estado === "cancelada" && n.canceladoMotivo}
@@ -684,19 +716,33 @@
 		<section class="rounded-lg border border-sand-200 bg-white p-5 md:col-span-2">
 			<div class="flex flex-wrap items-center gap-2">
 				<h2 class="font-display text-lg text-sand-950">Cotizaciones y facturas</h2>
-				{#if data.puede.cotizar && n.estado !== "cancelada"}
-					<Button
-						href={searchHref(page.url, { drawer: "cotizar" })}
-						size="sm"
-						class="sm:ml-auto"
-					>
-						<FilePlus
-							size={16}
-							aria-hidden="true"
-						/>
-						Nueva cotización
-					</Button>
-				{/if}
+				<div class="flex flex-wrap gap-2 sm:ml-auto">
+					{#if data.puede.cotizarInterna && n.estado !== "cancelada"}
+						<Button
+							href={searchHref(page.url, { drawer: "costoInterno" })}
+							size="sm"
+							variant="outline"
+						>
+							<FilePlus
+								size={16}
+								aria-hidden="true"
+							/>
+							Estimar costo
+						</Button>
+					{/if}
+					{#if data.puede.cotizar && n.estado !== "cancelada"}
+						<Button
+							href={searchHref(page.url, { drawer: "cotizar" })}
+							size="sm"
+						>
+							<FilePlus
+								size={16}
+								aria-hidden="true"
+							/>
+							Nueva cotización
+						</Button>
+					{/if}
+				</div>
 			</div>
 
 			{#if data.credito}
@@ -712,7 +758,7 @@
 				</p>
 			{/if}
 
-			{#if data.cotizaciones.length === 0 && data.facturas.length === 0}
+			{#if data.cotizaciones.length === 0 && data.facturas.length === 0 && data.cotizacionesInternas.length === 0}
 				<p class="mt-2 text-sm text-sand-500">Nada cotizado ni facturado todavía.</p>
 			{:else}
 				<ul class="mt-3 space-y-2 text-sm">
@@ -726,6 +772,25 @@
 								<Badge tone={cotizacionInternoTone(c.estadoInterno)}>{c.estadoInternoLabel}</Badge>
 								<span class="ml-auto font-medium text-sand-900">{formatoPesos(Number(c.total))}</span>
 							</div>
+							{#if data.puede.verUtilidad && data.utilidades[c.id]}
+								{@const m = data.utilidades[c.id]}
+								<!-- Admin-only: Gerente can create/approve the cost estimates below without
+									 seeing the margin figure they feed. That split is deliberate.
+
+									 Margin, not markup: (venta - costo) / venta. Shown alongside costo/utilidad
+									 in pesos so nobody has to do the division in their head to sanity-check it. -->
+								<p class="mt-1 flex flex-wrap gap-x-3 text-xs text-sand-500">
+									<span>Costo: {formatoPesos(Number(m.costo))}</span>
+									<span>Utilidad: <span class="font-medium text-sand-800">{formatoPesos(Number(m.utilidad))}</span></span>
+									{#if m.margen != null}
+										<span
+											>Margen: <span
+												class="font-medium {m.margen < 0 ? 'text-danger' : 'text-sand-800'}">{m.margen}%</span
+											></span
+										>
+									{/if}
+								</p>
+							{/if}
 							{#if c.autorizadaPorNombre}
 								<p class="mt-1 text-xs text-sand-500">Autorizó {c.autorizadaPorNombre}</p>
 							{/if}
@@ -935,6 +1000,104 @@
 											</Button>
 										</form>
 									{/each}
+								{/if}
+							</div>
+						</li>
+					{/each}
+					{#each data.cotizacionesInternas as ci (ci.id)}
+						<li class="rounded border border-sand-200 p-3">
+							<div class="flex flex-wrap items-center gap-2">
+								<span class="font-medium text-sand-950">Estimación #{ci.folio}</span>
+								<Badge tone={cotizacionInternaEstadoTone(ci.estado)}>{cotizacionInternaEstadoLabel(ci.estado)}</Badge>
+								{#if ci.mecanicoNombre}<span class="text-xs text-sand-500">{ci.mecanicoNombre}</span>{/if}
+								<span class="ml-auto font-medium text-sand-900">{formatoPesos(Number(ci.total))}</span>
+							</div>
+
+							{#if ci.conceptos.length > 0}
+								<ul class="mt-2 space-y-0.5 text-xs text-sand-600">
+									{#each ci.conceptos as x (x.id)}
+										<li class="flex flex-wrap gap-1.5">
+											<span>{x.cantidad} × {x.descripcion}</span>
+											<span class="ml-auto">{formatoPesos(Number(x.importe))}</span>
+										</li>
+									{/each}
+								</ul>
+							{/if}
+
+							{#if ci.resolucionMotivo}
+								<p class="mt-1 text-xs text-danger">Rechazó: {ci.resolucionMotivo}</p>
+							{/if}
+
+							<div class="mt-2 flex flex-wrap items-center gap-1.5">
+								{#if data.puede.aprobarInterna && ci.estado === "pendiente"}
+									<form
+										method="POST"
+										action="?/costoInternoEstado"
+									>
+										<input
+											type="hidden"
+											name="id"
+											value={ci.id}
+										/>
+										<input
+											type="hidden"
+											name="estado"
+											value="aprobada"
+										/>
+										<Button
+											size="sm"
+											variant="outline"
+										>
+											<ThumbsUp
+												size={14}
+												aria-hidden="true"
+											/>
+											Aprobar
+										</Button>
+									</form>
+									<Button
+										href={searchHref(page.url, { drawer: "rechazarCosto", ci: ci.id })}
+										size="sm"
+										variant="ghost"
+									>
+										<ThumbsDown
+											size={14}
+											aria-hidden="true"
+										/>
+										Rechazar
+									</Button>
+								{/if}
+
+								{#if data.puede.cotizarInterna && ci.estado === "aprobada" && data.cotizaciones.length > 0}
+									<form
+										method="POST"
+										action="?/costoInternoVincular"
+										class="flex items-center gap-1.5"
+									>
+										<input
+											type="hidden"
+											name="id"
+											value={ci.id}
+										/>
+										<select
+											name="cotizacionId"
+											class={INPUT}
+											value={ci.cotizacionId ?? ""}
+										>
+											<option value="">— sin ligar —</option>
+											{#each data.cotizaciones as c (c.id)}
+												<option value={c.id}>Cotización #{c.folio}</option>
+											{/each}
+										</select>
+										<Button
+											size="sm"
+											variant="ghost"
+										>
+											Ligar
+										</Button>
+									</form>
+								{:else if ci.cotizacionFolio}
+									<span class="text-xs text-sand-500">Ligada a la cotización #{ci.cotizacionFolio}</span>
 								{/if}
 							</div>
 						</li>
@@ -1175,20 +1338,36 @@
 <div class="mt-5 flex flex-wrap items-center gap-2">
 	{#if data.puede.avanzar}
 		{#each data.siguientes as estado (estado)}
-			<form
-				method="POST"
-				action="?/avanzar"
-			>
-				<input
-					type="hidden"
-					name="estado"
-					value={estado}
-				/>
+			{#if estado === "lista" && !n.unidadLiberada && data.puede.liberar}
+				<!--
+					`avanzarNota` refuses "lista" until the checklist says liberada — posting straight
+					to it here would just be the 409 the user actually hit. Send them to the checklist
+					instead of a wall; once it's saved `unidadLiberada` flips and this same slot renders
+					the real submit button below.
+				-->
 				<Button
+					href={searchHref(page.url, { drawer: "liberacion" })}
 					variant="outline"
-					size="sm">Marcar {notaEstadoLabel(estado).toLowerCase()}</Button
+					size="sm"
 				>
-			</form>
+					Checklist de liberación
+				</Button>
+			{:else}
+				<form
+					method="POST"
+					action="?/avanzar"
+				>
+					<input
+						type="hidden"
+						name="estado"
+						value={estado}
+					/>
+					<Button
+						variant="outline"
+						size="sm">Marcar {notaEstadoLabel(estado).toLowerCase()}</Button
+					>
+				</form>
+			{/if}
 		{/each}
 	{/if}
 	{#if (data.puede.entregar || data.puede.liberar) && n.estado === "lista"}
@@ -1686,95 +1865,15 @@
 			action="?/cotizar"
 			class="space-y-4"
 		>
-			<div class="space-y-3">
-				{#each filas as fila, i (i)}
-					<fieldset class="rounded border border-sand-200 p-3">
-						<legend class="px-1 text-xs font-medium uppercase tracking-wide text-sand-500">
-							Renglón {i + 1}
-						</legend>
-
-						<label class="block text-xs text-sand-600">
-							Del catálogo
-							<select
-								name="productoId"
-								class={INPUT}
-								value={fila.productoId}
-								onchange={(e) => elegirProducto(i, e.currentTarget.value)}
-							>
-								<option value="">— línea libre —</option>
-								{#each data.productos as p (p.id)}
-									<option value={p.id}>
-										{p.nombre} · {formatoPesos(Number(p.precioVenta))}{p.controlaInventario
-											? ` · ${Number(p.existencia)} ${p.unidad}`
-											: ""}
-									</option>
-								{/each}
-							</select>
-						</label>
-
-						<label class="mt-2 block text-xs text-sand-600">
-							Descripción
-							<input
-								type="text"
-								name="descripcion"
-								class={INPUT}
-								bind:value={fila.descripcion}
-								placeholder={fila.productoId ? "(se toma del catálogo)" : "Ej. Rectificar cabeza"}
-							/>
-						</label>
-
-						<div class="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
-							<label class="block text-xs text-sand-600">
-								Tipo
-								<select
-									name="tipo"
-									class={INPUT}
-									bind:value={fila.tipo}
-								>
-									{#each CONCEPTO_TIPO_KEYS as t (t)}
-										<option value={t}>{CONCEPTO_TIPOS[t].label}</option>
-									{/each}
-								</select>
-							</label>
-							<label class="block text-xs text-sand-600">
-								Cantidad
-								<input
-									type="number"
-									name="cantidad"
-									step="0.01"
-									min="0"
-									class={INPUT}
-									bind:value={fila.cantidad}
-								/>
-							</label>
-							<label class="col-span-2 block text-xs text-sand-600 sm:col-span-1">
-								Precio unitario
-								<input
-									type="text"
-									inputmode="decimal"
-									name="precioUnitario"
-									placeholder="0.00"
-									class={INPUT}
-									bind:value={fila.precioUnitario}
-								/>
-							</label>
-						</div>
-					</fieldset>
-				{/each}
-			</div>
-
-			<Button
-				type="button"
-				variant="ghost"
-				size="sm"
-				onclick={agregarFila}
-			>
-				<Plus
-					size={16}
-					aria-hidden="true"
-				/>
-				Agregar renglón
-			</Button>
+			<ConceptosForm
+				bind:filas
+				productos={data.productos}
+				montoName="precioUnitario"
+				montoLabel="Precio unitario"
+				tipos={tiposConcepto}
+				formatoOpcion={formatoOpcionProducto}
+				onProducto={alElegirProducto}
+			/>
 
 			<!--
 				Computed with the SAME helpers the server uses (`centavos`, `importeConcepto`,
@@ -1817,6 +1916,90 @@
 			</Field>
 
 			<Button full>Guardar borrador</Button>
+		</form>
+	</Drawer>
+{/if}
+
+{#if drawer === "costoInterno" && data.puede.cotizarInterna}
+	<Drawer
+		title="Estimar costo"
+		description="Lo que reportó un mecánico, o lo que cotizó un taller aliado. Queda pendiente hasta que alguien la apruebe."
+		closeHref={closeDrawer}
+	>
+		<form
+			method="POST"
+			action="?/costoInterno"
+			class="space-y-4"
+		>
+			<Field
+				label="Mecánico"
+				name="mecanicoId"
+				hint="Opcional. A quién se le atribuye el costo — también sirve para sugerir descripciones que ya ha usado."
+			>
+				{#snippet children(id)}
+					<select
+						{id}
+						name="mecanicoId"
+						class={INPUT}
+					>
+						<option value="">— sin especificar —</option>
+						{#each data.mecanicos as m (m.id)}
+							<option value={m.id}>{m.name}</option>
+						{/each}
+					</select>
+				{/snippet}
+			</Field>
+
+			<ConceptosForm
+				bind:filas={filasCosto}
+				productos={data.productos}
+				montoName="costoUnitario"
+				montoLabel="Costo unitario"
+				mostrarTipo={false}
+				formatoOpcion={formatoOpcionProductoCosto}
+			/>
+
+			<dl class="rounded border border-sand-200 bg-sand-50 p-3 text-sm">
+				<div class="flex justify-between font-medium">
+					<dt class="text-sand-700">Total</dt>
+					<dd class="text-sand-950">{formatoPesos(previaCosto)}</dd>
+				</div>
+			</dl>
+
+			<Button full>Enviar a revisión</Button>
+		</form>
+	</Drawer>
+{/if}
+
+{#if drawer === "rechazarCosto" && data.puede.aprobarInterna}
+	{@const ciId = page.url.searchParams.get("ci")}
+	<Drawer
+		title="Rechazar estimación de costo"
+		description="El motivo queda en el registro."
+		closeHref={closeDrawer}
+	>
+		<form
+			method="POST"
+			action="?/costoInternoEstado"
+			class="space-y-4"
+		>
+			<input
+				type="hidden"
+				name="id"
+				value={ciId}
+			/>
+			<input
+				type="hidden"
+				name="estado"
+				value="rechazada"
+			/>
+			<Field
+				label="Motivo"
+				name="motivo"
+				required
+				hint="Máximo 500 caracteres."
+			/>
+			<Button full>Rechazar</Button>
 		</form>
 	</Drawer>
 {/if}
@@ -2163,5 +2346,85 @@
 
 			<Button full>Solicitar cancelación</Button>
 		</form>
+	</Drawer>
+{/if}
+
+<!--
+	Preview of the OTHER note in a warranty thread — either direction, `?verGarantia=<id>`. Basic
+	info only (comments, diagnosis, cotizaciones, talleres involucrados): a peek, not a navigation
+	away from the note you're actually looking at.
+-->
+{#if data.notaGarantia}
+	{@const g = data.notaGarantia}
+	<Drawer
+		title="Nota #{g.nota.folio}"
+		description="{g.nota.clienteNombre} · {g.nota.unidadEtiqueta}"
+		closeHref={searchHref(page.url, { verGarantia: null })}
+	>
+		<div class="space-y-4 text-sm">
+			<div class="flex flex-wrap items-center gap-2">
+				<Badge tone={notaEstadoTone(g.nota.estado)}>{g.nota.estadoLabel}</Badge>
+				{#if g.nota.garantiaDeFolio}<Badge tone="warn">Garantía de #{g.nota.garantiaDeFolio}</Badge>{/if}
+			</div>
+
+			<p class="text-sand-700">{g.nota.motivo}</p>
+			{#if g.nota.diagnostico}
+				<p><span class="font-medium text-sand-800">Diagnóstico:</span> {g.nota.diagnostico}</p>
+			{/if}
+
+			{#if g.transferencias.length > 0}
+				<div>
+					<h3 class="text-xs font-medium uppercase tracking-wide text-sand-500">Talleres involucrados</h3>
+					<ul class="mt-1 space-y-1">
+						{#each g.transferencias as t (t.id)}
+							<li>
+								{t.tallerNombre}
+								{#if t.qaResultado}· QA: {t.qaResultado}{/if}
+								{#if t.abierta}<Badge tone="brand">Abierta</Badge>{/if}
+							</li>
+						{/each}
+					</ul>
+				</div>
+			{/if}
+
+			{#if g.cotizaciones.length > 0}
+				<div>
+					<h3 class="text-xs font-medium uppercase tracking-wide text-sand-500">Cotizaciones</h3>
+					<ul class="mt-1 space-y-1">
+						{#each g.cotizaciones as c (c.id)}
+							<li class="flex items-center gap-2">
+								<span>Cotización #{c.folio}</span>
+								<Badge tone={cotizacionEstadoTone(c.estado)}>{c.estadoLabel}</Badge>
+								<span class="ml-auto">{formatoPesos(Number(c.total))}</span>
+							</li>
+						{/each}
+					</ul>
+				</div>
+			{/if}
+
+			<div>
+				<h3 class="text-xs font-medium uppercase tracking-wide text-sand-500">Comentarios</h3>
+				{#if g.comentarios.length === 0}
+					<p class="mt-1 text-sand-500">Sin comentarios.</p>
+				{:else}
+					<ul class="mt-1 space-y-2">
+						{#each g.comentarios as c (c.id)}
+							<li class="rounded border border-sand-200 p-2">
+								<p class="text-sand-800">{c.texto}</p>
+								<span class="text-xs text-sand-500">{c.autorEmail} · {new Date(c.createdAt).toLocaleString("es-MX")}</span>
+							</li>
+						{/each}
+					</ul>
+				{/if}
+			</div>
+
+			<Button
+				href="/panel/notas/{g.nota.id}"
+				variant="outline"
+				full
+			>
+				Abrir nota completa
+			</Button>
+		</div>
 	</Drawer>
 {/if}

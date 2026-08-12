@@ -46,6 +46,9 @@ model user {
   facturas          factura[]            @relation("facturaCreadaPor")
   pagos             pago[]               @relation("pagoRegistradoPor")
   ajustes           ajuste[]             @relation("ajusteActualizadoPor")
+  empresaCambios    empresa_config[]     @relation("empresaActualizadoPor")
+  cuentasBancarias  cuenta_bancaria[]    @relation("cuentaBancariaActualizadoPor")
+  permisosOtorgados permiso_rol[]        @relation("permisoOtorgadoPor")
 
   notificaciones      notificacion[]             @relation("notificacionDestinatario")
   suscripcionesPush   push_suscripcion[]         @relation("pushSuscripcion")
@@ -60,6 +63,12 @@ model user {
   notasLiberadas         nota_servicio[]        @relation("notaLiberadaPor")
   recordatoriosHechos    recordatorio[]         @relation("recordatorioHechoPor")
   recordatoriosCreados   recordatorio[]         @relation("recordatorioCreadoPor")
+
+  /// A cotización interna is attributed to a mecánico even though only Admin/Gerente can type it
+  /// in — this is who the cost is ABOUT, not who submitted it.
+  cotizacionesInternasComoMecanico cotizacion_interna[] @relation("cotizacionInternaMecanico")
+  cotizacionesInternasCreadas      cotizacion_interna[] @relation("cotizacionInternaCreadaPor")
+  cotizacionesInternasResueltas    cotizacion_interna[] @relation("cotizacionInternaResueltaPor")
 
   /// Declared because it is USED: `alcanceDeTaller` and `mecanicosDeTaller` both query
   /// `user WHERE tallerId = …`, which is the boundary that decides which notes a partner shop's
@@ -643,12 +652,22 @@ model nota_servicio {
 
   movimientos inventario_movimiento[]
   solicitudes solicitud_refaccion[]
+  cotizacionesInternas cotizacion_interna[]
+
+  /// This note is a WARRANTY follow-up of `garantiaDe` — same vehicle, work that came back.
+  /// Preserved as a real relation (not a text reference) so "which notes trace back to this one"
+  /// is a query, not a search through free text. `garantias` is the reverse: every follow-up this
+  /// note itself originated.
+  garantiaDeId String?
+  garantiaDe   nota_servicio?  @relation("notaGarantia", fields: [garantiaDeId], references: [id], onDelete: SetNull)
+  garantias    nota_servicio[] @relation("notaGarantia")
 
   @@index([estado])
   @@index([clienteId])
   @@index([unidadId])
   @@index([tallerActualId])
   @@index([recibidaAt])
+  @@index([garantiaDeId])
   @@index([mecanicoId])
   @@map("nota_servicio")
 }
@@ -908,6 +927,7 @@ model cotizacion {
 
   conceptos cotizacion_concepto[]
   facturas  factura[]
+  cotizacionesInternas cotizacion_interna[]
 
   @@index([notaId])
   @@index([estado])
@@ -1096,6 +1116,30 @@ model configurations {
 /// stored separately so displaying a secret never requires decrypting it.
 ///
 /// Not merged into `configurations` above (dead scaffolding from the starter template): that table
+/// Which roles hold which permission — the LIVE, admin-editable half of the registry.
+/// `src/lib/roles.ts` keeps the DEFAULT list (and is the only place a new key is ever declared,
+/// since a permission is inherently tied to a real `requirePermission` call somewhere in the
+/// code — that part stays a code change, CLAUDE.md Rule 1 is not repealed). A row existing here
+/// means that role holds that permission; there is no "false" row, only presence/absence — the
+/// same deny-by-default shape as the static registry it replaces at runtime.
+///
+/// Read into an in-memory cache (`actualizarPermisosCache` in roles.ts) rather than queried on
+/// every `can()` call: hundreds of call sites read `can()` synchronously inside a plain `if`, and
+/// that cannot change to an async DB read without turning every one of them into an always-truthy
+/// Promise. See server/permisos.ts for the cache lifecycle.
+model permiso_rol {
+  permiso String @db.VarChar(80)
+  rol     String @db.VarChar(32)
+
+  otorgadoPorId String?
+  otorgadoPor   user?    @relation("permisoOtorgadoPor", fields: [otorgadoPorId], references: [id], onDelete: SetNull)
+  createdAt     DateTime @default(now())
+
+  @@id([permiso, rol])
+  @@index([rol])
+  @@map("permiso_rol")
+}
+
 /// has a composite primary key on an autoincrementing id plus its own unique key, and a
 /// VarChar(255) value an encrypted secret outgrows.
 model ajuste {
@@ -1110,6 +1154,53 @@ model ajuste {
   updatedAt        DateTime @updatedAt
 
   @@map("ajuste")
+}
+
+/// Estación 360's own contact info — the shop's phone/site, not a customer's. Deliberately NOT in
+/// `ajuste`: that table is owner-gated (`requireDueno`) for PAC/billing secrets, and a phone
+/// number needs to be both publicly readable (no auth at all — it's on the public site) and
+/// editable by any Admin/Gerente, not just the system owner. Mixing the two trust levels into one
+/// generic read/write path is the actual risk; a second small table avoids it. Singleton row,
+/// fixed id.
+model empresa_config {
+  id String @id
+
+  telefono String? @db.VarChar(20)
+  sitioWeb String? @db.VarChar(200)
+
+  actualizadoPorId String?
+  actualizadoPor   user?    @relation("empresaActualizadoPor", fields: [actualizadoPorId], references: [id], onDelete: SetNull)
+  updatedAt        DateTime @updatedAt
+
+  @@map("empresa_config")
+}
+
+/// Estación 360's own bank accounts — where a customer transfers payment. Admin/Gerente manage
+/// them; `principal` is the one splice into a cotización email, so a customer never has to be
+/// told which of several accounts to use. Same "exactly one principal" shape as
+/// `taller_sucursal_principal_unica`: promoting a second must fail the write, not silently
+/// demote the first.
+model cuenta_bancaria {
+  id String @id
+
+  banco         String  @db.VarChar(100)
+  titular       String  @db.VarChar(200)
+  clabe         String? @db.VarChar(18)
+  numeroCuenta  String? @db.VarChar(30)
+  notas         String? @db.VarChar(255)
+
+  /// The one account shown in cotización emails. At most one live row may hold it — enforced by
+  /// a partial unique index (see the migration), the same pattern as the taller sucursal.
+  principal Boolean @default(false)
+
+  archivedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  actualizadoPorId String?
+  actualizadoPor   user?   @relation("cuentaBancariaActualizadoPor", fields: [actualizadoPorId], references: [id], onDelete: SetNull)
+
+  @@map("cuenta_bancaria")
 }
 
 // ============================================================================================
@@ -1284,15 +1375,21 @@ model producto {
   /// Reorder point. Null means nobody wants to be told.
   minimo Decimal? @db.Decimal(12, 3)
 
+  /// Manual cost basis for products/services with no FIFO layers (mano_obra, externo) or as an
+  /// editable override. Gated by `producto:costo` — never returned by `publicProducto`, only by
+  /// the costo-aware mapper, same discipline as a secret in `ajustes`.
+  costoReferencia Decimal? @db.Decimal(12, 4)
+
   archivedAt DateTime?
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
 
-  capas             inventario_capa[]
-  movimientos       inventario_movimiento[]
-  conceptos         cotizacion_concepto[]
-  conceptosFactura  factura_concepto[]
-  solicitudes       solicitud_refaccion[]
+  capas                       inventario_capa[]
+  movimientos                 inventario_movimiento[]
+  conceptos                   cotizacion_concepto[]
+  conceptosFactura            factura_concepto[]
+  solicitudes                 solicitud_refaccion[]
+  conceptosCotizacionInterna  cotizacion_interna_concepto[]
 
   @@index([nombre])
   @@index([tipo])
@@ -1441,4 +1538,79 @@ model solicitud_refaccion {
   @@index([notaId])
   @@index([estado])
   @@map("solicitud_refaccion")
+}
+
+/// A cost estimate for a job, usually relayed from a mechanic via WhatsApp. Pending until an
+/// Admin/Gerente approves or rejects it. Once approved it can be linked to a customer-facing
+/// cotización to compute utilidad = venta - costo. The link is deliberately optional at creation
+/// — whoever is typing this in from a text message often does not yet know which quote it belongs
+/// to.
+model cotizacion_interna {
+  id    String @id
+  folio Int    @unique @default(autoincrement())
+
+  notaId String
+  nota   nota_servicio @relation(fields: [notaId], references: [id], onDelete: Cascade)
+
+  /// Which mechanic this cost is attributed to. Nullable: some costs come from a partner shop, not
+  /// one of our own accounts. Drives the description-autocomplete history in
+  /// `sugerirDescripcionesCosto`.
+  mecanicoId String?
+  mecanico   user?   @relation("cotizacionInternaMecanico", fields: [mecanicoId], references: [id], onDelete: SetNull)
+
+  /// Optional, settable now or later via `vincularCotizacionInterna`. Must belong to the same nota
+  /// — enforced in the server function, a foreign key alone cannot say that.
+  cotizacionId String?
+  cotizacion   cotizacion? @relation(fields: [cotizacionId], references: [id], onDelete: SetNull)
+
+  /// pendiente | aprobada | rechazada
+  estado           String  @default("pendiente") @db.VarChar(16)
+  /// Mandatory on a rejection, same reasoning as solicitud_refaccion.resolucionMotivo.
+  resolucionMotivo String? @db.VarChar(500)
+
+  /// Recomputed from conceptos on every write. Not a CFDI-facing figure, so unlike
+  /// cotizacion.total this never needs to freeze — utilidad is computed on read from whichever
+  /// cotizacion_interna rows are currently `aprobada`.
+  total Decimal @default(0) @db.Decimal(12, 2)
+
+  /// Who typed this in — almost always Admin/Gerente relaying a mechanic's message, not the
+  /// mechanic themselves (the `taller` role holds no permission on this table at all).
+  creadaPorId String?
+  creadaPor   user?     @relation("cotizacionInternaCreadaPor", fields: [creadaPorId], references: [id], onDelete: SetNull)
+  resueltaPorId String?
+  resueltaPor   user?     @relation("cotizacionInternaResueltaPor", fields: [resueltaPorId], references: [id], onDelete: SetNull)
+  resueltaAt    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  conceptos cotizacion_interna_concepto[]
+
+  @@index([notaId])
+  @@index([mecanicoId])
+  @@index([cotizacionId])
+  @@index([estado])
+  @@map("cotizacion_interna")
+}
+
+model cotizacion_interna_concepto {
+  id                  String             @id
+  cotizacionInternaId String
+  cotizacionInterna   cotizacion_interna @relation(fields: [cotizacionInternaId], references: [id], onDelete: Cascade)
+
+  descripcion   String  @db.VarChar(500)
+  /// Fractional on purpose, same reasoning as cotizacion_concepto.cantidad.
+  cantidad      Decimal @db.Decimal(10, 2)
+  costoUnitario Decimal @db.Decimal(12, 2)
+  importe       Decimal @db.Decimal(12, 2)
+  orden         Int     @default(0)
+
+  /// Optional catalogue link, same reasoning as cotizacion_concepto.productoId — a one-off cost
+  /// line will never be a product.
+  productoId String?
+  producto   producto? @relation(fields: [productoId], references: [id], onDelete: SetNull)
+
+  @@index([cotizacionInternaId, orden])
+  @@index([productoId])
+  @@map("cotizacion_interna_concepto")
 }

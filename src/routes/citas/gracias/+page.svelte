@@ -3,7 +3,9 @@
 	import Phone from "@lucide/svelte/icons/phone";
 	import Button from "$lib/components/Button.svelte";
 	import { page } from "$app/state";
+	import { telHref, waHref } from "$lib/empresa";
 
+	let { data } = $props();
 	const folio = $derived(page.url.searchParams.get("folio"));
 </script>
 
@@ -34,14 +36,20 @@
 			</p>
 		</div>
 
-		<p class="mt-4 text-sm text-sand-600">¿Prefieres confirmarla ahora mismo?</p>
-		<div class="mt-3 flex flex-wrap justify-center gap-3">
-			<Button href="tel:+526621234567">
-				<Phone size={18} aria-hidden="true" />
-				Llamar al taller
-			</Button>
-			<Button href="https://wa.me/526621234567" variant="outline">WhatsApp</Button>
-		</div>
+		{#if telHref(data.empresa.telefono) || waHref(data.empresa.telefono)}
+			<p class="mt-4 text-sm text-sand-600">¿Prefieres confirmarla ahora mismo?</p>
+			<div class="mt-3 flex flex-wrap justify-center gap-3">
+				{#if telHref(data.empresa.telefono)}
+					<Button href={telHref(data.empresa.telefono)}>
+						<Phone size={18} aria-hidden="true" />
+						Llamar al taller
+					</Button>
+				{/if}
+				{#if waHref(data.empresa.telefono)}
+					<Button href={waHref(data.empresa.telefono)} variant="outline">WhatsApp</Button>
+				{/if}
+			</div>
+		{/if}
 
 		<div class="mt-6 flex flex-wrap justify-center gap-3 border-t border-sand-200 pt-5">
 			<Button href="/" variant="ghost" size="sm">Volver al inicio</Button>

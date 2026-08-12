@@ -2,6 +2,9 @@
 	import CircleCheck from "@lucide/svelte/icons/circle-check";
 	import Phone from "@lucide/svelte/icons/phone";
 	import Button from "$lib/components/Button.svelte";
+	import { telHref, telefonoFormato, waHref } from "$lib/empresa";
+
+	let { data } = $props();
 </script>
 
 <svelte:head>
@@ -29,13 +32,19 @@
 			</p>
 		</div>
 
-		<div class="mt-5 flex flex-wrap justify-center gap-3">
-			<Button href="https://wa.me/526621234567">WhatsApp</Button>
-			<Button href="tel:+526621234567" variant="outline">
-				<Phone size={18} aria-hidden="true" />
-				662 123 4567
-			</Button>
-		</div>
+		{#if telHref(data.empresa.telefono) || waHref(data.empresa.telefono)}
+			<div class="mt-5 flex flex-wrap justify-center gap-3">
+				{#if waHref(data.empresa.telefono)}
+					<Button href={waHref(data.empresa.telefono)}>WhatsApp</Button>
+				{/if}
+				{#if telHref(data.empresa.telefono)}
+					<Button href={telHref(data.empresa.telefono)} variant="outline">
+						<Phone size={18} aria-hidden="true" />
+						{telefonoFormato(data.empresa.telefono)}
+					</Button>
+				{/if}
+			</div>
+		{/if}
 
 		<div class="mt-6 border-t border-sand-200 pt-5">
 			<Button href="/" variant="ghost" size="sm">Volver al inicio</Button>

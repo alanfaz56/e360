@@ -852,6 +852,13 @@ export async function vincularCita(input: { actor: Actor; id: string; body: Reco
 		after: { clienteId, unidadId, entregadorId },
 	});
 
+	// The trio is complete when the hour was already set — `asignarHoraCita` on a still-unlinked
+	// request is the other order this can happen in. Auto-confirm rather than making the counter
+	// open a second drawer to restate an hour it already gave.
+	if (cita.estado === "solicitada" && clienteId && unidadId && cita.inicio) {
+		return confirmarInterno(input.actor, cita, cita.inicio, cita.fin ?? finPorDefecto(cita.inicio), cita.asignadoId);
+	}
+
 	return cita;
 }
 
@@ -984,26 +991,20 @@ async function resolverEntregador(clienteId: string, value: unknown): Promise<st
  * Requires a linked customer and vehicle: a confirmed appointment is a commitment to work on a
  * specific car for a specific person, and the work order that follows hangs off both.
  */
-export async function confirmarCita(input: { actor: Actor; id: string; body: Record<string, unknown> }) {
-	if (!can(input.actor.role, "cita:update")) throw new ClienteError(403, "Sin permiso: cita:update");
-
-	const current = await getCita(input.id);
-	if (!puedeTransicionar(current.estado, "confirmada")) {
-		throw new ClienteError(409, `Una cita ${citaEstadoLabel(current.estado).toLowerCase()} ya no se confirma.`);
-	}
-	if (!current.clienteId || !current.unidadId) {
-		throw new ClienteError(409, "Antes de confirmar, vincula la cita a un cliente y a una unidad.");
-	}
-
-	const inicio = leerInstante(input.body.inicio, "La hora de inicio");
-	const fin = input.body.fin ? leerInstante(input.body.fin, "La hora de fin") : finPorDefecto(inicio);
-	if (fin <= inicio) throw new ClienteError(400, "La hora de fin debe ser posterior al inicio");
-
-	const asignadoId =
-		input.body.asignadoId !== undefined
-			? await resolverAsignado(input.actor, input.body.asignadoId)
-			: current.asignadoId;
-
+/**
+ * The actual write: flips `solicitada` → `confirmada` with an hour. Shared by `confirmarCita`
+ * (the explicit button) and the auto-confirm inside `vincularCita`/`asignarHoraCita` — whichever
+ * of the two actions completes the trio (cliente, unidad, hora) triggers this same path, so a
+ * counter that already supplied everything is never asked to click confirm again for a fact it
+ * already gave.
+ */
+async function confirmarInterno(
+	actor: Actor,
+	current: Awaited<ReturnType<typeof getCita>>,
+	inicio: Date,
+	fin: Date,
+	asignadoId: string | null,
+) {
 	const cita = await prisma.cita.update({
 		where: { id: current.id },
 		data: {
@@ -1018,7 +1019,7 @@ export async function confirmarCita(input: { actor: Actor; id: string; body: Rec
 
 	await recordAudit(prisma, {
 		action: "cita.confirm",
-		actor: input.actor,
+		actor,
 		entityId: cita.id,
 		entityLabel: citaLabel(cita),
 		// The franja is what the customer asked for; the hour is what they got. Keep both.
@@ -1041,7 +1042,78 @@ export async function confirmarCita(input: { actor: Actor; id: string; body: Rec
 		});
 	}
 
-	await avisarAsignado(cita, input.actor.id);
+	await avisarAsignado(cita, actor.id);
+
+	return cita;
+}
+
+export async function confirmarCita(input: { actor: Actor; id: string; body: Record<string, unknown> }) {
+	if (!can(input.actor.role, "cita:update")) throw new ClienteError(403, "Sin permiso: cita:update");
+
+	const current = await getCita(input.id);
+	if (!puedeTransicionar(current.estado, "confirmada")) {
+		throw new ClienteError(409, `Una cita ${citaEstadoLabel(current.estado).toLowerCase()} ya no se confirma.`);
+	}
+	if (!current.clienteId || !current.unidadId) {
+		throw new ClienteError(409, "Antes de confirmar, vincula la cita a un cliente y a una unidad.");
+	}
+
+	const inicio = leerInstante(input.body.inicio, "La hora de inicio");
+	const fin = input.body.fin ? leerInstante(input.body.fin, "La hora de fin") : finPorDefecto(inicio);
+	if (fin <= inicio) throw new ClienteError(400, "La hora de fin debe ser posterior al inicio");
+
+	const asignadoId =
+		input.body.asignadoId !== undefined
+			? await resolverAsignado(input.actor, input.body.asignadoId)
+			: current.asignadoId;
+
+	return confirmarInterno(input.actor, current, inicio, fin, asignadoId);
+}
+
+/**
+ * Set just the hour on a `solicitada` request — no cliente/unidad required. The counter often
+ * knows the time slot before it knows who the appointment is for (a caller says "Tuesday at
+ * 10am" before their records are pulled up).
+ *
+ * Auto-confirms when cliente+unidad are ALREADY linked: the trio is complete either way it's
+ * assembled, and `vincularCita` does the mirror check for when the hour arrives second.
+ */
+export async function asignarHoraCita(input: { actor: Actor; id: string; body: Record<string, unknown> }) {
+	if (!can(input.actor.role, "cita:update")) throw new ClienteError(403, "Sin permiso: cita:update");
+
+	const current = await getCita(input.id);
+	if (current.estado !== "solicitada") {
+		throw new ClienteError(409, `Una cita ${citaEstadoLabel(current.estado).toLowerCase()} no se asigna aquí.`);
+	}
+
+	const inicio = leerInstante(input.body.inicio, "La hora de inicio");
+	const fin = input.body.fin ? leerInstante(input.body.fin, "La hora de fin") : finPorDefecto(inicio);
+	if (fin <= inicio) throw new ClienteError(400, "La hora de fin debe ser posterior al inicio");
+
+	const asignadoId =
+		input.body.asignadoId !== undefined
+			? await resolverAsignado(input.actor, input.body.asignadoId)
+			: current.asignadoId;
+
+	if (current.clienteId && current.unidadId) {
+		return confirmarInterno(input.actor, current, inicio, fin, asignadoId);
+	}
+
+	const cita = await prisma.cita.update({
+		where: { id: current.id },
+		data: { inicio, fin, asignadoId },
+		include: INCLUDE,
+	});
+
+	await recordAudit(prisma, {
+		action: "cita.hora",
+		actor: input.actor,
+		entityId: cita.id,
+		entityLabel: citaLabel(cita),
+		summary: `Cita #${cita.folio}: hora asignada (${horaEnZona(inicio)}), falta vincular cliente y unidad para confirmarse`,
+		before: { inicio: null },
+		after: { inicio: inicio.toISOString(), fin: fin.toISOString() },
+	});
 
 	return cita;
 }

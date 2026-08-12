@@ -23,16 +23,44 @@ const boton = (texto: string, url: string) =>
 /**
  * Every `cliente_*` event in NOTIFICACION_EVENTOS, sent as-is — see the file header.
  * `url`, when given, is already absolute — the caller resolves it against the site's own origin.
+ *
+ * `extra` is the one deliberate exception to "one generic template": today it carries the bank
+ * transfer block on a cotización email, and only that call site ever sets it — see
+ * `enviarCorreoCliente`. Appended after the button, its own small block, never woven into `cuerpo`
+ * itself so the two stay visibly separate: what happened, and how to pay for it.
  */
-export function avisoCliente(input: { titulo: string; cuerpo: string; url: string | null }) {
+export function avisoCliente(input: {
+	titulo: string;
+	cuerpo: string;
+	url: string | null;
+	extra?: { html: string; texto: string } | null;
+}) {
 	return {
 		asunto: input.titulo,
 		html: envoltura(
 			`<h1 style="margin:0 0 12px;font-size:18px;">${input.titulo}</h1>
 <p style="margin:0;font-size:14px;line-height:1.5;color:#44403c;">${input.cuerpo}</p>
-${input.url ? boton("Ver seguimiento", input.url) : ""}`,
+${input.url ? boton("Ver seguimiento", input.url) : ""}
+${input.extra?.html ?? ""}`,
 		),
-		texto: `${input.titulo}\n\n${input.cuerpo}${input.url ? `\n\n${input.url}` : ""}`,
+		texto: `${input.titulo}\n\n${input.cuerpo}${input.url ? `\n\n${input.url}` : ""}${input.extra?.texto ? `\n\n${input.extra.texto}` : ""}`,
+	};
+}
+
+/** The bank-transfer block for a cotización email. Only account info a customer needs to pay. */
+export function bloqueCuentaBancaria(cuenta: { banco: string; titular: string; clabe: string | null; numeroCuenta: string | null }) {
+	const filas = [
+		["Banco", cuenta.banco],
+		["Titular", cuenta.titular],
+		...(cuenta.clabe ? [["CLABE", cuenta.clabe]] : []),
+		...(cuenta.numeroCuenta ? [["Cuenta", cuenta.numeroCuenta]] : []),
+	];
+	return {
+		html: `<div style="margin-top:20px;padding-top:16px;border-top:1px solid #e7e5e4;">
+<p style="margin:0 0 8px;font-size:13px;font-weight:700;color:#1c1917;">Para transferir el pago</p>
+${filas.map(([k, v]) => `<p style="margin:0;font-size:13px;color:#44403c;"><strong>${k}:</strong> ${v}</p>`).join("\n")}
+</div>`,
+		texto: `Para transferir el pago:\n${filas.map(([k, v]) => `${k}: ${v}`).join("\n")}`,
 	};
 }
 

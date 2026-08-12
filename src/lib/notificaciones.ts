@@ -134,6 +134,21 @@ export const NOTIFICACION_EVENTOS = {
 		alcance: "directo",
 		icon: "package",
 	},
+	cotizacion_interna_creada: {
+		label: "Hay una estimación de costo pendiente",
+		descripcion: "Alguien capturó lo que reportó un mecánico; falta aprobarla o rechazarla.",
+		audiencia: "empleado",
+		alcance: "difusion",
+		permiso: "cotizacion_interna:authorize",
+		icon: "scroll-text",
+	},
+	cotizacion_interna_resuelta: {
+		label: "Resolvieron una estimación de costo",
+		descripcion: "La aprobaron o la rechazaron.",
+		audiencia: "empleado",
+		alcance: "directo",
+		icon: "scroll-text",
+	},
 	nota_asignada: {
 		label: "Me asignaron una unidad",
 		descripcion: "Una nota de servicio quedó a tu nombre.",

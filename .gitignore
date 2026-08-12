@@ -25,3 +25,4 @@ vite.config.ts.timestamp-*
 # Prisma generated client
 /src/generated/
 /prisma/src/
+static/editables estacion 360.*

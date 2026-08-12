@@ -33,15 +33,20 @@ export const ROLE_RANK: Record<Role, number> = {
 };
 
 /**
- * The permission registry.
+ * The permission registry — DEFAULTS, not necessarily what's live.
  *
- * Key format: `<resource>:<action>`. The value is the exhaustive list of roles that
- * hold it. A permission missing from this map is denied for everyone — deny by default.
+ * Key format: `<resource>:<action>`. The value is the exhaustive DEFAULT list of roles that
+ * hold it — what a fresh install seeds `permiso_rol` with, and what `can()` falls back to for
+ * any key the database cache does not (yet) have an answer for. A permission missing from this
+ * map cannot exist at all — deny by default, and there is nothing to seed or to edit for it.
  *
- * ADDING A FEATURE? Add its permission key here first, with the roles confirmed by the
- * product owner. Do not invent the role list.
+ * ADDING A FEATURE? Add its permission key here first, with the roles confirmed by the product
+ * owner (CLAUDE.md Rule 1 — that step does not go away). From then on the LIVE answer for who
+ * holds it lives in the database and is editable at /panel/permisos; this object is only ever
+ * consulted again as the fallback for a brand-new key nobody has touched yet, or if the database
+ * is unreachable. Never read this object directly to answer "does X hold Y" — call `can()`.
  */
-export const PERMISSIONS = {
+export const PERMISOS_DEFAULT = {
 	"invitation:create": ["admin", "gerente"],
 	"invitation:list": ["admin", "gerente"],
 	// Revoking your OWN pending invitation. Revoking someone else's additionally requires
@@ -101,8 +106,8 @@ export const PERMISSIONS = {
 	"cita:advance": ["admin", "gerente", "operador"],
 
 	// --- Notas de servicio -------------------------------------------------------------------
-	// The Operador receives the vehicle, inspects it and routes the job. Closing and cancelling
-	// stay with Admin/Gerente, the same split as cita:cancel.
+	// The Operador receives the vehicle, inspects it, routes the job and hands the keys back over.
+	// Cancelling alone stays Admin/Gerente, the same split as cita:cancel.
 	"nota:read": ["admin", "gerente", "operador"],
 	"nota:create": ["admin", "gerente", "operador"],
 	"nota:inspect": ["admin", "gerente", "operador"],
@@ -111,11 +116,10 @@ export const PERMISSIONS = {
 	// A mechanic holds this too, but `comentarNota` FORCES `interno: true` for them: notes to the
 	// customer are written by whoever owns the relationship with that customer.
 	"nota:comment": ["admin", "gerente", "operador", "taller"],
-	"nota:close": ["admin", "gerente"],
+	// The Operador at the counter is who actually hands the keys over — narrowing this to
+	// Admin/Gerente meant the front desk had to flag down a manager for every pickup.
+	"nota:close": ["admin", "gerente", "operador"],
 	"nota:cancel": ["admin", "gerente"],
-	// Filling the pre-delivery checklist is deliberately WIDER than nota:close: the Operador at
-	// the counter is usually who walks around the vehicle, but formally handing it over stays
-	// Admin/Gerente, unchanged.
 	"nota:liberacion": ["admin", "gerente", "operador"],
 
 	// Partner workshops Estación 360 sources jobs for. The `taller` ROLE still holds nothing —
@@ -141,6 +145,9 @@ export const PERMISSIONS = {
 	// what the shop charges for it.
 	"producto:read": ["admin", "gerente", "operador"],
 	"producto:manage": ["admin", "gerente"],
+	// The cost basis behind precioVenta — margin is Admin-only, narrower than producto:manage.
+	// Gerente can still price a product; it just cannot see what that price is worth.
+	"producto:costo": ["admin"],
 	"inventario:read": ["admin", "gerente", "operador"],
 	// Receiving goods and correcting stock both move money; issuing a part to a job is daily work.
 	"inventario:entrada": ["admin", "gerente"],
@@ -176,6 +183,17 @@ export const PERMISSIONS = {
 	// borrador until a Gerente was free, which is the shop losing the sale to its own permissions.
 	"cotizacion:send": ["admin", "gerente", "operador"],
 	"cotizacion:authorize": ["admin", "gerente", "operador"],
+	// The computed utilidad (venta - costo aprobado). Admin-only on purpose: Gerente can create
+	// and approve the raw cost lines below without seeing the resulting margin figure.
+	"cotizacion:costo": ["admin"],
+
+	// A cost ESTIMATE for a job, almost always relayed from a mechanic via WhatsApp — not the
+	// mechanic's own submission. `taller` holds none of these three: mechanics still see no price
+	// or cost anywhere in the app, same rule as `producto:read` excluding them.
+	"cotizacion_interna:read": ["admin", "gerente"],
+	"cotizacion_interna:create": ["admin", "gerente"],
+	"cotizacion_interna:authorize": ["admin", "gerente"],
+
 	"factura:read": ["admin", "gerente", "operador"],
 	"factura:create": ["admin", "gerente"],
 	"factura:cancel": ["admin", "gerente"],
@@ -198,19 +216,69 @@ export const PERMISSIONS = {
 	// and handing them the key that stamps CFDIs in our name is not a decision the ladder makes.
 	"ajustes:read": ["admin"],
 	"ajustes:manage": ["admin"],
+
+	// Estación 360's own contact info (phone, site). Deliberately NOT gated by `requireDueno` like
+	// `ajustes:*` above — a phone number is routine shop info, not a PAC credential, and the shop's
+	// own Admin/Gerente must be able to change it without being the system owner.
+	"empresa:manage": ["admin", "gerente"],
+
+	// Bank accounts a customer transfers money into. Admin-only, narrower than `empresa:manage`:
+	// a wrong phone number is a mistake, a wrong CLABE redirects somebody's payment.
+	"cuenta_bancaria:manage": ["admin"],
+
+	// The permission registry itself. Admin cannot be removed from this one specific key — see
+	// `actualizarPermisoRol` in server/permisos.ts — or a bad edit would permanently lock
+	// everybody, including Admin, out of the one screen that could undo it.
+	"permisos:manage": ["admin"],
 } as const satisfies Record<string, readonly Role[]>;
 
-export type Permission = keyof typeof PERMISSIONS;
+export type Permission = keyof typeof PERMISOS_DEFAULT;
+
+export const PERMISSION_KEYS = Object.keys(PERMISOS_DEFAULT) as Permission[];
 
 export function isRole(value: unknown): value is Role {
 	return typeof value === "string" && (ROLES as readonly string[]).includes(value);
 }
 
+/**
+ * The LIVE registry, in memory. Starts out identical to `PERMISOS_DEFAULT` (so `can()` answers
+ * correctly even before anything has ever loaded the database — fails safe, never fails open),
+ * and `actualizarPermisosCache` replaces it wholesale once `server/permisos.ts` has read the
+ * `permiso_rol` table. Module-level and mutable on purpose: `can()` below has to stay synchronous
+ * — hundreds of call sites read it inside a plain `if`, and turning it into a Promise would make
+ * every one of those conditions unconditionally truthy instead of failing to compile. A DB-backed
+ * permission system with a sync `can()` has to mean a cache, not an async `can()`.
+ */
+let permisosVivos: Record<string, readonly Role[]> = PERMISOS_DEFAULT;
+
+/**
+ * Replace the live registry. Called only from `server/permisos.ts` after reading the database —
+ * never call this with partial data. Any key `PERMISOS_DEFAULT` has that `datos` does not (a
+ * permission added in code since the last DB read) falls back to its coded default rather than
+ * silently denying everyone, which is what makes a brand-new permission usable immediately.
+ */
+export function actualizarPermisosCache(datos: Readonly<Partial<Record<Permission, readonly Role[]>>>): void {
+	const combinado: Record<string, readonly Role[]> = {};
+	for (const clave of PERMISSION_KEYS) combinado[clave] = datos[clave] ?? PERMISOS_DEFAULT[clave];
+	permisosVivos = combinado;
+}
+
 /** Deny by default: an unknown role or an unregistered permission is always false. */
 export function can(role: string | null | undefined, permission: Permission): boolean {
 	if (!isRole(role)) return false;
-	const allowed = PERMISSIONS[permission] as readonly Role[] | undefined;
+	const allowed = permisosVivos[permission] as readonly Role[] | undefined;
 	return allowed?.includes(role) ?? false;
+}
+
+/**
+ * Every role that currently holds `permission`, from the LIVE registry. Used where the audience
+ * is "everyone who holds X" rather than "does this one actor hold X" — `usuariosCon` for a
+ * `difusion` notification is the caller. Reading `permisosVivos` directly (never
+ * `PERMISOS_DEFAULT`) is what makes an admin's edit apply to who gets paged, not just to who
+ * passes a permission check.
+ */
+export function rolesQueTienen(permission: Permission): readonly Role[] {
+	return permisosVivos[permission] ?? [];
 }
 
 /**
@@ -268,5 +336,5 @@ export function assignableContactoRoles(actor: string | null | undefined): Conta
 /** Every permission a role holds. Handy for `/api/me` so clients can hide dead UI. */
 export function permissionsFor(role: string | null | undefined): Permission[] {
 	if (!isRole(role)) return [];
-	return (Object.keys(PERMISSIONS) as Permission[]).filter((p) => can(role, p));
+	return PERMISSION_KEYS.filter((p) => can(role, p));
 }

@@ -16,6 +16,7 @@
 	import PushToggle from "$lib/components/PushToggle.svelte";
 	import { formatoPesos } from "$lib/comercial";
 	import { haceCuanto } from "$lib/notificaciones";
+	import { telHref, telefonoFormato, waHref } from "$lib/empresa";
 
 	let { data } = $props();
 
@@ -289,18 +290,22 @@
 			</p>
 			<p class="mt-1 text-sand-600">Háblanos y con gusto te explicamos.</p>
 			<p class="mt-3 flex flex-wrap gap-3">
-				<a
-					href="https://wa.me/526621234567"
-					class="inline-flex items-center rounded-md bg-whatsapp px-4 py-2.5 font-bold text-white"
-				>
-					WhatsApp
-				</a>
-				<a
-					href="tel:+526621234567"
-					class="inline-flex items-center rounded-md border-2 border-sand-300 px-4 py-2.5 font-bold text-sand-950"
-				>
-					662 123 4567
-				</a>
+				{#if waHref(data.empresa.telefono)}
+					<a
+						href={waHref(data.empresa.telefono)}
+						class="inline-flex items-center rounded-md bg-whatsapp px-4 py-2.5 font-bold text-white"
+					>
+						WhatsApp
+					</a>
+				{/if}
+				{#if telHref(data.empresa.telefono)}
+					<a
+						href={telHref(data.empresa.telefono)}
+						class="inline-flex items-center rounded-md border-2 border-sand-300 px-4 py-2.5 font-bold text-sand-950"
+					>
+						{telefonoFormato(data.empresa.telefono)}
+					</a>
+				{/if}
 			</p>
 		</section>
 	</main>

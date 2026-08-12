@@ -69,6 +69,8 @@ const INCLUDE = {
 	entregadaAContacto: { select: { nombre: true } },
 	liberadaPor: { select: { name: true } },
 	cita: { select: { folio: true } },
+	garantiaDe: { select: { folio: true } },
+	garantias: { select: { id: true, folio: true, estado: true } },
 	_count: { select: { evidencias: true, comentarios: true, cotizaciones: true, facturas: true } },
 } satisfies Prisma.nota_servicioInclude;
 
@@ -82,6 +84,13 @@ export const publicNota = (n: NotaRow) => ({
 	estadoLabel: notaEstadoLabel(n.estado),
 	citaId: n.citaId,
 	citaFolio: n.cita?.folio ?? null,
+	// A warranty follow-up of an earlier note on the SAME vehicle — a real relation, not a text
+	// reference, so "which notes trace back to this one" is a query.
+	garantiaDeId: n.garantiaDeId,
+	garantiaDeFolio: n.garantiaDe?.folio ?? null,
+	// The reverse direction — follow-ups THIS note spawned — so the thread reads both ways from
+	// whichever end somebody opens.
+	garantias: n.garantias.map((g) => ({ id: g.id, folio: g.folio, estado: g.estado, estadoLabel: notaEstadoLabel(g.estado) })),
 	clienteId: n.clienteId,
 	clienteNombre: n.cliente?.nombreCompleto ?? null,
 	clienteTelefono: n.cliente?.telefono ?? null,
@@ -511,6 +520,21 @@ export async function crearNota(input: { actor: Actor; body: Record<string, unkn
 	}
 	if (unidad.archivedAt) throw new ClienteError(409, "Esa unidad está archivada.");
 
+	// A warranty follow-up must trace back to a PRIOR note on the same vehicle — otherwise
+	// "garantía de qué" has no answer, and a customer's warranty claim against the wrong truck's
+	// history is worse than not linking one at all.
+	const garantiaDeId = trim(input.body.garantiaDeId);
+	if (garantiaDeId) {
+		const previa = await prisma.nota_servicio.findUnique({
+			where: { id: garantiaDeId },
+			select: { unidadId: true, folio: true },
+		});
+		if (!previa) throw new ClienteError(404, "La nota de garantía no existe.");
+		if (previa.unidadId !== unidadId) {
+			throw new ClienteError(400, "Esa nota de garantía es de otra unidad.");
+		}
+	}
+
 	// One vehicle, one open job. Two live notes for the same truck is how work gets duplicated
 	// and invoiced twice.
 	//
@@ -538,6 +562,7 @@ export async function crearNota(input: { actor: Actor; body: Record<string, unkn
 					clienteId: clienteId!,
 					unidadId: unidadId!,
 					motivo: motivo!,
+					garantiaDeId,
 					estado: "recibida",
 					recibidaPorId: input.actor.id,
 					...entrego,
@@ -597,10 +622,12 @@ export async function crearNota(input: { actor: Actor; body: Record<string, unkn
 				actor: input.actor,
 				entityId: creada.id,
 				entityLabel: notaLabel(creada),
-				summary: citaId
-					? `Unidad recibida de la cita #${creada.cita?.folio}: nota #${creada.folio}`
-					: `Nota #${creada.folio} abierta sin cita`,
-				after: { clienteId, unidadId, kilometraje, citaId },
+				summary:
+					(citaId
+						? `Unidad recibida de la cita #${creada.cita?.folio}: nota #${creada.folio}`
+						: `Nota #${creada.folio} abierta sin cita`) +
+					(garantiaDeId ? ` · garantía de la nota #${creada.garantiaDe?.folio}` : ""),
+				after: { clienteId, unidadId, kilometraje, citaId, garantiaDeId },
 			});
 
 			return creada;
@@ -947,6 +974,12 @@ export async function guardarLiberacion(input: { actor: Actor; id: string; body:
 	const unidadLiberada = input.body.unidadLiberada === true || input.body.unidadLiberada === "1";
 	const observaciones = trim(input.body.observacionesLiberacion);
 
+	// "Liberación 360" is the only gate on reaching "lista" (line ~1039 of avanzarNota). Once it is
+	// satisfied there is nothing left for a human to decide — making them go press a second button
+	// is the same bug as the pre-`lista` button that used to 409 here. Auto-advance instead.
+	const avanzaALista =
+		unidadLiberada && puedeTransicionarNota(current.estado, "lista") && current.estado !== "en_taller";
+
 	const nota = await prisma.$transaction(async (tx) => {
 		await tx.nota_liberacion.deleteMany({ where: { notaId: current.id } });
 		if (items.length > 0) {
@@ -960,6 +993,7 @@ export async function guardarLiberacion(input: { actor: Actor; id: string; body:
 				liberacionAt: new Date(),
 				liberadaPorId: input.actor.id,
 				observacionesLiberacion: observaciones,
+				...(avanzaALista ? { estado: "lista" as NotaEstado } : {}),
 			},
 			include: INCLUDE,
 		});
@@ -973,8 +1007,28 @@ export async function guardarLiberacion(input: { actor: Actor; id: string; body:
 			after: { unidadLiberada, items: items.length },
 		});
 
+		if (avanzaALista) {
+			await recordAudit(tx, {
+				action: "nota.advance",
+				actor: input.actor,
+				entityId: actualizada.id,
+				entityLabel: notaLabel(actualizada),
+				summary: `Nota #${actualizada.folio}: ${notaEstadoLabel(current.estado)} → ${notaEstadoLabel("lista")} (automático, checklist de liberación completo)`,
+				before: { estado: current.estado },
+				after: { estado: "lista" },
+			});
+		}
+
 		return actualizada;
 	});
+
+	if (avanzaALista) {
+		await avisarCliente(nota, {
+			evento: "cliente_unidad_lista",
+			titulo: "Tu unidad está lista",
+			cuerpo: `Ya puedes pasar por ella. Nota #${nota.folio}.`,
+		});
+	}
 
 	return nota;
 }
@@ -1236,6 +1290,8 @@ export async function historialUnidad(unidadId: string) {
 			cliente: { select: { nombreCompleto: true } },
 			recibidaPor: { select: { name: true } },
 			entregadaAContacto: { select: { nombre: true } },
+			garantiaDe: { select: { folio: true } },
+			garantias: { select: { id: true, folio: true, estado: true }, orderBy: { recibidaAt: "asc" } },
 			transferencias: {
 				orderBy: { desde: "desc" },
 				include: {
@@ -1303,10 +1359,16 @@ export async function historialUnidad(unidadId: string) {
 			entregadaAt: n.entregadaAt?.toISOString() ?? null,
 			clienteNombre: n.cliente?.nombreCompleto ?? null,
 			motivo: n.motivo,
+			diagnostico: n.diagnostico,
 			kilometraje: n.kilometraje,
 			recibidaPor: n.recibidaPor?.name ?? null,
 			entregadaA: n.entregadaAContacto?.nombre ?? null,
 			talleres: n.transferencias.length,
+			// Warranty thread: which prior note this one follows up on, and which later notes came
+			// back claiming warranty against THIS one — both directions of the same relation.
+			garantiaDeId: n.garantiaDeId,
+			garantiaDeFolio: n.garantiaDe?.folio ?? null,
+			garantias: n.garantias.map((g) => ({ id: g.id, folio: g.folio, estado: g.estado, estadoLabel: notaEstadoLabel(g.estado) })),
 		})),
 		// Every transfer, flat and newest first — the taller history for this vehicle.
 		transferencias: notas.flatMap((n) =>
@@ -1333,6 +1395,7 @@ export async function historialUnidad(unidadId: string) {
 			abiertas: notas.filter((n) => NOTA_ESTADOS_ABIERTOS.includes(n.estado as never)).length,
 			talleresDistintos: porTaller.size,
 			rechazos: [...porTaller.values()].reduce((s, t) => s + t.rechazos, 0),
+			garantias: notas.filter((n) => n.garantiaDeId !== null).length,
 		},
 	};
 }
@@ -2168,9 +2231,10 @@ export async function capturarDiagnostico(input: {
 	if (!can(input.actor.role, "nota:diagnostico")) throw new ClienteError(403, "Sin permiso: nota:diagnostico");
 
 	const current = await getNota(input.id);
-	if (!can(input.actor.role, "nota:read") && current.mecanicoId !== input.actor.id) {
-		throw new ClienteError(404, "Nota no encontrada");
-	}
+	// Same boundary `comentarNota`/`firmarEvidencia` use — work routes through the taller a note is
+	// assigned to now, not through `mecanicoId` by hand, which nothing in the panel writes anymore.
+	// The old hand-rolled comparison here 404'd every note a mechanic could legitimately open.
+	await exigirNotaPropia(input.actor, current.id);
 	if (current.estado === "entregada" || current.estado === "cancelada") {
 		throw new ClienteError(409, `Una nota ${notaEstadoLabel(current.estado).toLowerCase()} ya no se edita.`);
 	}

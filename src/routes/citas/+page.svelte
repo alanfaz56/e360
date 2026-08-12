@@ -14,6 +14,7 @@
 	import Button from "$lib/components/Button.svelte";
 	import Field from "$lib/components/Field.svelte";
 	import { CITA_TIPO_DEFAULT } from "$lib/citas";
+	import { telHref, telefonoFormato, waHref } from "$lib/empresa";
 
 	let { data, form } = $props();
 
@@ -65,9 +66,12 @@
 				<p class="font-bold">Siempre confirmamos contigo antes de cualquier cosa</p>
 				<p class="mt-1 leading-relaxed">
 					Nos comunicamos por teléfono, WhatsApp o correo para confirmar la hora y el servicio.
-					Nada se cobra ni se mueve sin tu visto bueno. Si prefieres,
-					<a class="font-medium text-brand-700 underline" href="tel:+526621234567">llámanos</a>
-					y lo agendamos contigo en el momento.
+					Nada se cobra ni se mueve sin tu visto bueno.
+					{#if telHref(data.empresa.telefono)}
+						Si prefieres,
+						<a class="font-medium text-brand-700 underline" href={telHref(data.empresa.telefono)}>llámanos</a>
+						y lo agendamos contigo en el momento.
+					{/if}
 				</p>
 			</div>
 		</div>
@@ -79,18 +83,22 @@
 					La verificación de seguridad no funciona sin él. Escríbenos y te agendamos igual:
 				</p>
 				<p class="mt-3 flex flex-wrap gap-3">
-					<a
-						href="https://wa.me/526621234567"
-						class="inline-flex items-center rounded-md bg-whatsapp px-4 py-2 font-bold text-white"
-					>
-						WhatsApp
-					</a>
-					<a
-						href="tel:+526621234567"
-						class="inline-flex items-center rounded-md border-2 border-sand-300 px-4 py-2 font-bold text-sand-950"
-					>
-						662 123 4567
-					</a>
+					{#if waHref(data.empresa.telefono)}
+						<a
+							href={waHref(data.empresa.telefono)}
+							class="inline-flex items-center rounded-md bg-whatsapp px-4 py-2 font-bold text-white"
+						>
+							WhatsApp
+						</a>
+					{/if}
+					{#if telHref(data.empresa.telefono)}
+						<a
+							href={telHref(data.empresa.telefono)}
+							class="inline-flex items-center rounded-md border-2 border-sand-300 px-4 py-2 font-bold text-sand-950"
+						>
+							{telefonoFormato(data.empresa.telefono)}
+						</a>
+					{/if}
 				</p>
 			</div>
 		</noscript>

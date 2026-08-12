@@ -26,41 +26,85 @@ import {
 	cambiarEstadoCotizacion,
 	cancelarFactura,
 	crearCotizacion,
+	crearCotizacionInterna,
 	crearFactura,
 	listCotizaciones,
+	listCotizacionesInternas,
 	listFacturas,
 	registrarPago,
 	reenviarCotizacionCorreo,
+	resolverCotizacionInterna,
 	saldoCliente,
 	surtirCotizacion,
+	utilidadDeCotizacion,
+	vincularCotizacionInterna,
 } from "$lib/server/comercial";
 import { listSolicitudes, resolverSolicitud } from "$lib/server/inventario";
 import { listProductos } from "$lib/server/productos";
 import { fallo } from "$lib/server/errores";
 import { cancelarEnSat, timbrarFactura } from "$lib/server/timbrado";
 
-export const load: ServerLoad = async ({ locals, params }) => {
+export const load: ServerLoad = async ({ locals, params, url }) => {
 	const actor = requirePermission(locals, "nota:read");
 	const detalle = await getNotaDetalle(params.id!);
 	const { nota } = detalle;
 
-	const [talleres, contactos, faltantes, cotizaciones, facturas, credito, solicitudes, catalogo] = await Promise.all([
-		can(actor.role, "taller:read")
-			? (await listTalleres({ perPage: 100 })).talleres.filter((t) => !t.archivado)
-			: [],
-		listContactos(nota.clienteId),
-		faltantesInventario(nota.id),
-		can(actor.role, "cotizacion:read") ? listCotizaciones({ notaId: nota.id, perPage: 50 }) : null,
-		can(actor.role, "factura:read") ? listFacturas({ notaId: nota.id, perPage: 50 }) : null,
-		can(actor.role, "factura:read") ? saldoCliente(nota.clienteId) : null,
-		can(actor.role, "inventario:solicitar") ? listSolicitudes({ notaId: nota.id }) : [],
-		// The quote builder's catalogue. Only fetched for somebody who can actually quote, and
-		// only the live rows — an archived product is refused by `resolverProductos` anyway, so
-		// offering it would be a button that always fails.
-		can(actor.role, "cotizacion:create") && can(actor.role, "producto:read")
-			? listProductos({ perPage: 200 })
-			: null,
-	]);
+	// Preview drawer for a warranty-linked note (either direction of the thread): basic info only
+	// — comments, diagnosis, cotizaciones, talleres involucrados — never the whole detail screen,
+	// so clicking a related note doesn't lose your place on this one.
+	const verGarantiaId = url.searchParams.get("verGarantia");
+	let notaGarantia: (Awaited<ReturnType<typeof getNotaDetalle>> & { cotizaciones: unknown[] }) | null = null;
+	if (verGarantiaId && (verGarantiaId === nota.garantiaDeId || nota.garantias.some((g) => g.id === verGarantiaId))) {
+		try {
+			const ajena = await getNotaDetalle(verGarantiaId);
+			notaGarantia = {
+				...ajena,
+				cotizaciones: can(actor.role, "cotizacion:read")
+					? (await listCotizaciones({ notaId: verGarantiaId, perPage: 50 })).cotizaciones
+					: [],
+			};
+		} catch {
+			notaGarantia = null;
+		}
+	}
+
+	const [talleres, contactos, faltantes, cotizaciones, facturas, credito, solicitudes, catalogo, cotizacionesInternas, mecanicos] =
+		await Promise.all([
+			can(actor.role, "taller:read")
+				? (await listTalleres({ perPage: 100 })).talleres.filter((t) => !t.archivado)
+				: [],
+			listContactos(nota.clienteId),
+			faltantesInventario(nota.id),
+			can(actor.role, "cotizacion:read") ? listCotizaciones({ notaId: nota.id, perPage: 50 }) : null,
+			can(actor.role, "factura:read") ? listFacturas({ notaId: nota.id, perPage: 50 }) : null,
+			can(actor.role, "factura:read") ? saldoCliente(nota.clienteId) : null,
+			can(actor.role, "inventario:solicitar") ? listSolicitudes({ notaId: nota.id }) : [],
+			// The quote builder's catalogue. Only fetched for somebody who can actually quote, and
+			// only the live rows — an archived product is refused by `resolverProductos` anyway, so
+			// offering it would be a button that always fails.
+			can(actor.role, "cotizacion:create") && can(actor.role, "producto:read")
+				? listProductos({ perPage: 200 })
+				: null,
+			can(actor.role, "cotizacion_interna:read") ? listCotizacionesInternas(actor, { notaId: nota.id }) : [],
+			// The mechanic picker for a cost estimate — a scoped direct query, not `listUsers`, so
+			// this screen needs no `user:list` permission of its own.
+			can(actor.role, "cotizacion_interna:create")
+				? prisma.user.findMany({
+						where: { role: "taller", NOT: { banned: true } },
+						orderBy: { name: "asc" },
+						select: { id: true, name: true },
+					})
+				: [],
+		]);
+
+	// Utilidad is per-cotización and Admin-only (`cotizacion:costo`) — computed here rather than
+	// stored, so approving/rejecting an estimate later is reflected without a resync step.
+	const utilidades: Record<string, Awaited<ReturnType<typeof utilidadDeCotizacion>>> = {};
+	if (can(actor.role, "cotizacion:costo")) {
+		for (const c of cotizaciones?.cotizaciones ?? []) {
+			utilidades[c.id] = await utilidadDeCotizacion(actor, c.id);
+		}
+	}
 
 	// `saldoCents`/`limiteCents` are internal bigints and must not cross to the browser.
 	const creditoPublico = credito ? (({ saldoCents: _s, limiteCents: _l, ...resto }) => resto)(credito) : null;
@@ -77,6 +121,10 @@ export const load: ServerLoad = async ({ locals, params }) => {
 			.map((c) => ({ id: c.id, nombre: c.nombre })),
 		faltantes,
 		cotizaciones: cotizaciones?.cotizaciones ?? [],
+		utilidades,
+		cotizacionesInternas,
+		mecanicos,
+		notaGarantia,
 		facturas: facturas?.facturas ?? [],
 		credito: creditoPublico,
 		solicitudes,
@@ -132,6 +180,9 @@ export const load: ServerLoad = async ({ locals, params }) => {
 			verDinero: can(actor.role, "factura:read"),
 			interno: can(actor.role, "cotizacion:interno"),
 			surtir: can(actor.role, "inventario:salida"),
+			cotizarInterna: can(actor.role, "cotizacion_interna:create"),
+			aprobarInterna: can(actor.role, "cotizacion_interna:authorize"),
+			verUtilidad: can(actor.role, "cotizacion:costo"),
 		},
 	};
 };
@@ -183,6 +234,65 @@ export const actions: Actions = {
 				body: { conceptos, vigenciaHasta: data.get("vigenciaHasta"), notas: data.get("notas") },
 			});
 			redirect(303, conFlash(`/panel/notas/${params.id}`, "cotizacion.crear"));
+		} catch (err) {
+			return fallo(err);
+		}
+	},
+
+	/**
+	 * A cost estimate, almost always relayed from a mechanic via WhatsApp. Same parallel-array
+	 * shape as `cotizar`, but no `tipo` and the amount is `costoUnitario` — never a `precioUnitario`.
+	 */
+	costoInterno: async ({ locals, params, request }) => {
+		const actor = requireUser(locals);
+		const data = await request.formData();
+
+		const descripciones = data.getAll("descripcion");
+		const conceptos = descripciones
+			.map((descripcion, i) => ({
+				descripcion,
+				cantidad: data.getAll("cantidad")[i],
+				costoUnitario: data.getAll("costoUnitario")[i],
+				productoId: data.getAll("productoId")[i],
+			}))
+			.filter((c) => String(c.descripcion ?? "").trim() !== "" || String(c.productoId ?? "").trim() !== "");
+
+		try {
+			await crearCotizacionInterna({
+				actor,
+				notaId: params.id!,
+				body: { mecanicoId: data.get("mecanicoId"), conceptos },
+			});
+			redirect(303, conFlash(`/panel/notas/${params.id}`, "cotizacion_interna.crear"));
+		} catch (err) {
+			return fallo(err);
+		}
+	},
+
+	/** Approve or reject a submitted cost estimate. Rejecting requires a `motivo`. */
+	costoInternoEstado: async ({ locals, params, request }) => {
+		const actor = requireUser(locals);
+		const data = await request.formData();
+		try {
+			const estado = data.get("estado");
+			await resolverCotizacionInterna({ actor, id: String(data.get("id")), estado, motivo: data.get("motivo") });
+			redirect(
+				303,
+				conFlash(`/panel/notas/${params.id}`, estado === "aprobada" ? "cotizacion_interna.aprobar" : "cotizacion_interna.rechazar"),
+			);
+		} catch (err) {
+			return fallo(err);
+		}
+	},
+
+	/** Link (or unlink) an approved estimate to one of this nota's customer-facing cotizaciones. */
+	costoInternoVincular: async ({ locals, params, request }) => {
+		const actor = requireUser(locals);
+		const data = await request.formData();
+		try {
+			const cotizacionId = String(data.get("cotizacionId") ?? "").trim();
+			await vincularCotizacionInterna({ actor, id: String(data.get("id")), cotizacionId: cotizacionId || null });
+			redirect(303, conFlash(`/panel/notas/${params.id}`, "cotizacion_interna.vincular"));
 		} catch (err) {
 			return fallo(err);
 		}

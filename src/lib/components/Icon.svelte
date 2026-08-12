@@ -16,6 +16,8 @@
 	import Package from "@lucide/svelte/icons/package";
 	import Settings from "@lucide/svelte/icons/settings";
 	import Bell from "@lucide/svelte/icons/bell";
+	import Landmark from "@lucide/svelte/icons/landmark";
+	import ShieldCheck from "@lucide/svelte/icons/shield-check";
 	import type { NavItem } from "$lib/nav";
 
 	const ICONS = {
@@ -32,6 +34,8 @@
 		wrench: Wrench,
 		settings: Settings,
 		bell: Bell,
+		landmark: Landmark,
+		"shield-check": ShieldCheck,
 	};
 
 	let { name, ...rest }: { name: NavItem["icon"]; [key: string]: unknown } = $props();

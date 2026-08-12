@@ -16,6 +16,7 @@
 	import Wrench from "@lucide/svelte/icons/wrench";
 	import Button from "$lib/components/Button.svelte";
 	import Field from "$lib/components/Field.svelte";
+	import { telHref, telefonoFormato, waHref } from "$lib/empresa";
 
 	let { data, form } = $props();
 
@@ -87,15 +88,19 @@
 					La verificación de seguridad no funciona sin él. Escríbenos y lo hacemos por teléfono:
 				</p>
 				<p class="mt-3 flex flex-wrap gap-3">
-					<a
-						href="https://wa.me/526621234567"
-						class="inline-flex items-center rounded-md bg-whatsapp px-4 py-2.5 font-bold text-white">WhatsApp</a
-					>
-					<a
-						href="tel:+526621234567"
-						class="inline-flex items-center rounded-md border-2 border-sand-300 px-4 py-2.5 font-bold text-sand-950"
-						>662 123 4567</a
-					>
+					{#if waHref(data.empresa.telefono)}
+						<a
+							href={waHref(data.empresa.telefono)}
+							class="inline-flex items-center rounded-md bg-whatsapp px-4 py-2.5 font-bold text-white">WhatsApp</a
+						>
+					{/if}
+					{#if telHref(data.empresa.telefono)}
+						<a
+							href={telHref(data.empresa.telefono)}
+							class="inline-flex items-center rounded-md border-2 border-sand-300 px-4 py-2.5 font-bold text-sand-950"
+							>{telefonoFormato(data.empresa.telefono)}</a
+						>
+					{/if}
 				</p>
 			</div>
 		</noscript>

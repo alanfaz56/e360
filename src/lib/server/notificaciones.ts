@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import prisma from "$lib/prisma";
-import { PERMISSIONS, can, type Permission, type Role } from "$lib/roles";
+import { can, rolesQueTienen, type Permission } from "$lib/roles";
 import {
 	EVENTOS_EMPLEADO,
 	NOTIFICACION_EVENTOS,
@@ -52,7 +52,7 @@ export type AvisoInput = {
 
 /** Staff who hold a permission, for a `difusion` fan-out. */
 async function usuariosCon(permiso: Permission, excepto?: string | null): Promise<string[]> {
-	const roles = PERMISSIONS[permiso] as readonly Role[];
+	const roles = rolesQueTienen(permiso);
 	const filas = await prisma.user.findMany({
 		where: {
 			role: { in: [...roles] },

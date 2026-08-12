@@ -367,6 +367,9 @@
 			{:else}
 				<p class="mt-1 text-sm text-sand-600">
 					{data.historial.resumen.notas} en total · {data.historial.resumen.abiertas} abierta(s)
+					{#if data.historial.resumen.garantias > 0}
+						· <span class="text-accent-700">{data.historial.resumen.garantias} de garantía</span>
+					{/if}
 				</p>
 				<ul class="mt-2 space-y-2 text-sm">
 					{#each data.historial.notas as n (n.id)}
@@ -380,6 +383,7 @@
 								</a>
 								<Badge tone={notaEstadoTone(n.estado)}>{n.estadoLabel}</Badge>
 								{#if n.talleres > 0}<Badge tone="neutral">{n.talleres} taller(es)</Badge>{/if}
+								{#if n.garantiaDeFolio}<Badge tone="warn">Garantía de #{n.garantiaDeFolio}</Badge>{/if}
 							</span>
 							<span class="block text-xs text-sand-500">
 								{new Date(n.recibidaAt).toLocaleDateString("es-MX")}
@@ -387,6 +391,19 @@
 								{#if n.clienteNombre}· {n.clienteNombre}{/if}
 							</span>
 							<span class="mt-1 block text-sand-700">{n.motivo}</span>
+							{#if n.diagnostico}
+								<span class="mt-0.5 block text-xs text-sand-500">Diagnóstico: {n.diagnostico}</span>
+							{/if}
+							{#if n.garantias.length > 0}
+								<!-- This note ORIGINATED one or more warranty follow-ups — the reverse of
+									 garantiaDeFolio above, so both directions of the thread read from here. -->
+								<span class="mt-1 flex flex-wrap items-center gap-1 text-xs text-accent-700">
+									Seguimiento de garantía:
+									{#each n.garantias as g (g.id)}
+										<a class="underline" href="/panel/notas/{g.id}">#{g.folio} ({g.estadoLabel})</a>
+									{/each}
+								</span>
+							{/if}
 						</li>
 					{/each}
 				</ul>

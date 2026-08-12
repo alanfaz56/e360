@@ -6,6 +6,7 @@ import {
 	CitaError,
 	actualizarCita,
 	asignarCita,
+	asignarHoraCita,
 	avanzarCita,
 	cancelarCita,
 	confirmarCita,
@@ -15,7 +16,7 @@ import {
 	vincularCita,
 } from "$lib/server/citas";
 import prisma from "$lib/prisma";
-import { crearNota } from "$lib/server/notas";
+import { crearNota, historialUnidad } from "$lib/server/notas";
 import { crearRecordatorio } from "$lib/server/recordatorios";
 import { listContactos } from "$lib/server/contactos";
 import { requirePermission, requireUser } from "$lib/server/guard";
@@ -64,6 +65,11 @@ export const load: ServerLoad = async ({ locals, params, url }) => {
 			})
 		: null;
 
+	// Prior notes on this vehicle, so "recibir" can offer "es garantía de #X" instead of the
+	// counter having to remember or go search for it. Same permission as the drawer itself.
+	const historialParaGarantia =
+		can(actor.role, "nota:create") && cita.unidadId ? (await historialUnidad(cita.unidadId)).notas : [];
+
 	// An Operador advances only their own; anyone with cita:update advances anything.
 	const puedeAvanzar =
 		can(actor.role, "cita:advance") && (can(actor.role, "cita:update") || cita.asignadoId === actor.id);
@@ -76,6 +82,7 @@ export const load: ServerLoad = async ({ locals, params, url }) => {
 		sugeridas,
 		entregadores,
 		contactos,
+		historialParaGarantia,
 		kilometrajeUnidad: unidadActual?.kilometraje ?? null,
 		clienteElegido,
 		// Cancelling has its own permission and its own reason field, so it never shows up as
@@ -137,6 +144,7 @@ export const actions: Actions = {
 					entregoContactoId: data.get("entregoContactoId"),
 					entregoNombre: data.get("entregoNombre"),
 					entregoTelefono: data.get("entregoTelefono"),
+					garantiaDeId: data.get("garantiaDeId"),
 				},
 			});
 			redirect(303, conFlash(`/panel/notas/${nota.id}?drawer=inspeccion`, "nota.recibir"));
@@ -149,8 +157,25 @@ export const actions: Actions = {
 		const actor = requireUser(locals);
 		const body = Object.fromEntries(await request.formData()) as Record<string, unknown>;
 		try {
-			await vincularCita({ actor, id: params.id!, body });
-			redirect(303, conFlash(`/panel/citas/${params.id}`, "cita.vincular"));
+			const cita = await vincularCita({ actor, id: params.id!, body });
+			// An hour set earlier via `asignarHora` auto-confirms once this completes the trio — say
+			// so, rather than "vinculada" when it actually just got booked.
+			redirect(303, conFlash(`/panel/citas/${params.id}`, cita.estado === "confirmada" ? "cita.confirmar" : "cita.vincular"));
+		} catch (err) {
+			return fallo(err);
+		}
+	},
+
+	/** Set just the hour on a solicitada request — no cliente/unidad required yet. */
+	asignarHora: async ({ locals, params, request }) => {
+		const actor = requireUser(locals);
+		const body = Object.fromEntries(await request.formData()) as Record<string, unknown>;
+		try {
+			const cita = await asignarHoraCita({ actor, id: params.id!, body });
+			redirect(
+				303,
+				conFlash(`/panel/citas/${params.id}`, cita.estado === "confirmada" ? "cita.confirmar" : "cita.asignarHora"),
+			);
 		} catch (err) {
 			return fallo(err);
 		}

@@ -1,4 +1,5 @@
 import { redirect, type Actions, type ServerLoad } from "@sveltejs/kit";
+import prisma from "$lib/prisma";
 import { can } from "$lib/roles";
 import { requirePermission, requireUser } from "$lib/server/guard";
 import {
@@ -43,12 +44,24 @@ export const load: ServerLoad = async ({ locals, url }) => {
 		drawer === "movimientos" ? listMovimientos({ productoId, perPage: 50 }).then((r) => r.movimientos) : [],
 	]);
 
+	// The cost basis never rides on `publicProducto` (this same list feeds the quote builder's
+	// catalogue for roles that must never see it) — fetched separately, Admin-only, keyed by id.
+	const costos: Record<string, string | null> = {};
+	if (can(actor.role, "producto:costo")) {
+		const filas = await prisma.producto.findMany({
+			where: { id: { in: lista.productos.map((p) => p.id) } },
+			select: { id: true, costoReferencia: true },
+		});
+		for (const f of filas) costos[f.id] = f.costoReferencia?.toFixed(4) ?? null;
+	}
+
 	return {
 		...lista,
 		valorInventario: valor,
 		pendientes,
 		capas,
 		movimientos,
+		costos,
 		filtros: {
 			q: query.q ?? "",
 			tipo: query.tipo ?? "",
@@ -60,6 +73,7 @@ export const load: ServerLoad = async ({ locals, url }) => {
 			entrada: can(actor.role, "inventario:entrada"),
 			ajuste: can(actor.role, "inventario:ajuste"),
 			salida: can(actor.role, "inventario:salida"),
+			verCosto: can(actor.role, "producto:costo"),
 		},
 	};
 };

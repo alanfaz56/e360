@@ -24,7 +24,9 @@ export type NavItem = {
 		| "wrench"
 		| "package"
 		| "settings"
-		| "bell";
+		| "bell"
+		| "landmark"
+		| "shield-check";
 	permission: Permission;
 	/**
 	 * Hide the entry from anybody who ALSO holds this permission.
@@ -72,6 +74,14 @@ export const NAV: readonly NavItem[] = [
 	{ href: "/panel/recordatorios", label: "Recordatorios", icon: "bell", permission: "recordatorio:manage" },
 	{ href: "/panel/usuarios", label: "Usuarios", icon: "users", permission: "user:list" },
 	{ href: "/panel/auditoria", label: "Auditoría", icon: "scroll-text", permission: "audit:read" },
+	{ href: "/panel/empresa", label: "Datos de la empresa", icon: "contact", permission: "empresa:manage" },
+	{
+		href: "/panel/cuentas-bancarias",
+		label: "Cuentas bancarias",
+		icon: "landmark",
+		permission: "cuenta_bancaria:manage",
+	},
+	{ href: "/panel/permisos", label: "Permisos", icon: "shield-check", permission: "permisos:manage" },
 	// Last, and only for us: the PAC's credentials and what stamping costs. An Admin at the shop
 	// holds `ajustes:read` in the registry and still never sees this row — see `soloDueno`.
 	{

@@ -36,6 +36,16 @@ const precio = (v: unknown, label: string): number => {
 	return Number(s.replace(/,/g, ""));
 };
 
+/** Nullable, unlike `precio()`: a blank field CLEARS the cost basis rather than zeroing it. */
+const costoOpcional = (v: unknown): number | null => {
+	const s = typeof v === "number" ? String(v) : trim(v);
+	if (s === null) return null;
+	if (!/^\d+(\.\d{1,4})?$/.test(s.replace(/,/g, ""))) {
+		throw new ClienteError(400, "El costo de referencia no es una cantidad válida (usa 1234.5000)");
+	}
+	return Number(s.replace(/,/g, ""));
+};
+
 export const publicProducto = (p: {
 	id: string;
 	sku: string | null;
@@ -72,6 +82,17 @@ export const publicProducto = (p: {
 	minimo: p.minimo?.toFixed(3) ?? null,
 	archivado: p.archivedAt !== null,
 	createdAt: p.createdAt.toISOString(),
+});
+
+/**
+ * `publicProducto` plus the cost basis — gated by `producto:costo`, never by `producto:read`.
+ * Callers must check the permission themselves before reaching for this mapper; `publicProducto`
+ * itself never carries the field, so "does this response include cost" is answered by which
+ * function was called, not by a flag that could be forgotten.
+ */
+export const productoConCosto = (p: Parameters<typeof publicProducto>[0] & { costoReferencia: Prisma.Decimal | null }) => ({
+	...publicProducto(p),
+	costoReferencia: p.costoReferencia?.toFixed(4) ?? null,
 });
 
 /**
@@ -195,7 +216,7 @@ export async function getProducto(id: string) {
 	return producto;
 }
 
-function leerProductoInput(body: Record<string, unknown>) {
+function leerProductoInput(body: Record<string, unknown>, actor: Actor) {
 	const nombre = trim(body.nombre, 200, "El nombre");
 	if (!nombre) throw new ClienteError(400, "El nombre del producto es obligatorio");
 
@@ -224,6 +245,10 @@ function leerProductoInput(body: Record<string, unknown>) {
 	const minimo = minimoRaw === null ? null : cantidad(minimoRaw);
 	if (minimoRaw !== null && minimo === null) throw new ClienteError(400, "El mínimo no es una cantidad válida");
 
+	// Gated on the actor, not on what the body sent: a Gerente posting a costoReferencia (by hand
+	// or by replaying an Admin's request) must have it silently ignored, not error the whole save.
+	const puedeCosto = can(actor.role, "producto:costo");
+
 	return {
 		nombre,
 		sku: trim(body.sku, 40, "El SKU"),
@@ -236,13 +261,14 @@ function leerProductoInput(body: Record<string, unknown>) {
 		ivaTasa,
 		controlaInventario,
 		minimo: controlaInventario ? minimo : null,
+		...(puedeCosto ? { costoReferencia: costoOpcional(body.costoReferencia) } : {}),
 	};
 }
 
 export async function crearProducto(input: { actor: Actor; body: Record<string, unknown> }) {
 	if (!can(input.actor.role, "producto:manage")) throw new ClienteError(403, "Sin permiso: producto:manage");
 
-	const data = leerProductoInput(input.body);
+	const data = leerProductoInput(input.body, input.actor);
 	if (data.sku) {
 		const repetido = await prisma.producto.findUnique({ where: { sku: data.sku }, select: { id: true } });
 		if (repetido) throw new ClienteError(409, `Ya hay un producto con el SKU ${data.sku}.`);
@@ -270,20 +296,24 @@ export async function actualizarProducto(input: { actor: Actor; id: string; body
 	if (!can(input.actor.role, "producto:manage")) throw new ClienteError(403, "Sin permiso: producto:manage");
 
 	const actual = await getProducto(input.id);
-	const data = leerProductoInput({
-		nombre: actual.nombre,
-		sku: actual.sku,
-		descripcion: actual.descripcion,
-		tipo: actual.tipo,
-		claveProdServ: actual.claveProdServ,
-		claveUnidad: actual.claveUnidad,
-		unidad: actual.unidad,
-		precioVenta: actual.precioVenta.toFixed(2),
-		ivaTasa: Number(actual.ivaTasa),
-		controlaInventario: actual.controlaInventario,
-		minimo: actual.minimo?.toFixed(3) ?? null,
-		...input.body,
-	});
+	const data = leerProductoInput(
+		{
+			nombre: actual.nombre,
+			sku: actual.sku,
+			descripcion: actual.descripcion,
+			tipo: actual.tipo,
+			claveProdServ: actual.claveProdServ,
+			claveUnidad: actual.claveUnidad,
+			unidad: actual.unidad,
+			precioVenta: actual.precioVenta.toFixed(2),
+			ivaTasa: Number(actual.ivaTasa),
+			controlaInventario: actual.controlaInventario,
+			minimo: actual.minimo?.toFixed(3) ?? null,
+			costoReferencia: actual.costoReferencia?.toFixed(4) ?? null,
+			...input.body,
+		},
+		input.actor,
+	);
 
 	if (data.sku && data.sku !== actual.sku) {
 		const repetido = await prisma.producto.findUnique({ where: { sku: data.sku }, select: { id: true } });
@@ -311,11 +341,13 @@ export async function actualizarProducto(input: { actor: Actor; id: string; body
 			nombre: actual.nombre,
 			precioVenta: actual.precioVenta.toFixed(2),
 			claveProdServ: actual.claveProdServ,
+			...("costoReferencia" in data ? { costoReferencia: actual.costoReferencia?.toFixed(4) ?? null } : {}),
 		},
 		after: {
 			nombre: producto.nombre,
 			precioVenta: producto.precioVenta.toFixed(2),
 			claveProdServ: producto.claveProdServ,
+			...("costoReferencia" in data ? { costoReferencia: producto.costoReferencia?.toFixed(4) ?? null } : {}),
 		},
 	});
 

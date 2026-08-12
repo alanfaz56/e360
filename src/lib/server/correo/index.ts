@@ -12,7 +12,8 @@ import prisma from "$lib/prisma";
 import { valoresAjuste } from "../ajustes";
 import { ClienteError } from "../clientes";
 import { resend } from "./resend";
-import { avisoCliente, invitacion, restablecerPassword } from "./plantillas";
+import { avisoCliente, bloqueCuentaBancaria, invitacion, restablecerPassword } from "./plantillas";
+import { cuentaBancariaPrincipal } from "../cuentas-bancarias";
 import type { ConfigCorreo, ProveedorCorreo } from "./tipos";
 
 export type { ConfigCorreo, EnvioCorreo, ProveedorCorreo, ResultadoEnvio } from "./tipos";
@@ -56,7 +57,7 @@ const absoluta = (ruta: string) => new URL(ruta, env.BETTER_AUTH_URL).toString()
  */
 export async function enviarCorreoCliente(
 	clienteIds: string[],
-	aviso: { titulo: string; cuerpo: string; url: string | null },
+	aviso: { evento?: string; titulo: string; cuerpo: string; url: string | null },
 ): Promise<void> {
 	if (clienteIds.length === 0) return;
 
@@ -68,10 +69,18 @@ export async function enviarCorreoCliente(
 
 	try {
 		const { proveedor, cfg } = await proveedorActivo();
+
+		// The one deliberate exception to "one generic template" (see `avisoCliente`'s doc comment):
+		// a quote email tells the customer how to pay for it. Fetched here rather than baked into
+		// the caller so `cambiarEstadoCotizacion`/`reenviarCotizacionCorreo` never hardcode banking
+		// info — the catalogue at /panel/cuentas-bancarias is the only place it's typed in.
+		const cuenta = aviso.evento === "cliente_cotizacion" ? await cuentaBancariaPrincipal() : null;
+
 		const plantilla = avisoCliente({
 			titulo: aviso.titulo,
 			cuerpo: aviso.cuerpo,
 			url: aviso.url ? absoluta(aviso.url) : null,
+			extra: cuenta ? bloqueCuentaBancaria(cuenta) : null,
 		});
 
 		for (const { email } of clientes) {

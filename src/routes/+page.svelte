@@ -6,6 +6,9 @@
 -->
 <script lang="ts">
 	import Button from "$lib/components/Button.svelte";
+	import { waHref } from "$lib/empresa";
+
+	let { data } = $props();
 </script>
 
 <svelte:head>
@@ -164,12 +167,14 @@
 			</div>
 			<div class="flex flex-wrap gap-3 md:ml-auto">
 				<Button href="/citas" size="lg" variant="invert">Agendar cita</Button>
-				<a
-					href="https://wa.me/"
-					class="inline-flex items-center justify-center rounded-md border-2 border-white px-6 py-3 font-bold text-white transition-colors hover:bg-white hover:text-brand-700"
-				>
-					WhatsApp
-				</a>
+				{#if waHref(data.empresa.telefono)}
+					<a
+						href={waHref(data.empresa.telefono)}
+						class="inline-flex items-center justify-center rounded-md border-2 border-white px-6 py-3 font-bold text-white transition-colors hover:bg-white hover:text-brand-700"
+					>
+						WhatsApp
+					</a>
+				{/if}
 			</div>
 		</div>
 	</section>
@@ -184,8 +189,8 @@
 			¿Tienes un taller? Trabaja con nosotros
 		</a>
 		<p class="text-sm">
-			Hermosillo, Sonora · <a class="hover:text-white" href="https://www.estacion360.com"
-				>estacion360.com</a
+			Hermosillo, Sonora · <a class="hover:text-white" href="https://{data.empresa.sitioWeb ?? 'www.estacion360.com'}"
+				>{data.empresa.sitioWeb ?? "estacion360.com"}</a
 			>
 		</p>
 	</div>

@@ -8,6 +8,7 @@ import {
 	centavos,
 	conceptoTipoLabel,
 	cotizacionEstadoLabel,
+	cotizacionInternaEstadoLabel,
 	esCredito,
 	facturaEstadoLabel,
 	importeConcepto,
@@ -15,13 +16,17 @@ import {
 	isConceptoTipo,
 	isCotizacionEstado,
 	isCotizacionInterno,
+	isCotizacionInternaEstado,
 	isMetodoPago,
 	metodoPagoLabel,
 	pesos,
 	puedeTransicionarCotizacion,
+	puedeTransicionarCotizacionInterna,
 	puedeTransicionarInterno,
 	cotizacionInternoLabel,
 	totales,
+	margenPorcentaje,
+	utilidadCotizacion,
 	type CotizacionEstado,
 } from "$lib/comercial";
 import { enZona, parseFecha, sumarDias } from "$lib/agenda";
@@ -610,6 +615,419 @@ export async function reenviarCotizacionCorreo(input: { actor: Actor; id: string
 	});
 
 	return current;
+}
+
+// --- Cotización interna (estimación de costo) -----------------------------------------------
+//
+// A cost estimate for a job, almost always relayed from a mechanic via WhatsApp — typed in by
+// Admin/Gerente, never by the mechanic (`taller` holds none of these three permissions). Modeled
+// on `solicitarRefaccion`/`resolverSolicitud` in `./inventario`: a simple pendiente → aprobada/
+// rechazada object, not a third axis bolted onto `cotizacion`.
+
+const COTIZACION_INTERNA_INCLUDE = {
+	conceptos: { orderBy: { orden: "asc" } },
+	nota: { select: { folio: true } },
+	mecanico: { select: { id: true, name: true } },
+	cotizacion: { select: { id: true, folio: true } },
+	creadaPor: { select: { name: true } },
+	resueltaPor: { select: { name: true } },
+} satisfies Prisma.cotizacion_internaInclude;
+
+type CotizacionInternaRow = Prisma.cotizacion_internaGetPayload<{ include: typeof COTIZACION_INTERNA_INCLUDE }>;
+
+export const publicCotizacionInterna = (c: CotizacionInternaRow) => ({
+	id: c.id,
+	folio: c.folio,
+	notaId: c.notaId,
+	notaFolio: c.nota?.folio ?? null,
+	mecanicoId: c.mecanicoId,
+	mecanicoNombre: c.mecanico?.name ?? null,
+	cotizacionId: c.cotizacionId,
+	cotizacionFolio: c.cotizacion?.folio ?? null,
+	estado: c.estado,
+	estadoLabel: cotizacionInternaEstadoLabel(c.estado),
+	resolucionMotivo: c.resolucionMotivo,
+	total: monto(c.total),
+	creadaPor: c.creadaPor?.name ?? null,
+	resueltaPor: c.resueltaPor?.name ?? null,
+	resueltaAt: c.resueltaAt?.toISOString() ?? null,
+	conceptos: c.conceptos.map((x) => ({
+		id: x.id,
+		descripcion: x.descripcion,
+		cantidad: x.cantidad.toFixed(2),
+		costoUnitario: monto(x.costoUnitario),
+		importe: monto(x.importe),
+		productoId: x.productoId,
+	})),
+	createdAt: c.createdAt.toISOString(),
+});
+
+export async function getCotizacionInterna(actor: Actor, id: string) {
+	if (!can(actor.role, "cotizacion_interna:read")) {
+		throw new ClienteError(403, "Sin permiso: cotizacion_interna:read");
+	}
+	const fila = await prisma.cotizacion_interna.findUnique({ where: { id }, include: COTIZACION_INTERNA_INCLUDE });
+	if (!fila) throw new ClienteError(404, "Estimación de costo no encontrada");
+	return fila;
+}
+
+export async function listCotizacionesInternas(
+	actor: Actor,
+	query: { notaId?: string | null; estado?: string | null; mecanicoId?: string | null },
+) {
+	if (!can(actor.role, "cotizacion_interna:read")) {
+		throw new ClienteError(403, "Sin permiso: cotizacion_interna:read");
+	}
+	const where: Prisma.cotizacion_internaWhereInput = {
+		...(query.notaId ? { notaId: query.notaId } : {}),
+		...(isCotizacionInternaEstado(query.estado) ? { estado: query.estado } : {}),
+		...(query.mecanicoId ? { mecanicoId: query.mecanicoId } : {}),
+	};
+	const filas = await prisma.cotizacion_interna.findMany({
+		where,
+		orderBy: { createdAt: "desc" },
+		include: COTIZACION_INTERNA_INCLUDE,
+	});
+	return filas.map(publicCotizacionInterna);
+}
+
+/** Line items from the request. No `tipo`, no SAT keys — this never reaches a CFDI. */
+function leerConceptosCosto(value: unknown) {
+	if (!Array.isArray(value) || value.length === 0) {
+		throw new ClienteError(400, "Agrega al menos un concepto");
+	}
+	return value.map((raw, i) => {
+		const c = (typeof raw === "object" && raw !== null ? raw : {}) as Record<string, unknown>;
+
+		const productoId = trim(c.productoId);
+		const descripcion = trim(c.descripcion, 500, `La descripción del concepto ${i + 1}`);
+		if (!descripcion && !productoId) throw new ClienteError(400, `Concepto ${i + 1}: falta la descripción`);
+
+		const cantidad = Number(c.cantidad);
+		if (!Number.isFinite(cantidad) || cantidad <= 0) {
+			throw new ClienteError(400, `Concepto ${i + 1}: la cantidad debe ser mayor que cero`);
+		}
+		const costoUnitario = centavos(c.costoUnitario);
+		if (costoUnitario === null) {
+			throw new ClienteError(400, `Concepto ${i + 1}: costo inválido (usa 1234.50)`);
+		}
+
+		return {
+			descripcion: descripcion ?? "",
+			cantidad,
+			costoUnitario,
+			importe: importeConcepto(cantidad, costoUnitario),
+			orden: i,
+			productoId,
+		};
+	});
+}
+
+/** Validate any catalogue links; fill a blank descripción from the product's own name. */
+async function resolverProductosCosto(conceptos: ReturnType<typeof leerConceptosCosto>) {
+	const ids = [...new Set(conceptos.map((c) => c.productoId).filter((id): id is string => Boolean(id)))];
+	if (ids.length === 0) return conceptos;
+
+	const productos = await prisma.producto.findMany({
+		where: { id: { in: ids } },
+		select: { id: true, nombre: true, archivedAt: true },
+	});
+	const porId = new Map(productos.map((p) => [p.id, p]));
+
+	return conceptos.map((c) => {
+		if (!c.productoId) return c;
+		const p = porId.get(c.productoId);
+		if (!p) throw new ClienteError(404, `El producto de "${c.descripcion}" ya no existe`);
+		if (p.archivedAt) throw new ClienteError(409, `${p.nombre} está archivado.`);
+		return { ...c, descripcion: c.descripcion || p.nombre };
+	});
+}
+
+async function validarMecanico(mecanicoId: string | null) {
+	if (!mecanicoId) return null;
+	const user = await prisma.user.findUnique({ where: { id: mecanicoId }, select: { id: true, role: true } });
+	if (!user || user.role !== "taller") throw new ClienteError(400, "Ese usuario no es un mecánico.");
+	return user.id;
+}
+
+async function cargarNotaParaCosto(notaId: string) {
+	const nota = await prisma.nota_servicio.findUnique({
+		where: { id: notaId },
+		select: { id: true, folio: true, estado: true },
+	});
+	if (!nota) throw new ClienteError(404, "Nota de servicio no encontrada");
+	if (nota.estado === "cancelada" || nota.estado === "entregada") {
+		throw new ClienteError(409, "Esa nota ya está cerrada.");
+	}
+	return nota;
+}
+
+export async function crearCotizacionInterna(input: { actor: Actor; notaId: string; body: Record<string, unknown> }) {
+	if (!can(input.actor.role, "cotizacion_interna:create")) {
+		throw new ClienteError(403, "Sin permiso: cotizacion_interna:create");
+	}
+
+	const nota = await cargarNotaParaCosto(input.notaId);
+	const mecanicoId = await validarMecanico(trim(input.body.mecanicoId));
+	const cotizacionId = trim(input.body.cotizacionId);
+	if (cotizacionId) await exigirCotizacionDeLaNota(cotizacionId, nota.id);
+
+	const conceptos = await resolverProductosCosto(leerConceptosCosto(input.body.conceptos));
+	const total = conceptos.reduce((s, c) => s + c.importe, 0n);
+
+	const creada = await prisma.$transaction(async (tx) => {
+		const fila = await tx.cotizacion_interna.create({
+			data: {
+				id: randomUUID(),
+				notaId: nota.id,
+				mecanicoId,
+				cotizacionId: cotizacionId || null,
+				total: dec(total),
+				creadaPorId: input.actor.id,
+				conceptos: {
+					create: conceptos.map((c) => ({
+						id: randomUUID(),
+						descripcion: c.descripcion,
+						cantidad: new Prisma.Decimal(c.cantidad),
+						costoUnitario: dec(c.costoUnitario),
+						importe: dec(c.importe),
+						orden: c.orden,
+						productoId: c.productoId,
+					})),
+				},
+			},
+			include: COTIZACION_INTERNA_INCLUDE,
+		});
+
+		await recordAudit(tx, {
+			action: "cotizacion_interna.create",
+			actor: input.actor,
+			entityId: fila.id,
+			entityLabel: `Estimación #${fila.folio} (nota #${nota.folio})`,
+			summary: `Estimación de costo #${fila.folio} por ${pesos(total)} en la nota #${nota.folio}`,
+			after: { total: pesos(total), conceptos: conceptos.length, mecanicoId },
+		});
+
+		return fila;
+	});
+
+	await notificar({
+		evento: "cotizacion_interna_creada",
+		destino: { difusion: true },
+		titulo: "Estimación de costo pendiente",
+		cuerpo: `Nota #${nota.folio}: ${pesos(total)} por revisar`,
+		url: `/panel/notas/${nota.id}`,
+		entidad: "nota",
+		entidadId: nota.id,
+		excepto: input.actor.id,
+	});
+
+	return publicCotizacionInterna(creada);
+}
+
+/** Only `pendiente` is editable — once resolved, submit a new estimate instead. */
+export async function actualizarCotizacionInterna(input: { actor: Actor; id: string; body: Record<string, unknown> }) {
+	if (!can(input.actor.role, "cotizacion_interna:create")) {
+		throw new ClienteError(403, "Sin permiso: cotizacion_interna:create");
+	}
+
+	const current = await getCotizacionInterna(input.actor, input.id);
+	if (current.estado !== "pendiente") {
+		throw new ClienteError(409, "Esta estimación ya se resolvió. Crea una nueva.");
+	}
+
+	const mecanicoId = "mecanicoId" in input.body ? await validarMecanico(trim(input.body.mecanicoId)) : current.mecanicoId;
+	const conceptos = await resolverProductosCosto(leerConceptosCosto(input.body.conceptos));
+	const total = conceptos.reduce((s, c) => s + c.importe, 0n);
+
+	const actualizada = await prisma.$transaction(async (tx) => {
+		await tx.cotizacion_interna_concepto.deleteMany({ where: { cotizacionInternaId: current.id } });
+		const fila = await tx.cotizacion_interna.update({
+			where: { id: current.id },
+			data: {
+				mecanicoId,
+				total: dec(total),
+				conceptos: {
+					create: conceptos.map((c) => ({
+						id: randomUUID(),
+						descripcion: c.descripcion,
+						cantidad: new Prisma.Decimal(c.cantidad),
+						costoUnitario: dec(c.costoUnitario),
+						importe: dec(c.importe),
+						orden: c.orden,
+						productoId: c.productoId,
+					})),
+				},
+			},
+			include: COTIZACION_INTERNA_INCLUDE,
+		});
+
+		await recordAudit(tx, {
+			action: "cotizacion_interna.update",
+			actor: input.actor,
+			entityId: fila.id,
+			entityLabel: `Estimación #${fila.folio}`,
+			summary: `Estimación de costo #${fila.folio} actualizada: ${pesos(total)}`,
+			before: { total: monto(current.total) },
+			after: { total: pesos(total) },
+		});
+
+		return fila;
+	});
+
+	return publicCotizacionInterna(actualizada);
+}
+
+async function exigirCotizacionDeLaNota(cotizacionId: string, notaId: string) {
+	const cot = await prisma.cotizacion.findUnique({ where: { id: cotizacionId }, select: { notaId: true, folio: true } });
+	if (!cot) throw new ClienteError(404, "Cotización no encontrada");
+	if (cot.notaId !== notaId) throw new ClienteError(400, "Esa cotización no es de esta nota.");
+}
+
+/** Link (or unlink, with `cotizacionId: null`) an estimate to a customer-facing cotización. */
+export async function vincularCotizacionInterna(input: { actor: Actor; id: string; cotizacionId: string | null }) {
+	if (!can(input.actor.role, "cotizacion_interna:create")) {
+		throw new ClienteError(403, "Sin permiso: cotizacion_interna:create");
+	}
+
+	const current = await getCotizacionInterna(input.actor, input.id);
+	if (input.cotizacionId) await exigirCotizacionDeLaNota(input.cotizacionId, current.notaId);
+
+	const actualizada = await prisma.$transaction(async (tx) => {
+		const fila = await tx.cotizacion_interna.update({
+			where: { id: current.id },
+			data: { cotizacionId: input.cotizacionId },
+			include: COTIZACION_INTERNA_INCLUDE,
+		});
+		await recordAudit(tx, {
+			action: "cotizacion_interna.vincular",
+			actor: input.actor,
+			entityId: fila.id,
+			entityLabel: `Estimación #${fila.folio}`,
+			summary: input.cotizacionId
+				? `Estimación #${fila.folio} ligada a la cotización #${fila.cotizacion?.folio}`
+				: `Estimación #${fila.folio} desligada de su cotización`,
+			before: { cotizacionId: current.cotizacionId },
+			after: { cotizacionId: input.cotizacionId },
+		});
+		return fila;
+	});
+
+	return publicCotizacionInterna(actualizada);
+}
+
+/** Approve or reject. Terminal both ways — a new estimate is submitted instead of reopening one. */
+export async function resolverCotizacionInterna(input: {
+	actor: Actor;
+	id: string;
+	estado: unknown;
+	motivo?: unknown;
+}) {
+	if (!can(input.actor.role, "cotizacion_interna:authorize")) {
+		throw new ClienteError(403, "Sin permiso: cotizacion_interna:authorize");
+	}
+
+	const destino = input.estado;
+	if (!isCotizacionInternaEstado(destino) || destino === "pendiente") {
+		throw new ClienteError(400, "Decide si se aprueba o se rechaza.");
+	}
+	const current = await getCotizacionInterna(input.actor, input.id);
+	if (!puedeTransicionarCotizacionInterna(current.estado, destino)) {
+		throw new ClienteError(409, "Esa estimación ya se resolvió.");
+	}
+
+	const motivo = trim(input.motivo, 500, "El motivo");
+	if (destino === "rechazada" && !motivo) {
+		throw new ClienteError(400, "Di por qué se rechaza; es lo que queda en el registro.");
+	}
+
+	const resuelta = await prisma.$transaction(async (tx) => {
+		const fila = await tx.cotizacion_interna.update({
+			where: { id: current.id },
+			data: {
+				estado: destino,
+				resolucionMotivo: motivo,
+				resueltaPorId: input.actor.id,
+				resueltaAt: new Date(),
+			},
+			include: COTIZACION_INTERNA_INCLUDE,
+		});
+
+		await recordAudit(tx, {
+			action: destino === "aprobada" ? "cotizacion_interna.aprobada" : "cotizacion_interna.rechazada",
+			actor: input.actor,
+			entityId: fila.id,
+			entityLabel: `Estimación #${fila.folio}`,
+			summary: `Estimación de costo #${fila.folio}: ${cotizacionInternaEstadoLabel(destino)}`,
+			before: { estado: "pendiente" },
+			after: { estado: destino, motivo },
+		});
+
+		return fila;
+	});
+
+	if (resuelta.creadaPorId) {
+		await notificar({
+			evento: "cotizacion_interna_resuelta",
+			destino: { userId: resuelta.creadaPorId },
+			titulo: destino === "aprobada" ? "Estimación aprobada" : "Estimación rechazada",
+			cuerpo: `Nota #${resuelta.nota?.folio}: ${pesos(aCentavos(resuelta.total))}${motivo ? ` — ${motivo}` : ""}`,
+			url: `/panel/notas/${resuelta.notaId}`,
+			entidad: "nota",
+			entidadId: resuelta.notaId,
+			excepto: input.actor.id,
+		});
+	}
+
+	return publicCotizacionInterna(resuelta);
+}
+
+/** Past descriptions this mechanic has had approved or submitted, most recent first. */
+export async function sugerirDescripcionesCosto(input: { actor: Actor; mecanicoId: string }) {
+	if (!can(input.actor.role, "cotizacion_interna:create")) {
+		throw new ClienteError(403, "Sin permiso: cotizacion_interna:create");
+	}
+	const filas = await prisma.cotizacion_interna_concepto.findMany({
+		where: { cotizacionInterna: { mecanicoId: input.mecanicoId } },
+		select: { descripcion: true },
+		orderBy: { cotizacionInterna: { createdAt: "desc" } },
+		take: 100,
+	});
+	const vistas = new Set<string>();
+	const sugerencias: string[] = [];
+	for (const f of filas) {
+		if (vistas.has(f.descripcion)) continue;
+		vistas.add(f.descripcion);
+		sugerencias.push(f.descripcion);
+		if (sugerencias.length >= 20) break;
+	}
+	return sugerencias;
+}
+
+/** venta - costo aprobado. Returns null (never a wrong number) when the actor can't see margin. */
+export type MargenCotizacion = {
+	venta: string;
+	costo: string;
+	utilidad: string;
+	/** Margin, not markup — `((venta - costo) / venta) × 100`. Null when venta is 0. */
+	margen: number | null;
+};
+
+export async function utilidadDeCotizacion(actor: Actor, cotizacionId: string): Promise<MargenCotizacion | null> {
+	if (!can(actor.role, "cotizacion:costo")) return null;
+	const cotizacion = await prisma.cotizacion.findUnique({ where: { id: cotizacionId }, select: { total: true } });
+	if (!cotizacion) return null;
+	const internas = await prisma.cotizacion_interna.findMany({
+		where: { cotizacionId, estado: "aprobada" },
+		select: { estado: true, total: true },
+	});
+	const venta = aCentavos(cotizacion.total);
+	const costo = internas.reduce((s, i) => s + aCentavos(i.total), 0n);
+	const utilidad = utilidadCotizacion(
+		venta,
+		internas.map((i) => ({ estado: i.estado, total: aCentavos(i.total) })),
+	);
+	return { venta: pesos(venta), costo: pesos(costo), utilidad: pesos(utilidad), margen: margenPorcentaje(venta, costo) };
 }
 
 // --- Crédito ---------------------------------------------------------------------------------

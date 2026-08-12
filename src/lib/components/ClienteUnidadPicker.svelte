@@ -188,7 +188,41 @@
 	function alElegirUnidad(id: string) {
 		const dueno = duenos.get(id);
 		if (dueno) cambiarCliente(dueno, undefined, { remontarUnidad: false });
+		cargarHistorial(id);
 	}
+
+	// Informational only — a service history panel that fails to load must never block picking
+	// the unit and moving on. Best-effort fetch, no toast on failure.
+	type NotaHistorial = {
+		id: string;
+		folio: number;
+		recibidaAt: string;
+		estadoLabel: string;
+		motivo: string;
+		garantiaDeFolio: number | null;
+		garantias: { folio: number; estadoLabel: string }[];
+	};
+	let historial = $state<NotaHistorial[] | null>(null);
+	let historialUnidadId = $state<string | null>(null);
+
+	async function cargarHistorial(id: string) {
+		historial = null;
+		historialUnidadId = id || null;
+		if (!id) return;
+		try {
+			const res = await fetch(`/api/unidades/${id}/historial`);
+			if (!res.ok) return;
+			const body = await res.json();
+			if (historialUnidadId === id) historial = body.notas ?? [];
+		} catch {
+			// Best-effort — see above.
+		}
+	}
+
+	$effect(() => {
+		// Load once for whatever unit the drawer already opened with (editing an existing link).
+		if (unidadId) cargarHistorial(unidadId);
+	});
 
 	// Empty-query fetches the customer's fleet, so `minimo={0}` for the unit box works. With no
 	// customer chosen yet, an empty query would return the whole registry — noise, not help.
@@ -331,6 +365,7 @@
 							onchange={() => {
 								crearUnidad = false;
 								if (u.clienteId) cambiarCliente(u.clienteId);
+								cargarHistorial(u.id);
 							}}
 							class="mt-1 size-4 shrink-0 accent-brand-600"
 						/>
@@ -419,6 +454,35 @@
 					Sin cliente elegido busca en todo el registro: al elegir la unidad se toma su dueño.
 				{/if}
 			</p>
+		</div>
+	{/if}
+
+	<!--
+		Informational, read-only: what has already happened to this vehicle. Fetched client-side
+		because the picker resolves a unit before any nota exists yet — there is nothing server-side
+		to render it from ahead of time. Failing quietly (see `cargarHistorial`) rather than a toast:
+		this is context, not something the counter is blocked on.
+	-->
+	{#if historial && historial.length > 0}
+		<div class="mt-3 rounded border border-sand-200 bg-sand-50 p-2">
+			<p class="px-1 pb-1 text-xs font-bold text-sand-700">Historial de servicio de esta unidad</p>
+			<ul class="max-h-40 space-y-1 overflow-y-auto text-xs text-sand-600">
+				{#each historial.slice(0, 5) as n (n.id)}
+					<li class="rounded bg-white px-2 py-1">
+						<span class="font-medium text-sand-900">#{n.folio}</span>
+						· {n.recibidaAt.slice(0, 10)} · {n.estadoLabel}
+						{#if n.motivo}<span class="block text-sand-500">{n.motivo}</span>{/if}
+						{#if n.garantiaDeFolio}
+							<span class="mt-0.5 block text-accent-700">Garantía de la nota #{n.garantiaDeFolio}</span>
+						{/if}
+						{#if n.garantias.length > 0}
+							<span class="mt-0.5 block text-accent-700">
+								Con seguimiento de garantía: {n.garantias.map((g) => `#${g.folio} (${g.estadoLabel})`).join(", ")}
+							</span>
+						{/if}
+					</li>
+				{/each}
+			</ul>
 		</div>
 	{/if}
 

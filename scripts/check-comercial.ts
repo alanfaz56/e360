@@ -8,6 +8,8 @@
 import assert from "node:assert/strict";
 import {
 	COTIZACION_ESTADO_KEYS,
+	COTIZACION_INTERNA_ESTADO_KEYS,
+	COTIZACION_INTERNA_TRANSICIONES,
 	COTIZACION_TRANSICIONES,
 	FACTURA_ESTADO_KEYS,
 	FACTURA_TRANSICIONES,
@@ -19,10 +21,13 @@ import {
 	isCondicionPago,
 	isConceptoTipo,
 	isMetodoPago,
+	margenPorcentaje,
 	pesos,
 	puedeTransicionarCotizacion,
+	puedeTransicionarCotizacionInterna,
 	puedeTransicionarFactura,
 	totales,
+	utilidadCotizacion,
 } from "../src/lib/comercial.js";
 
 // --- Parsing amounts ---------------------------------------------------------------------------
@@ -110,6 +115,45 @@ for (const desde of COTIZACION_ESTADO_KEYS) {
 	assert.equal(puedeTransicionarCotizacion(desde, desde), false, `${desde} -> ${desde}`);
 }
 assert.equal(puedeTransicionarCotizacion("inventado", "enviada"), false);
+
+// --- Cotización interna: pendiente -> aprobada/rechazada, terminal both ways -------------------
+assert.equal(puedeTransicionarCotizacionInterna("pendiente", "aprobada"), true);
+assert.equal(puedeTransicionarCotizacionInterna("pendiente", "rechazada"), true);
+for (const terminal of ["aprobada", "rechazada"] as const) {
+	assert.deepEqual([...COTIZACION_INTERNA_TRANSICIONES[terminal]], [], `${terminal} es terminal`);
+	for (const destino of COTIZACION_INTERNA_ESTADO_KEYS) {
+		assert.equal(puedeTransicionarCotizacionInterna(terminal, destino), false, `${terminal} -> ${destino}`);
+	}
+}
+assert.equal(puedeTransicionarCotizacionInterna("inventado", "aprobada"), false);
+
+// Utilidad only counts APROBADA estimates — pendiente/rechazada must never move the figure, or
+// resolving one later would silently change a number somebody already looked at.
+{
+	const venta = centavos("1000.00")!;
+	const internas = [
+		{ estado: "aprobada", total: centavos("300.00")! },
+		{ estado: "pendiente", total: centavos("9999.00")! },
+		{ estado: "rechazada", total: centavos("9999.00")! },
+	];
+	assert.equal(pesos(utilidadCotizacion(venta, internas)), "700.00");
+}
+assert.equal(pesos(utilidadCotizacion(centavos("1000.00")!, [])), "1000.00", "sin costos aprobados, todo es utilidad");
+
+// --- Margen, no markup ---------------------------------------------------------------------------
+// venta 100, costo 50 -> margen 50% (NOT 100%, que sería el markup sobre el costo).
+assert.equal(margenPorcentaje(centavos("100.00")!, centavos("50.00")!), 50);
+// venta 100, costo 25 -> markup sería 300%, margen es 75%.
+assert.equal(margenPorcentaje(centavos("100.00")!, centavos("25.00")!), 75);
+// Sin costo, toda la venta es utilidad: 100%.
+assert.equal(margenPorcentaje(centavos("100.00")!, 0n), 100);
+// El costo superó la venta: margen negativo, no truncado a cero (es una pérdida real).
+assert.equal(margenPorcentaje(centavos("100.00")!, centavos("150.00")!), -50);
+// Redondeado a un decimal.
+assert.equal(margenPorcentaje(centavos("300.00")!, centavos("100.00")!), 66.7);
+// Sin venta, "por ciento de nada" no es un número real.
+assert.equal(margenPorcentaje(0n, centavos("50.00")!), null);
+assert.equal(margenPorcentaje(-centavos("10.00")!, 0n), null);
 
 // --- Factura: `pagada` is arithmetic, never a button -------------------------------------------
 assert.equal(puedeTransicionarFactura("borrador", "emitida"), true);

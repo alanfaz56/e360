@@ -17,7 +17,14 @@
 	import PageHeader from "$lib/components/PageHeader.svelte";
 	import StatCard from "$lib/components/StatCard.svelte";
 	import Flash from "$lib/components/Flash.svelte";
-	import { CONCEPTO_TIPOS, CONCEPTO_TIPO_KEYS, centavos, conceptoTipoLabel, formatoPesos } from "$lib/comercial";
+	import {
+		CONCEPTO_TIPOS,
+		CONCEPTO_TIPO_KEYS,
+		centavos,
+		conceptoTipoLabel,
+		formatoPesos,
+		margenPorcentaje,
+	} from "$lib/comercial";
 	import { estadoExistencia, solicitudEstadoTone } from "$lib/inventario";
 	import { CLAVES_PROD_SERV, CLAVES_UNIDAD, CLAVE_PROD_SERV_DEFAULT } from "$lib/sat-catalogos";
 	import { haceCuanto } from "$lib/notificaciones";
@@ -201,7 +208,7 @@
 	</EmptyState>
 {:else}
 	<DataTable
-		columns={["Producto", "SAT", "Precio", "Existencia", ""]}
+		columns={["Producto", "SAT", "Precio", ...(data.puede.verCosto ? ["Margen"] : []), "Existencia", ""]}
 		items={data.productos}
 	>
 		{#snippet row(p)}
@@ -220,6 +227,14 @@
 			</td>
 			<!-- `formatoPesos` already carries the currency symbol; a literal `$` here made it "$$". -->
 			<td class="px-4 py-2.5 text-sand-900">{formatoPesos(p.precioVenta)}</td>
+			{#if data.puede.verCosto}
+				{@const costo = data.costos?.[p.id]}
+				{@const margen = costo ? margenPorcentaje(centavos(p.precioVenta) ?? 0n, centavos(costo) ?? 0n) : null}
+				<!-- Margin, not markup: (venta - costo) / venta. Admin-only, same as the costo field itself. -->
+				<td class="px-4 py-2.5 tabular-nums {margen != null && margen < 0 ? 'text-danger' : 'text-sand-700'}">
+					{margen != null ? `${margen}%` : "—"}
+				</td>
+			{/if}
 			<td class="px-4 py-2.5">
 				{#if p.controlaInventario}
 					<span class="block text-sand-900">{Number(p.existencia).toLocaleString("es-MX")} {p.unidad}</span>
@@ -437,6 +452,20 @@
 						· {formatoPesos(conIva.base)} + {formatoPesos(conIva.iva)} de IVA
 					</span>
 				</p>
+			{/if}
+
+			<!--
+				Admin-only: producto:costo is narrower than producto:manage, so a Gerente sees this
+				whole form except this field. The server ignores it silently if it ever arrives from
+				someone who shouldn't be sending it — see `leerProductoInput` in server/productos.ts.
+			-->
+			{#if data.puede.verCosto}
+				<Field
+					label="Costo de referencia"
+					name="costoReferencia"
+					value={p ? (data.costos?.[p.id] ?? "") : ""}
+					hint="Opcional. Para partes/servicios sin capas de inventario, o como referencia manual. Nunca se muestra fuera de este formulario."
+				/>
 			{/if}
 
 			<label class="flex cursor-pointer items-center gap-2 py-1.5 text-sm text-sand-700">

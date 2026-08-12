@@ -119,6 +119,66 @@ export const conceptoTipoLabel = (v: string) => (isConceptoTipo(v) ? CONCEPTO_TI
 /** IVA general. A rate, not a constant sprinkled through the code. */
 export const IVA = 0.16;
 
+// --- Cotización interna (estimación de costo) -------------------------------------------------
+//
+// A cost estimate for a job, almost always relayed from a mechanic via WhatsApp. Deliberately a
+// separate object from `cotizacion` rather than a third axis bolted onto it: it has its own
+// simple pendiente → aprobada/rechazada lifecycle, same shape as `solicitud_refaccion`, and once
+// aprobada it can be linked to a `cotizacion` to compute utilidad.
+
+export const COTIZACION_INTERNA_ESTADOS = {
+	pendiente: { label: "Pendiente", tone: "warn", descripcion: "Esperando revisión de Admin/Gerente" },
+	aprobada: { label: "Aprobada", tone: "ok", descripcion: "Cuenta para la utilidad" },
+	rechazada: { label: "Rechazada", tone: "danger", descripcion: "No cuenta para nada" },
+} as const satisfies Record<string, { label: string; tone: Tone; descripcion: string }>;
+
+export type CotizacionInternaEstado = keyof typeof COTIZACION_INTERNA_ESTADOS;
+export const COTIZACION_INTERNA_ESTADO_KEYS = Object.keys(COTIZACION_INTERNA_ESTADOS) as CotizacionInternaEstado[];
+export const isCotizacionInternaEstado = (v: unknown): v is CotizacionInternaEstado =>
+	typeof v === "string" && Object.hasOwn(COTIZACION_INTERNA_ESTADOS, v);
+export const cotizacionInternaEstadoLabel = (v: string) =>
+	isCotizacionInternaEstado(v) ? COTIZACION_INTERNA_ESTADOS[v].label : v;
+export const cotizacionInternaEstadoTone = (v: string): Tone =>
+	isCotizacionInternaEstado(v) ? COTIZACION_INTERNA_ESTADOS[v].tone : "neutral";
+
+/** Terminal both ways: a decision here isn't walked back, a new estimate is submitted instead. */
+export const COTIZACION_INTERNA_TRANSICIONES = {
+	pendiente: ["aprobada", "rechazada"],
+	aprobada: [],
+	rechazada: [],
+} as const satisfies Record<CotizacionInternaEstado, readonly CotizacionInternaEstado[]>;
+
+export function puedeTransicionarCotizacionInterna(desde: string, hasta: string): boolean {
+	if (!isCotizacionInternaEstado(desde) || !isCotizacionInternaEstado(hasta)) return false;
+	return (COTIZACION_INTERNA_TRANSICIONES[desde] as readonly string[]).includes(hasta);
+}
+
+/**
+ * Utilidad = venta - costo. Only `aprobada` estimates count — a `pendiente` or `rechazada` one
+ * must never move the figure, or resolving one later would silently change a number somebody
+ * already looked at. Computed on read, never stored: unlike `cotizacion.total`, nothing external
+ * (a CFDI) depends on this being frozen.
+ */
+export function utilidadCotizacion(ventaTotal: bigint, internas: { estado: string; total: bigint }[]): bigint {
+	const costo = internas.filter((i) => i.estado === "aprobada").reduce((suma, i) => suma + i.total, 0n);
+	return ventaTotal - costo;
+}
+
+/**
+ * Utility MARGIN, not markup: `((venta - costo) / venta) × 100`, over the sale price. Markup is
+ * the same numerator over COST instead — a 50-cost/100-venta line is a 50% margin but a 100%
+ * markup, and confusing the two is exactly the bug this function exists to prevent.
+ *
+ * Null when venta is zero or negative — there is no "percent of nothing", and a 0/0 or negative
+ * denominator produces a number that reads as real but isn't (Infinity, or a sign-flipped %).
+ * One decimal: a shop margin is not usually argued to the hundredth of a percent.
+ */
+export function margenPorcentaje(ventaTotal: bigint, costoTotal: bigint): number | null {
+	if (ventaTotal <= 0n) return null;
+	const margen = (Number(ventaTotal - costoTotal) / Number(ventaTotal)) * 100;
+	return Math.round(margen * 10) / 10;
+}
+
 // --- Factura ---------------------------------------------------------------------------------
 
 export const FACTURA_ESTADOS = {

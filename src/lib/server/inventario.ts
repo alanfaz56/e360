@@ -11,6 +11,7 @@ import { pageMeta, parsePageParams, skipFor, type PageParams } from "./paginate"
 import { getProducto } from "./productos";
 import { leerCfdi } from "$lib/cfdi";
 import type { Actor } from "./guard";
+import { alcanceDeTaller } from "./notas";
 
 /**
  * FIFO inventory.
@@ -557,15 +558,21 @@ export async function solicitarRefaccion(input: { actor: Actor; notaId: string; 
 
 	const nota = await prisma.nota_servicio.findUnique({
 		where: { id: input.notaId },
-		select: { id: true, folio: true, estado: true, mecanicoId: true },
+		select: { id: true, folio: true, estado: true },
 	});
 	if (!nota) throw new ClienteError(404, "Nota no encontrada");
 	if (nota.estado === "entregada" || nota.estado === "cancelada") {
 		throw new ClienteError(409, "Esa nota ya está cerrada.");
 	}
-	// A mechanic may only ask against their OWN job. The counter can ask on anyone's behalf.
-	if (!can(input.actor.role, "nota:read") && nota.mecanicoId !== input.actor.id) {
-		throw new ClienteError(403, "Esa nota no está asignada a ti.");
+	// A mechanic may only ask against a job their taller holds. The counter can ask on anyone's
+	// behalf. Same boundary `exigirNotaPropia` uses in notas.ts — not a hand-rolled `mecanicoId`
+	// comparison, which nothing in the panel writes anymore and would 404/403 every legitimate job.
+	if (!can(input.actor.role, "nota:read")) {
+		const propia = await prisma.nota_servicio.findFirst({
+			where: { id: nota.id, ...alcanceDeTaller(input.actor) },
+			select: { id: true },
+		});
+		if (!propia) throw new ClienteError(404, "Nota no encontrada");
 	}
 
 	const productoId = trim(input.body.productoId);

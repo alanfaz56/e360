@@ -101,6 +101,19 @@
 					/>
 					Vincular para confirmar
 				</Button>
+				<!-- Independent of vincular: the counter often pencils in a time slot before pulling
+				     up who it's for. Whichever of the two happens second auto-confirms — see
+				     asignarHoraCita/vincularCita in server/citas.ts. -->
+				<Button
+					href={searchHref(page.url, { drawer: "asignarHora" })}
+					variant="outline"
+				>
+					<CalendarCheck
+						size={18}
+						aria-hidden="true"
+					/>
+					{c.inicio ? "Cambiar hora" : "Asignar hora"}
+				</Button>
 			{/if}
 		{/if}
 		<!-- The vehicle physically arriving is the moment a nota de servicio exists. -->
@@ -582,6 +595,29 @@
 				</p>
 			</fieldset>
 
+			{#if data.historialParaGarantia.length > 0}
+				<Field
+					label="¿Es garantía de un trabajo anterior?"
+					name="garantiaDeId"
+					hint="Opcional. Liga esta nota a la que originó el reclamo, para llevar el hilo completo."
+				>
+					{#snippet children(id)}
+						<select
+							{id}
+							name="garantiaDeId"
+							class={INPUT}
+						>
+							<option value="">No, es un trabajo nuevo</option>
+							{#each data.historialParaGarantia as n (n.id)}
+								<option value={n.id}>
+									#{n.folio} · {n.recibidaAt.slice(0, 10)} · {n.motivo}
+								</option>
+							{/each}
+						</select>
+					{/snippet}
+				</Field>
+			{/if}
+
 			<Field
 				label="Kilometraje de entrada"
 				name="kilometraje"
@@ -695,6 +731,57 @@
 				</Field>
 			{/if}
 			<Button full>Confirmar cita</Button>
+		</form>
+	</Drawer>
+{/if}
+
+{#if drawer === "asignarHora" && c.estado === "solicitada" && data.puede.editar}
+	<Drawer
+		title="Asignar hora"
+		description="No hace falta ya saber cliente y unidad. En cuanto ambos queden vinculados, la cita se confirma sola."
+		closeHref={closeDrawer}
+	>
+		<form
+			method="POST"
+			action="?/asignarHora"
+			class="space-y-4"
+		>
+			<Field
+				label="Inicio"
+				name="inicio"
+				type="datetime-local"
+				required
+				value={c.inicio ? c.inicio.slice(0, 16) : sugerido}
+			/>
+			<Field
+				label="Fin"
+				name="fin"
+				type="datetime-local"
+				hint="Opcional: 1 hora por omisión."
+			/>
+			{#if data.puede.asignar}
+				<Field
+					label="Asignar a"
+					name="asignadoId"
+				>
+					{#snippet children(id)}
+						<select
+							{id}
+							name="asignadoId"
+							class={INPUT}
+						>
+							<option value="">Sin asignar</option>
+							{#each data.asignables as u (u.id)}
+								<option
+									value={u.id}
+									selected={c.asignadoId === u.id}>{u.name} · {u.roleLabel}</option
+								>
+							{/each}
+						</select>
+					{/snippet}
+				</Field>
+			{/if}
+			<Button full>Guardar hora</Button>
 		</form>
 	</Drawer>
 {/if}
