@@ -979,6 +979,23 @@ export async function resolverCotizacionInterna(input: {
 		});
 	}
 
+	// The mechanic whose number this was gets told too — approval only, per how the shop works:
+	// a rejection is a conversation with whoever typed it in, not a verdict on the mechanic. No
+	// peso amount here — a mechanic never sees cost figures (`producto:read` is not theirs either),
+	// so the message confirms the decision without leaking what the job costs.
+	if (destino === "aprobada" && resuelta.mecanicoId && resuelta.mecanicoId !== resuelta.creadaPorId) {
+		await notificar({
+			evento: "cotizacion_interna_resuelta",
+			destino: { userId: resuelta.mecanicoId },
+			titulo: "Tu estimación fue aprobada",
+			cuerpo: `Nota #${resuelta.nota?.folio}: tu estimación de costo fue aprobada.`,
+			url: `/panel/taller/${resuelta.notaId}`,
+			entidad: "nota",
+			entidadId: resuelta.notaId,
+			excepto: input.actor.id,
+		});
+	}
+
 	return publicCotizacionInterna(resuelta);
 }
 

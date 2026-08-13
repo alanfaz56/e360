@@ -230,6 +230,21 @@
 				<p class="mt-3 text-xs text-sand-500">
 					Para autorizar o aclarar cualquier cargo, háblanos. Nada se cobra sin tu visto bueno.
 				</p>
+
+				{#if data.cuentaBancaria}
+					<div class="mt-3 rounded border border-sand-200 bg-sand-50 p-3 text-sm">
+						<p class="font-medium text-sand-800">Para pagar por transferencia</p>
+						<p class="mt-1 text-sand-700">
+							{data.cuentaBancaria.banco} · {data.cuentaBancaria.titular}
+						</p>
+						{#if data.cuentaBancaria.clabe}
+							<p class="text-sand-700">CLABE: {data.cuentaBancaria.clabe}</p>
+						{/if}
+						{#if data.cuentaBancaria.numeroCuenta}
+							<p class="text-sand-700">Cuenta: {data.cuentaBancaria.numeroCuenta}</p>
+						{/if}
+					</div>
+				{/if}
 			</section>
 		{/if}
 

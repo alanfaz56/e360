@@ -31,6 +31,7 @@ import { conceptoTipoLabel, cotizacionEstadoLabel, facturaEstadoLabel } from "$l
 import { tallerMencionado } from "./talleres";
 import { recordAudit } from "./audit";
 import { ClienteError, trim } from "./clientes";
+import { cuentaBancariaPrincipal } from "./cuentas-bancarias";
 import { listSolicitudes } from "./inventario";
 import { avisarClienteDeNota, notificar, nuevoTokenSeguimiento } from "./notificaciones";
 import { pageMeta, parsePageParams, skipFor, type PageParams } from "./paginate";
@@ -236,10 +237,16 @@ export async function seguimientoPorToken(token: string) {
 		}),
 	]);
 
+	// Same account the cotización email splices in — shown here too so a customer checking their
+	// own page (no email needed) sees where to transfer, right next to what they'd be paying.
+	const cuentaBancaria =
+		cotizaciones.length > 0 || facturas.length > 0 ? await cuentaBancariaPrincipal() : null;
+
 	return {
 		nota: notaParaCliente(nota),
 		cliente: nota.cliente?.nombreCompleto ?? null,
 		clienteId: nota.clienteId,
+		cuentaBancaria,
 		comentarios: comentarios.map((c) => ({
 			id: c.id,
 			texto: c.texto,
