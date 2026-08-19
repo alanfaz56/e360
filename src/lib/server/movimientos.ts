@@ -71,7 +71,7 @@ export async function ultimosMovimientos(limite = 15): Promise<Movimiento[]> {
 			id: `pago-${p.id}`,
 			texto: `Pago de $${pesos(BigInt(Math.round(Number(p.monto) * 100)))} · ${p.factura.cliente.nombreCompleto}`,
 			detalle: `Factura #${p.factura.folio}`,
-			href: p.factura.notaId ? `/panel/notas/${p.factura.notaId}` : `/panel/facturas/${p.factura.id}/imprimir`,
+			href: p.factura.notaId ? `/panel/notas/${p.factura.notaId}` : `/panel/facturas/${p.factura.id}`,
 			fecha: p.createdAt.toISOString(),
 		})),
 	];

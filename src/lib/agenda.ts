@@ -94,6 +94,15 @@ export function sumarDias(fecha: string, dias: number): string {
 }
 
 /**
+ * Whole shop-local days from `desde` to `hasta`. Negative when `hasta` already passed — this is
+ * the one place "vence en 3 días" vs. "vencida hace 3 días" gets computed, so every screen that
+ * shows a due date reads the same number.
+ */
+export function diasEntre(desde: string, hasta: string): number {
+	return Math.round((enZona(hasta, "12:00").getTime() - enZona(desde, "12:00").getTime()) / 86_400_000);
+}
+
+/**
  * Seven days STARTING at `fecha` — a rolling week, not a calendar one.
  *
  * The default anchor is today, so today is always the first column. A counter looking at the

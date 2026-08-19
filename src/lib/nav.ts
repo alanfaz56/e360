@@ -17,6 +17,7 @@ export type NavItem = {
 		| "car"
 		| "scroll-text"
 		| "layout-dashboard"
+		| "chart-column"
 		| "calendar-days"
 		| "list"
 		| "clipboard-list"
@@ -52,6 +53,7 @@ export const NAV: readonly NavItem[] = [
 	// exactly the set of roles with at least one KPI block today — a role with none is redirected
 	// by the page anyway, so the worst a drift here does is show a link that bounces.
 	{ href: "/panel", label: "Inicio", icon: "layout-dashboard", permission: "cita:read" },
+	{ href: "/panel/dashboard", label: "Dashboard gerencial", icon: "chart-column", permission: "dashboard:ver" },
 	{ href: "/panel/agenda", label: "Agenda", icon: "calendar-days", permission: "cita:read" },
 	{ href: "/panel/citas", label: "Citas", icon: "list", permission: "cita:read" },
 	// The mechanic's whole app. First for them because it is the ONLY entry they hold — everyone

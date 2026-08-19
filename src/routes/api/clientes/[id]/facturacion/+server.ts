@@ -1,7 +1,22 @@
 import { error, json, type RequestHandler } from "@sveltejs/kit";
 import { ClienteError } from "$lib/server/clientes";
-import { vincularClienteConPac } from "$lib/server/timbrado";
+import { obtenerReceptorPac, vincularClienteConPac } from "$lib/server/timbrado";
 import { requireUser } from "$lib/server/guard";
+
+/**
+ * GET /api/clientes/[id]/facturacion — what the PAC has on file for this customer right now, in
+ * our terms (`obtenerReceptor` never returns their raw payload). `null` when this RFC has no
+ * receptor registered yet — that is an answer, not a failure. Permission: `factura:timbrar`.
+ */
+export const GET: RequestHandler = async ({ locals, params }) => {
+	const actor = requireUser(locals);
+	try {
+		return json({ receptor: await obtenerReceptorPac({ actor, clienteId: params.id! }) });
+	} catch (err) {
+		if (err instanceof ClienteError) error(err.status, err.message);
+		throw err;
+	}
+};
 
 /**
  * POST /api/clientes/[id]/facturacion — find or create this customer AT the PAC and remember the

@@ -1,9 +1,9 @@
-import { type Actions, type ServerLoad } from "@sveltejs/kit";
+import { redirect, type Actions, type ServerLoad } from "@sveltejs/kit";
 import prisma from "$lib/prisma";
 import { ROLE_LABEL, assignableRoles, can, settableRoles } from "$lib/roles";
 import { requirePermission, requireUser } from "$lib/server/guard";
 import { canRevokeInvitation, issueInvitation, publicInvitation, revokeInvitation } from "$lib/server/invitations";
-import { changeUserRole, listRoleChanges, listUsers, setUserLockout } from "$lib/server/users";
+import { changeUserRole, impersonateUser, listRoleChanges, listUsers, setUserLockout } from "$lib/server/users";
 import { fallo } from "$lib/server/errores";
 
 export const load: ServerLoad = async ({ locals }) => {
@@ -17,6 +17,7 @@ export const load: ServerLoad = async ({ locals }) => {
 	return {
 		actorId: actor.id,
 		canLock: can(actor.role, "user:ban"),
+		canImpersonate: can(actor.role, "user:impersonate"),
 		users: await listUsers(),
 		// `canRevoke` is computed server-side per row so the button only appears where the
 		// server would actually allow it — same function the action calls.
@@ -102,5 +103,18 @@ export const actions: Actions = {
 		} catch (err) {
 			return fallo(err);
 		}
+	},
+
+	/** Hands the browser the target's session — redirect, not a form return, on success. */
+	impersonar: async ({ locals, request }) => {
+		const actor = requireUser(locals);
+		const form = await request.formData();
+
+		try {
+			await impersonateUser({ actor, targetUserId: form.get("userId"), headers: request.headers });
+		} catch (err) {
+			return fallo(err);
+		}
+		redirect(303, "/panel");
 	},
 };

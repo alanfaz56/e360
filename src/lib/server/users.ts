@@ -1,4 +1,5 @@
 import prisma from "$lib/prisma";
+import { auth } from "$lib/auth";
 import { ROLE_LABEL, can, isRole, type Role } from "$lib/roles";
 import { queryAuditLogs, recordAudit } from "./audit";
 import type { Actor } from "./guard";
@@ -229,5 +230,74 @@ export async function changeUserRole(input: { actor: Actor; userId: unknown; rol
 			},
 			fromRole: target.role,
 		};
+	});
+}
+
+/**
+ * Step into another user's session. better-auth's admin plugin does the actual session swap
+ * (`auth.api.impersonateUser` stashes the admin's own session in a signed cookie and issues the
+ * target's) — this wraps it with the app's own permission registry and an audit entry, the same
+ * pair of things `setUserLockout`/`changeUserRole` add on top of a raw better-auth/DB write.
+ *
+ * A banned target is rejected here rather than left to bounce off `requireUser` on the very next
+ * request the impersonated session makes — that would look like the click did nothing.
+ * An admin target is rejected by better-auth itself (no `allowImpersonatingAdmins`, see
+ * `createAuth`); the UI additionally never renders the button for one.
+ */
+export async function impersonateUser(input: { actor: Actor; targetUserId: unknown; headers: Headers }) {
+	const { actor } = input;
+
+	if (!can(actor.role, "user:impersonate")) {
+		throw new UserError(403, "Sin permiso: user:impersonate");
+	}
+	if (typeof input.targetUserId !== "string" || !input.targetUserId) {
+		throw new UserError(400, "Se requiere `targetUserId`");
+	}
+	if (input.targetUserId === actor.id) {
+		throw new UserError(403, "No puedes impersonarte a ti mismo.");
+	}
+
+	const target = await prisma.user.findUnique({
+		where: { id: input.targetUserId },
+		select: { id: true, name: true, email: true, banned: true },
+	});
+	if (!target) throw new UserError(404, "Usuario no encontrado");
+	if (target.banned) throw new UserError(409, "No puedes entrar como un usuario bloqueado.");
+
+	await auth.api.impersonateUser({ body: { userId: target.id }, headers: input.headers });
+
+	await recordAudit(prisma, {
+		action: "user.impersonate_start",
+		actor,
+		entityId: target.id,
+		entityLabel: target.email,
+		summary: `${actor.email} entró como ${target.email}`,
+	});
+}
+
+/**
+ * End an impersonation and restore the admin's own session.
+ *
+ * No `can()` check: while impersonating, `locals.user.role` IS the target's role, which may hold
+ * no permissions at all — the app's registry has nothing to say about who may click "salir". The
+ * real gate is the caller checking `locals.session.impersonatedBy` is actually set before calling
+ * this; `auth.api.stopImpersonating` itself refuses with no active impersonation as a backstop.
+ */
+export async function stopImpersonating(input: { locals: App.Locals; headers: Headers }) {
+	const adminId = input.locals.session?.impersonatedBy;
+	const target = input.locals.user;
+	if (!adminId || !target) throw new UserError(400, "No hay una impersonación activa.");
+
+	const admin = await prisma.user.findUnique({ where: { id: adminId }, select: { id: true, email: true } });
+	if (!admin) throw new UserError(404, "Usuario administrador no encontrado");
+
+	await auth.api.stopImpersonating({ headers: input.headers });
+
+	await recordAudit(prisma, {
+		action: "user.impersonate_stop",
+		actor: { id: admin.id, email: admin.email },
+		entityId: target.id,
+		entityLabel: target.email,
+		summary: `${admin.email} dejó de ser ${target.email}`,
 	});
 }

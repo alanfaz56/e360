@@ -196,6 +196,37 @@ function uidDeCliente(cuerpo: Envoltura): string | null {
 	return primerTexto(...candidatos);
 }
 
+/**
+ * The receptor's own fields, wherever this API decided to put them — same reasoning as
+ * `uidDeCliente`: their casing and param names are not the same on the way out as on the way in
+ * (`razons` in, `RazonSocial` or `razons` out, depending on the day), so every candidate key is
+ * tried and the first one that answers wins. Returns `null` when the envelope holds no client.
+ */
+function receptorDeCliente(cuerpo: Envoltura): DatosReceptor | null {
+	const filas: Record<string, unknown>[] = [];
+	for (const contenedor of [cuerpo.Data, cuerpo.data]) {
+		if (Array.isArray(contenedor)) filas.push(...contenedor.map(comoObjeto));
+		else if (contenedor) filas.push(comoObjeto(contenedor));
+	}
+	const fila = filas[0];
+	if (!fila) return null;
+
+	const campo = (...claves: string[]) => primerTexto(...claves.map((k) => fila[k]));
+	return {
+		rfc: campo("Rfc", "rfc") ?? "",
+		nombre: campo("RazonSocial", "razons", "Nombre", "nombre") ?? "",
+		codigoPostal: campo("CodigoPostal", "codpos", "cp") ?? "",
+		regimenFiscal: campo("RegimenFiscal", "regimen") ?? "",
+		usoCfdi: campo("UsoCFDI", "usocfdi", "UsoCfdi") ?? "",
+		email: campo("Email", "email"),
+		calle: campo("Calle", "calle"),
+		numero: campo("NumeroExterior", "numero_exterior", "numero"),
+		colonia: campo("Colonia", "colonia"),
+		ciudad: campo("Ciudad", "ciudad"),
+		estado: campo("Estado", "estado"),
+	};
+}
+
 export const facturaCom: ProveedorTimbrado = {
 	clave: "factura_com",
 	label: "factura.com",
@@ -252,6 +283,12 @@ export const facturaCom: ProveedorTimbrado = {
 			throw new ClienteError(502, "El proveedor no devolvió el identificador del cliente.");
 		}
 		return uid;
+	},
+
+	async obtenerReceptor(cfg, rfc) {
+		const encontrado = await intentar(cfg, RUTAS.clientePorRfc(rfc));
+		if (!encontrado || !exito(encontrado)) return null;
+		return receptorDeCliente(encontrado);
 	},
 
 	async timbrar(cfg, solicitud) {

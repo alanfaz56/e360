@@ -4,6 +4,8 @@
 	import Button from "$lib/components/Button.svelte";
 	import PageHeader from "$lib/components/PageHeader.svelte";
 	import StatCard from "$lib/components/StatCard.svelte";
+	import BarList from "$lib/components/BarList.svelte";
+	import TrendBars from "$lib/components/TrendBars.svelte";
 	import { haceCuanto } from "$lib/notificaciones";
 
 	let { data } = $props();
@@ -66,6 +68,37 @@
 		</div>
 	</section>
 {/each}
+
+<!-- Gráficas: la misma pregunta que las KPIs de arriba, pero con la forma que le toca — cuánto
+     y desde cuándo, no solo cuánto. Cada barra ya es un número (mark spec: nunca hay que
+     pasar el cursor para leerla), y las de cartera y notas además navegan a su lista filtrada. -->
+{#if data.cartera || data.ingresos}
+	<div class="mb-6 grid grid-cols-1 gap-3 lg:grid-cols-2">
+		{#if data.cartera}
+			<section class="rounded-lg border border-sand-200 bg-white p-4">
+				<h2 class="mb-3 text-xs font-medium uppercase tracking-wide text-sand-500">
+					Antigüedad de cartera
+				</h2>
+				<BarList bars={data.cartera} />
+			</section>
+		{/if}
+		{#if data.ingresos}
+			<section class="rounded-lg border border-sand-200 bg-white p-4">
+				<h2 class="mb-3 text-xs font-medium uppercase tracking-wide text-sand-500">
+					Ingresos, últimos 14 días
+				</h2>
+				<TrendBars puntos={data.ingresos} />
+			</section>
+		{/if}
+	</div>
+{/if}
+
+{#if data.notas}
+	<section class="mb-6 rounded-lg border border-sand-200 bg-white p-4">
+		<h2 class="mb-3 text-xs font-medium uppercase tracking-wide text-sand-500">Notas por estado</h2>
+		<BarList bars={data.notas} />
+	</section>
+{/if}
 
 {#if data.movimientos.length > 0}
 	<!-- Admin/Gerente only (movimientos:read) — a live read of citas/notas/pagos, not the audit

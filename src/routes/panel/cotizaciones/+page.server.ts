@@ -36,6 +36,10 @@ export const load: ServerLoad = async ({ locals, url }) => {
 	const desde = url.searchParams.get("desde") || sumarDias(hoy(), -30);
 	const hasta = url.searchParams.get("hasta") || hoy();
 	const pestana = url.searchParams.get("ver") === "facturas" ? "facturas" : "cotizaciones";
+	// A 60-day-overdue invoice was likely CREATED well outside the default 30-day window, so
+	// "vencidas" drops the date filter entirely rather than silently hiding the very rows it's
+	// asking for.
+	const vencidas = url.searchParams.get("vencidas") === "1";
 
 	try {
 		const [cotizaciones, facturas, dinero] = await Promise.all([
@@ -51,8 +55,7 @@ export const load: ServerLoad = async ({ locals, url }) => {
 			// before you click it — a tab that says nothing until opened is a tab nobody opens.
 			can(actor.role, "factura:read")
 				? listFacturas({
-						desde,
-						hasta,
+						...(vencidas ? { vencidas: true } : { desde, hasta }),
 						page: pestana === "facturas" ? Number(url.searchParams.get("page") ?? 1) || 1 : 1,
 						perPage: 25,
 					})

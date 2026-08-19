@@ -9,6 +9,7 @@
 	import Car from "@lucide/svelte/icons/car";
 	import CalendarDays from "@lucide/svelte/icons/calendar-days";
 	import LayoutDashboard from "@lucide/svelte/icons/layout-dashboard";
+	import ChartColumn from "@lucide/svelte/icons/chart-column";
 	import List from "@lucide/svelte/icons/list";
 	import ClipboardList from "@lucide/svelte/icons/clipboard-list";
 	import ReceiptText from "@lucide/svelte/icons/receipt-text";
@@ -27,6 +28,7 @@
 		car: Car,
 		"scroll-text": ScrollText,
 		"layout-dashboard": LayoutDashboard,
+		"chart-column": ChartColumn,
 		"calendar-days": CalendarDays,
 		list: List,
 		"clipboard-list": ClipboardList,

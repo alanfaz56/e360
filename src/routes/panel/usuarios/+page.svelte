@@ -4,6 +4,7 @@
 	import ShieldUser from "@lucide/svelte/icons/shield-user";
 	import Lock from "@lucide/svelte/icons/lock";
 	import LockOpen from "@lucide/svelte/icons/lock-open";
+	import LogIn from "@lucide/svelte/icons/log-in";
 	import Eye from "@lucide/svelte/icons/eye";
 	import LinkIcon from "@lucide/svelte/icons/link";
 	import Copy from "@lucide/svelte/icons/copy";
@@ -203,6 +204,28 @@
 									Desbloquear
 								{/if}
 							</Button>
+						{/if}
+						{#if data.canImpersonate && user.role !== "admin" && user.active}
+							<form
+								method="POST"
+								action="?/impersonar"
+							>
+								<input
+									type="hidden"
+									name="userId"
+									value={user.id}
+								/>
+								<Button
+									variant="ghost"
+									size="sm"
+								>
+									<LogIn
+										size={14}
+										aria-hidden="true"
+									/>
+									Entrar como
+								</Button>
+							</form>
 						{/if}
 					</div>
 				{/if}

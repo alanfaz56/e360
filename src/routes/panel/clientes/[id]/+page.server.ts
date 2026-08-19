@@ -13,10 +13,13 @@ import {
 	updateCliente,
 	type CampoFusionable,
 } from "$lib/server/clientes";
+import { resumenClienteFinanciero } from "$lib/server/comercial";
 import prisma from "$lib/prisma";
 import { createContacto, deleteContacto, listContactos, updateContacto } from "$lib/server/contactos";
 import { actualizarTelefono, crearTelefono, eliminarTelefono, listTelefonos } from "$lib/server/cliente-telefonos";
 import { createUnidad, listUnidades } from "$lib/server/unidades";
+import { listNotas } from "$lib/server/notas";
+import { vincularClienteConPac } from "$lib/server/timbrado";
 import { fallaEnCarga, fallo } from "$lib/server/errores";
 
 export const load: ServerLoad = async ({ locals, params, url }) => {
@@ -29,10 +32,18 @@ export const load: ServerLoad = async ({ locals, params, url }) => {
 		fallaEnCarga(err);
 	}
 
-	const [contactos, telefonos, unidades] = await Promise.all([
+	const puedeVerNotas = can(actor.role, "nota:read");
+	const puedeVerDinero = can(actor.role, "factura:read");
+
+	const [contactos, telefonos, unidades, notasServicio, financiero] = await Promise.all([
 		listContactos(cliente.id),
 		listTelefonos(cliente.id),
 		listUnidades({ clienteId: cliente.id, archivados: true, perPage: 100 }),
+		// The shop's own service history for this customer — every nota, whichever vehicle. Capped
+		// at 20: this is a summary on their profile, not the full notas list (that already exists
+		// at /panel/notas?clienteId=…, linked below for anyone who needs to page through it).
+		puedeVerNotas ? listNotas({ clienteId: cliente.id, perPage: 20 }) : null,
+		puedeVerDinero ? resumenClienteFinanciero(cliente.id) : null,
 	]);
 
 	const puedeFusionar = can(actor.role, "cliente:merge");
@@ -86,6 +97,8 @@ export const load: ServerLoad = async ({ locals, params, url }) => {
 		telefonos,
 		camposFusionables: CAMPOS_FUSIONABLES,
 		unidades: unidades.unidades,
+		notasServicio: notasServicio?.notas ?? [],
+		financiero,
 		tipos: CLIENTE_TIPOS.map((value) => ({ value, label: CLIENTE_TIPO_LABEL[value] })),
 		// Only the roles this actor may actually hand out reach the browser.
 		rolesDisponibles: assignableContactoRoles(actor.role).map((value) => ({
@@ -109,6 +122,11 @@ export const load: ServerLoad = async ({ locals, params, url }) => {
 			otorgarAutoridad: can(actor.role, "contacto:grant-authority"),
 			crearUnidad: can(actor.role, "unidad:create"),
 			fusionar: puedeFusionar,
+			verNotas: puedeVerNotas,
+			verDinero: puedeVerDinero,
+			// Same permission that gates the button on a factura: this creates nothing that costs
+			// anything (a receptor at the PAC is free), but it does reach an outside service.
+			vincularPac: can(actor.role, "factura:timbrar"),
 		},
 	};
 };
@@ -230,6 +248,21 @@ export const actions: Actions = {
 		try {
 			await createUnidad({ actor, clienteId: params.id!, body });
 			return { ok: "Unidad registrada." };
+		} catch (err) {
+			return fallo(err);
+		}
+	},
+
+	/**
+	 * Link (or create) this customer at the PAC on purpose, ahead of the first invoice. Same
+	 * function stamping calls on its way past — `vincularClienteConPac` in timbrado.ts — so
+	 * this button and a factura's first `timbrar` click can never resolve to a different uid.
+	 */
+	vincularPac: async ({ locals, params }) => {
+		const actor = requireUser(locals);
+		try {
+			const { entorno } = await vincularClienteConPac({ actor, clienteId: params.id! });
+			return { ok: `Vinculado con factura.com (${entorno}).` };
 		} catch (err) {
 			return fallo(err);
 		}

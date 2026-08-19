@@ -20,10 +20,47 @@
 	import SatSelect from "$lib/components/SatSelect.svelte";
 	import Flash from "$lib/components/Flash.svelte";
 	import { REGIMENES_FISCALES, USOS_CFDI, satLabel } from "$lib/sat-catalogos";
+	import { formatoPesos, vencimientoLabel, vencimientoTone } from "$lib/comercial";
+	import { notaEstadoTone } from "$lib/notas";
 	import { searchHref } from "$lib/url";
 	import { page } from "$app/state";
 
 	let { data, form } = $props();
+
+	// factura.com receptor lookup, behind the accordion — fetched once, on first open.
+	type ReceptorPac = {
+		rfc: string;
+		nombre: string;
+		regimenFiscal: string;
+		codigoPostal: string;
+		usoCfdi: string;
+		email: string | null;
+		calle: string | null;
+		numero: string | null;
+		colonia: string | null;
+		ciudad: string | null;
+		estado: string | null;
+	};
+	let receptorPac = $state<ReceptorPac | null>(null);
+	let cargandoReceptor = $state(false);
+	let errorReceptor = $state<string | null>(null);
+	let receptorCargado = false;
+	async function cargarReceptorPac() {
+		if (receptorCargado || cargandoReceptor) return;
+		cargandoReceptor = true;
+		errorReceptor = null;
+		try {
+			const res = await fetch(`/api/clientes/${data.cliente.id}/facturacion`);
+			if (!res.ok) throw new Error("No pudimos consultar factura.com.");
+			const body = await res.json();
+			receptorPac = body.receptor;
+			receptorCargado = true;
+		} catch (err) {
+			errorReceptor = err instanceof Error ? err.message : "No pudimos consultar factura.com.";
+		} finally {
+			cargandoReceptor = false;
+		}
+	}
 
 	const drawer = $derived(page.url.searchParams.get("drawer"));
 	const editando = $derived(data.contactos.find((c) => c.id === page.url.searchParams.get("contacto")));
@@ -214,8 +251,156 @@
 				<dd class="text-sand-950">{data.cliente.notas}</dd>
 			</div>
 		{/if}
+		<div class="sm:col-span-2">
+			<dt class="text-sand-500">Facturación electrónica</dt>
+			<dd class="mt-1 flex flex-wrap items-center gap-2">
+				{#if data.cliente.facturaComUid}
+					<Badge tone={data.cliente.facturaComEntorno === "produccion" ? "ok" : "warn"}>
+						{data.cliente.facturaComEntorno === "produccion" ? "Vinculado" : "Vinculado (sandbox)"}
+					</Badge>
+					<span class="font-mono text-xs text-sand-500">{data.cliente.facturaComUid}</span>
+				{:else}
+					<Badge tone="neutral">Sin vincular</Badge>
+				{/if}
+				{#if data.puede.vincularPac}
+					<!-- Same link stamping resolves on its way past — run here on purpose so it can
+					     be checked, or a stale link fixed, before an invoice depends on it. -->
+					<form
+						method="POST"
+						action="?/vincularPac"
+					>
+						<Button
+							size="sm"
+							variant="outline"
+						>
+							{data.cliente.facturaComUid ? "Revincular con factura.com" : "Vincular con factura.com"}
+						</Button>
+					</form>
+				{/if}
+			</dd>
+			{#if data.puede.vincularPac && data.cliente.rfc}
+				<!-- Collapsed by default and fetched only on open: this is a lookup on an outside
+				     service, not data the page needs to render. Useful when CFDI40145 says the
+				     receptor's name doesn't match — this is literally what the PAC has on file. -->
+				<details
+					class="mt-2"
+					ontoggle={(e) => {
+						if ((e.currentTarget as HTMLDetailsElement).open) cargarReceptorPac();
+					}}
+				>
+					<summary class="cursor-pointer text-xs text-sand-500 hover:text-brand-700">
+						Ver datos en factura.com
+					</summary>
+					<div class="mt-2 rounded border border-sand-200 bg-sand-50 p-3 text-xs">
+						{#if cargandoReceptor}
+							<p class="text-sand-500">Consultando factura.com…</p>
+						{:else if errorReceptor}
+							<p class="text-danger">{errorReceptor}</p>
+						{:else if receptorPac}
+							<dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5">
+								<dt class="text-sand-500">Nombre</dt>
+								<dd class="text-sand-900">{receptorPac.nombre || "—"}</dd>
+								<dt class="text-sand-500">RFC</dt>
+								<dd class="font-mono text-sand-900">{receptorPac.rfc || "—"}</dd>
+								<dt class="text-sand-500">Régimen fiscal</dt>
+								<dd class="text-sand-900">{receptorPac.regimenFiscal || "—"}</dd>
+								<dt class="text-sand-500">Código postal</dt>
+								<dd class="text-sand-900">{receptorPac.codigoPostal || "—"}</dd>
+								<dt class="text-sand-500">Uso CFDI</dt>
+								<dd class="text-sand-900">{receptorPac.usoCfdi || "—"}</dd>
+								<dt class="text-sand-500">Correo</dt>
+								<dd class="text-sand-900">{receptorPac.email || "—"}</dd>
+								<dt class="text-sand-500">Dirección</dt>
+								<dd class="text-sand-900">
+									{[
+										receptorPac.calle,
+										receptorPac.numero,
+										receptorPac.colonia,
+										receptorPac.ciudad,
+										receptorPac.estado,
+									]
+										.filter(Boolean)
+										.join(", ") || "—"}
+								</dd>
+							</dl>
+						{:else}
+							<p class="text-sand-500">
+								Sin receptor registrado en factura.com para este RFC todavía.
+							</p>
+						{/if}
+					</div>
+				</details>
+			{/if}
+		</div>
 	</dl>
 </section>
+
+<!-- Valor del cliente -->
+{#if data.financiero}
+	<section class="mt-6 rounded-lg border border-sand-200 bg-white p-5">
+		<h2 class="font-display text-lg text-sand-950">Valor del cliente</h2>
+		<dl class="mt-3 grid gap-x-6 gap-y-3 text-sm sm:grid-cols-3">
+			<div>
+				<dt class="text-sand-500">Facturado histórico</dt>
+				<dd class="text-lg font-medium text-sand-950">{formatoPesos(Number(data.financiero.totalFacturado))}</dd>
+			</div>
+			<div>
+				<dt class="text-sand-500">Pagado histórico</dt>
+				<dd class="text-lg font-medium text-ok">{formatoPesos(Number(data.financiero.totalPagado))}</dd>
+			</div>
+			<div>
+				<dt class="text-sand-500">Pendiente de cobro</dt>
+				<dd
+					class="text-lg font-medium"
+					class:text-accent-700={Number(data.financiero.pendiente) > 0}
+				>
+					{formatoPesos(Number(data.financiero.pendiente))}
+				</dd>
+			</div>
+		</dl>
+
+		{#if data.financiero.facturasAbiertas.length > 0}
+			<h3 class="mt-5 text-sm font-medium text-sand-700">
+				Facturas abiertas ({data.financiero.totalFacturasAbiertas})
+			</h3>
+			<ul class="mt-2 space-y-1.5 text-sm">
+				{#each data.financiero.facturasAbiertas as f (f.id)}
+					<li class="flex flex-wrap items-center gap-2 rounded border border-sand-200 px-3 py-2">
+						<a
+							class="font-medium text-brand-700 hover:underline"
+							href="/panel/facturas/{f.id}">Factura #{f.folio}</a
+						>
+						{#if f.vence}<span class="text-xs text-sand-500">vence {f.vence.slice(0, 10)}</span>{/if}
+						{#if vencimientoLabel(f.diasParaVencer)}
+							<span
+								class="text-xs"
+								class:text-danger={vencimientoTone(f.diasParaVencer) === "danger"}
+								class:text-accent-700={vencimientoTone(f.diasParaVencer) === "warn"}
+								class:text-sand-500={vencimientoTone(f.diasParaVencer) === "neutral"}
+							>
+								{vencimientoLabel(f.diasParaVencer)}
+							</span>
+						{/if}
+						<span class="ml-auto text-accent-700">saldo {formatoPesos(Number(f.saldo))}</span>
+					</li>
+				{/each}
+			</ul>
+		{/if}
+
+		{#if data.financiero.ultimosPagos.length > 0}
+			<h3 class="mt-5 text-sm font-medium text-sand-700">Últimos pagos</h3>
+			<ul class="mt-2 space-y-1.5 text-sm">
+				{#each data.financiero.ultimosPagos as p (p.id)}
+					<li class="flex flex-wrap items-center gap-2 rounded border border-sand-200 px-3 py-2">
+						<span>{p.pagadoAt.slice(0, 10)} · {p.metodoLabel}</span>
+						<span class="text-xs text-sand-500">Factura #{p.facturaFolio}</span>
+						<span class="ml-auto font-medium text-sand-900">{formatoPesos(Number(p.monto))}</span>
+					</li>
+				{/each}
+			</ul>
+		{/if}
+	</section>
+{/if}
 
 <!-- Teléfonos -->
 <div class="mt-6 flex flex-wrap items-center gap-3">
@@ -439,6 +624,44 @@
 			{/snippet}
 		</DataTable>
 	</div>
+{/if}
+
+<!-- Historial de servicio -->
+{#if data.puede.verNotas}
+	<div class="mt-10 flex flex-wrap items-center gap-3">
+		<h2 class="font-display text-xl text-sand-950">Historial de servicio</h2>
+		<a
+			class="ml-auto text-sm text-brand-700 hover:underline"
+			href="/panel/notas?clienteId={data.cliente.id}"
+		>
+			Ver todas
+		</a>
+	</div>
+	{#if data.notasServicio.length > 0}
+		<div class="mt-3">
+			<DataTable
+				columns={["Nota", "Recibida", "Unidad", "Estado"]}
+				items={data.notasServicio}
+			>
+				{#snippet row(n)}
+					<td class="px-4 py-2.5">
+						<a
+							class="font-medium text-brand-700 hover:underline"
+							href="/panel/notas/{n.id}">#{n.folio}</a
+						>
+						{#if n.motivo}<span class="block text-xs text-sand-500">{n.motivo}</span>{/if}
+					</td>
+					<td class="px-4 py-2.5 text-sand-600">{n.recibidaAt.slice(0, 10)}</td>
+					<td class="px-4 py-2.5 text-sand-600">{n.unidadEtiqueta ?? "—"}</td>
+					<td class="px-4 py-2.5">
+						<Badge tone={notaEstadoTone(n.estado)}>{n.estadoLabel}</Badge>
+					</td>
+				{/snippet}
+			</DataTable>
+		</div>
+	{:else}
+		<p class="mt-3 text-sm text-sand-600">Sin notas de servicio todavía.</p>
+	{/if}
 {/if}
 
 <!-- Unidades -->

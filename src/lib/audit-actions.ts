@@ -12,6 +12,8 @@ export const AUDIT_ACTIONS = {
 	"user.role_change": "Cambio de rol",
 	"user.ban": "Usuario bloqueado",
 	"user.unban": "Usuario desbloqueado",
+	"user.impersonate_start": "Impersonación iniciada",
+	"user.impersonate_stop": "Impersonación terminada",
 	"invitation.create": "Invitación creada",
 	"invitation.revoke": "Invitación revocada",
 	"invitation.accept": "Invitación aceptada",

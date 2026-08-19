@@ -1,4 +1,5 @@
 import { redirect, type ServerLoad } from "@sveltejs/kit";
+import prisma from "$lib/prisma";
 import { NAV } from "$lib/nav";
 import { ROLE_LABEL, can, permissionsFor } from "$lib/roles";
 import { esDueno, requireUser } from "$lib/server/guard";
@@ -7,6 +8,12 @@ import { contarNoLeidas, listarNotificaciones } from "$lib/server/notificaciones
 export const load: ServerLoad = async ({ locals, url }) => {
 	if (!locals.user) redirect(303, `/login?next=${encodeURIComponent(url.pathname + url.search)}`);
 	const actor = requireUser(locals);
+
+	// Set only while an Admin is inside another account's session — see /panel/usuarios's
+	// "Entrar como" and /impersonar/salir. One extra lookup, and only on that rare path.
+	const impersonadoPor = locals.session?.impersonatedBy
+		? await prisma.user.findUnique({ where: { id: locals.session.impersonatedBy }, select: { name: true, email: true } })
+		: null;
 
 	// The badge needs one COUNT on every panel page; the list only when the drawer is actually
 	// open. Reading `url` here is what makes SvelteKit re-run this load when `?drawer=` changes,
@@ -30,5 +37,6 @@ export const load: ServerLoad = async ({ locals, url }) => {
 		),
 		avisos: bandeja.notificaciones,
 		noLeidas: bandeja.noLeidas,
+		impersonando: impersonadoPor ? { adminName: impersonadoPor.name, adminEmail: impersonadoPor.email } : null,
 	};
 };

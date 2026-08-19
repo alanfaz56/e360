@@ -218,6 +218,7 @@ export async function kpisPara(actor: Actor): Promise<BloqueKpi[]> {
 					label: "Por cobrar",
 					valor: `$${pesos(saldo)}`,
 					hint: `${porCobrar.length} factura(s) abiertas`,
+					href: "/panel/cotizaciones?ver=facturas",
 					tone: saldo > 0n ? "brand" : "ok",
 				},
 				{
@@ -225,6 +226,7 @@ export async function kpisPara(actor: Actor): Promise<BloqueKpi[]> {
 					label: "Facturas vencidas",
 					valor: vencidas,
 					hint: vencidas > 0 ? "Ya pasó su fecha de pago" : "Ninguna vencida",
+					href: "/panel/cotizaciones?ver=facturas&vencidas=1",
 					tone: vencidas > 0 ? "danger" : "ok",
 				},
 				{

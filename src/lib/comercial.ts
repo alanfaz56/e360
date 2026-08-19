@@ -196,6 +196,26 @@ export const facturaEstadoLabel = (v: string) => (isFacturaEstado(v) ? FACTURA_E
 export const facturaEstadoTone = (v: string): Tone => (isFacturaEstado(v) ? FACTURA_ESTADOS[v].tone : "neutral");
 
 /**
+ * "Vence en 3 días" / "vence hoy" / "vencida hace 3 días", from `publicFactura`'s signed
+ * `diasParaVencer`. One place for the wording so the cotizaciones list, the factura detail page
+ * and the customer profile never phrase the same number three different ways.
+ */
+export const vencimientoLabel = (dias: number | null): string | null => {
+	if (dias === null) return null;
+	if (dias < 0) return `Vencida hace ${-dias} día${-dias === 1 ? "" : "s"}`;
+	if (dias === 0) return "Vence hoy";
+	return `Vence en ${dias} día${dias === 1 ? "" : "s"}`;
+};
+
+/** Severity by how close (or how far past) the due date is — reused by the aging chart too. */
+export const vencimientoTone = (dias: number | null): Tone => {
+	if (dias === null) return "neutral";
+	if (dias < 0) return "danger";
+	if (dias <= 7) return "warn";
+	return "neutral";
+};
+
+/**
  * `pagada` is NOT set by hand — it is reached by registering payments that cover the total, and
  * left when a payment is reversed. Listing it here anyway would invite a "mark as paid" button
  * that lies about money.

@@ -2,6 +2,7 @@ import { error, redirect, type ServerLoad } from "@sveltejs/kit";
 import { NAV } from "$lib/nav";
 import { can } from "$lib/roles";
 import { kpisPara } from "$lib/server/kpis";
+import { carteraPorAntiguedad, ingresosDiarios, notasPorEstado } from "$lib/server/dashboard-charts";
 import { ultimosMovimientos } from "$lib/server/movimientos";
 import { requireUser } from "$lib/server/guard";
 
@@ -35,10 +36,23 @@ export const load: ServerLoad = async ({ locals }) => {
 
 	const movimientos = can(actor.role, "movimientos:read") ? await ultimosMovimientos() : [];
 
+	// Same gating as their KPI blocks above — a chart is a picture of data the role can already
+	// see, not a new "reports" capability.
+	const puedeDinero = can(actor.role, "factura:create");
+	const puedeTaller = can(actor.role, "nota:read");
+	const [cartera, ingresos, notas] = await Promise.all([
+		puedeDinero ? carteraPorAntiguedad() : null,
+		puedeDinero ? ingresosDiarios(14) : null,
+		puedeTaller ? notasPorEstado() : null,
+	]);
+
 	return {
 		bloques,
 		nombre: actor.name,
 		puedeAgenda: can(actor.role, "cita:read"),
 		movimientos,
+		cartera,
+		ingresos,
+		notas,
 	};
 };

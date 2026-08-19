@@ -59,6 +59,9 @@ export const PERMISOS_DEFAULT = {
 	"user:stats": ["admin", "gerente"],
 	"user:set-role": ["admin"],
 	"user:ban": ["admin"],
+	// Stepping into another account's session. Admin-only, same ladder as user:ban/user:set-role
+	// — and better-auth's own admin plugin additionally refuses to target another admin at all.
+	"user:impersonate": ["admin"],
 	// The audit trail is Admin-only on purpose: it is the record that holds everyone,
 	// including Gerentes, accountable. Do not widen it without being asked.
 	"audit:read": ["admin"],
@@ -230,6 +233,12 @@ export const PERMISOS_DEFAULT = {
 	// `actualizarPermisoRol` in server/permisos.ts — or a bad edit would permanently lock
 	// everybody, including Admin, out of the one screen that could undo it.
 	"permisos:manage": ["admin"],
+
+	// The manager dashboard (/panel/dashboard). Deliberately ONE gate for the whole screen,
+	// unlike kpis.ts's per-block gating: this combines figures from across the shop (ventas,
+	// inventario, cobranza, mecánicos...) into a single coherent view for whoever runs the
+	// business, not a bag of resource-scoped widgets somebody assembles permission by permission.
+	"dashboard:ver": ["admin", "gerente"],
 } as const satisfies Record<string, readonly Role[]>;
 
 export type Permission = keyof typeof PERMISOS_DEFAULT;

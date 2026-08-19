@@ -22,6 +22,7 @@ import {
 	sumarMeses,
 	VISTA_KEYS,
 	sumarDias,
+	diasEntre,
 } from "../src/lib/agenda.js";
 import {
 	CITA_ESTADO_KEYS,
@@ -405,5 +406,9 @@ assert.equal(rangoMes.desde, celdas[0]);
 assert.equal(rangoMes.hasta, celdas[41]);
 assert.equal(rangoVista("dia", "2026-08-17").desde, "2026-08-17");
 assert.equal(rangoVista("agenda", "2026-08-17").hasta, "2026-09-15");
+
+assert.equal(diasEntre("2026-08-17", "2026-08-20"), 3, "3 días por vencer");
+assert.equal(diasEntre("2026-08-17", "2026-08-10"), -7, "vencida hace 7 días");
+assert.equal(diasEntre("2026-08-17", "2026-08-17"), 0, "vence hoy");
 
 console.log("check-agenda: OK");

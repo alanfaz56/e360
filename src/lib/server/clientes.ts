@@ -65,19 +65,25 @@ function readClienteInput(body: Record<string, unknown>, { partial = false } = {
 		if (!isTipo(tipo)) throw new ClienteError(400, "Tipo inválido: usa 'persona' u 'organizacion'");
 	}
 
+	// In partial mode, a key the caller never sent must leave that column untouched — `undefined`
+	// is Prisma's own "don't touch this field" value, distinct from an explicit null. Without this,
+	// `trim(undefined)` quietly returns null for every field, and updateCliente's `{...data}`
+	// spread would erase rfc/nombre/telefono/etc. on ANY partial edit that doesn't resend them.
+	const campo = <T,>(clave: string, leer: () => T): T | undefined => (!partial || clave in body ? leer() : undefined);
+
 	const data = {
 		tipo: tipo as ClienteTipo | undefined,
-		nombre: trim(body.nombre, 120, "El nombre"),
-		apellidos: trim(body.apellidos, 120, "Los apellidos"),
-		razonSocial: trim(body.razonSocial, 200, "La razón social"),
-		telefono: trim(body.telefono, 32, "El teléfono"),
-		email: trim(body.email, 255, "El correo"),
-		direccion: trim(body.direccion, 500, "La dirección"),
-		notas: trim(body.notas),
-		rfc: trim(body.rfc, 13, "El RFC")?.toUpperCase() ?? null,
-		regimenFiscal: satClave(REGIMENES_FISCALES, body.regimenFiscal, "régimen fiscal"),
-		codigoPostal: trim(body.codigoPostal, 5, "El código postal"),
-		usoCfdi: satClave(USOS_CFDI, body.usoCfdi, "uso de CFDI"),
+		nombre: campo("nombre", () => trim(body.nombre, 120, "El nombre")),
+		apellidos: campo("apellidos", () => trim(body.apellidos, 120, "Los apellidos")),
+		razonSocial: campo("razonSocial", () => trim(body.razonSocial, 200, "La razón social")),
+		telefono: campo("telefono", () => trim(body.telefono, 32, "El teléfono")),
+		email: campo("email", () => trim(body.email, 255, "El correo")),
+		direccion: campo("direccion", () => trim(body.direccion, 500, "La dirección")),
+		notas: campo("notas", () => trim(body.notas)),
+		rfc: campo("rfc", () => trim(body.rfc, 13, "El RFC")?.toUpperCase() ?? null),
+		regimenFiscal: campo("regimenFiscal", () => satClave(REGIMENES_FISCALES, body.regimenFiscal, "régimen fiscal")),
+		codigoPostal: campo("codigoPostal", () => trim(body.codigoPostal, 5, "El código postal")),
+		usoCfdi: campo("usoCfdi", () => satClave(USOS_CFDI, body.usoCfdi, "uso de CFDI")),
 	};
 
 	if (data.rfc && data.rfc.length < 12) {
@@ -126,6 +132,8 @@ export const publicCliente = (c: {
 	regimenFiscal: string | null;
 	codigoPostal: string | null;
 	usoCfdi: string | null;
+	facturaComUid: string | null;
+	facturaComEntorno: string | null;
 	archivedAt: Date | null;
 	createdAt: Date;
 }) => ({
@@ -144,6 +152,11 @@ export const publicCliente = (c: {
 	regimenFiscal: c.regimenFiscal,
 	codigoPostal: c.codigoPostal,
 	usoCfdi: c.usoCfdi,
+	// The PAC's own handle for this customer, and which environment it was created in — a
+	// sandbox link is meaningless in production. Not secret, just an external id; staff need
+	// it to tell "never linked" from "linked, but in the wrong environment".
+	facturaComUid: c.facturaComUid,
+	facturaComEntorno: c.facturaComEntorno,
 	archivado: c.archivedAt !== null,
 	createdAt: c.createdAt.toISOString(),
 });
@@ -223,9 +236,14 @@ export async function createCliente(input: { actor: Actor; body: Record<string, 
 
 	const data = readClienteInput(input.body);
 	const tipo = data.tipo as ClienteTipo;
-	assertNombrePorTipo(tipo, data.nombre, data.razonSocial);
+	// Non-partial mode: `campo()` always calls its reader, so these are never actually undefined —
+	// the `?? null` is only to satisfy the type `readClienteInput` shares with the partial path.
+	const nombre = data.nombre ?? null;
+	const apellidos = data.apellidos ?? null;
+	const razonSocial = data.razonSocial ?? null;
+	assertNombrePorTipo(tipo, nombre, razonSocial);
 
-	const nombreCompleto = buildNombreCompleto({ ...data, tipo });
+	const nombreCompleto = buildNombreCompleto({ tipo, nombre, apellidos, razonSocial });
 
 	const cliente = await prisma.cliente.create({
 		data: { id: randomUUID(), ...data, tipo, nombreCompleto },
@@ -255,13 +273,31 @@ export async function updateCliente(input: {
 	const current = await getCliente(input.id);
 	const data = readClienteInput(input.body, { partial: true });
 	const tipo = (data.tipo ?? current.tipo) as ClienteTipo;
-	assertNombrePorTipo(tipo, data.nombre, data.razonSocial);
 
-	const nombreCompleto = buildNombreCompleto({ ...data, tipo });
+	// nombreCompleto and the PAC-link check both need the EFFECTIVE value being saved — what this
+	// request sent, else what the row already had — not just whatever fields happened to be in
+	// THIS body. Using `data.nombre` etc. directly here would recompute nombreCompleto from
+	// `undefined` pieces (and wrongly reject a partial edit for a "missing" name) on any update
+	// that doesn't resend every fiscal field.
+	const nombre = data.nombre !== undefined ? data.nombre : current.nombre;
+	const apellidos = data.apellidos !== undefined ? data.apellidos : current.apellidos;
+	const razonSocial = data.razonSocial !== undefined ? data.razonSocial : current.razonSocial;
+	const rfc = data.rfc !== undefined ? data.rfc : current.rfc;
+
+	assertNombrePorTipo(tipo, nombre, razonSocial);
+	const nombreCompleto = buildNombreCompleto({ tipo, nombre, apellidos, razonSocial });
+
+	// The PAC receptor is keyed by RFC and carries its own Nombre. If either changed, the
+	// cached uid now names someone else — reusing it is how "Autentica de Modas" gets
+	// stamped against a receptor still registered as the old persona. Clearing it here
+	// forces vincularReceptor to look up (or create) the right one on the next timbrado.
+	const rfcCambio = rfc !== current.rfc;
+	const nombreCambio = nombreCompleto !== current.nombreCompleto;
+	const limpiarPac = rfcCambio || nombreCambio ? { facturaComUid: null, facturaComEntorno: null } : {};
 
 	const updated = await prisma.cliente.update({
 		where: { id: current.id },
-		data: { ...data, tipo, nombreCompleto },
+		data: { ...data, tipo, nombreCompleto, ...limpiarPac },
 	});
 
 	await recordAudit(prisma, {

@@ -196,6 +196,22 @@ export async function vincularClienteConPac(input: { actor: Actor; clienteId: st
 }
 
 /**
+ * What the PAC actually has on file for this customer's RFC, for the admin screen that shows a
+ * customer's fiscal link. Reuses `factura:timbrar`: it is the same "talk to the PAC" capability
+ * `vincularClienteConPac` already needs, not a new question of who may see it.
+ */
+export async function obtenerReceptorPac(input: { actor: Actor; clienteId: string }) {
+	if (!can(input.actor.role, "factura:timbrar")) throw new ClienteError(403, "Sin permiso: factura:timbrar");
+
+	const cliente = await prisma.cliente.findUnique({ where: { id: input.clienteId }, select: { rfc: true } });
+	if (!cliente) throw new ClienteError(404, "Cliente no encontrado");
+	if (!cliente.rfc) return null;
+
+	const { proveedor, cfg } = await proveedorActivo();
+	return await proveedor.obtenerReceptor(cfg, cliente.rfc);
+}
+
+/**
  * Stamp. `factura:timbrar` — Admin and Gerente.
  *
  * Irreversible: undoing it is a cancellation the SAT has to accept, and it spends a timbre either

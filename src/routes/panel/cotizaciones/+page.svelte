@@ -21,6 +21,8 @@
 		facturaEstadoTone,
 		formatoPesos,
 		condicionPagoLabel,
+		vencimientoLabel,
+		vencimientoTone,
 	} from "$lib/comercial";
 	import { hoy, sumarDias } from "$lib/agenda";
 	import { searchHref } from "$lib/url";
@@ -227,7 +229,10 @@
 		>
 			{#snippet row(f)}
 				<td class="px-4 py-2.5">
-					<span class="block font-medium text-sand-950">#{f.folio}</span>
+					<a
+						class="block font-medium text-brand-700 hover:underline"
+						href="/panel/facturas/{f.id}">#{f.folio}</a
+					>
 					<span class="block text-xs text-sand-500">{dia(f.emitidaAt ?? f.createdAt)}</span>
 				</td>
 				<td class="px-4 py-2.5">
@@ -259,7 +264,19 @@
 						<span class="text-accent-700">{formatoPesos(Number(f.saldo))}</span>
 					{/if}
 				</td>
-				<td class="px-4 py-2.5 text-sand-600">{dia(f.vence)}</td>
+				<td class="px-4 py-2.5">
+					<span class="block text-sand-600">{dia(f.vence)}</span>
+					{#if f.estado === "emitida" && vencimientoLabel(f.diasParaVencer)}
+						<span
+							class="block text-xs"
+							class:text-danger={vencimientoTone(f.diasParaVencer) === "danger"}
+							class:text-accent-700={vencimientoTone(f.diasParaVencer) === "warn"}
+							class:text-sand-500={vencimientoTone(f.diasParaVencer) === "neutral"}
+						>
+							{vencimientoLabel(f.diasParaVencer)}
+						</span>
+					{/if}
+				</td>
 				<td class="px-4 py-2.5 text-right">
 					<span class="flex flex-wrap justify-end gap-1">
 						<!-- Our own printout, always. The CFDI's real PDF and its XML only exist once it
@@ -287,21 +304,19 @@
 								size="sm">XML</Button
 							>
 						{/if}
-						{#if f.notaId}
-							<Button
-								href="/panel/notas/{f.notaId}"
-								variant="ghost"
-								size="sm"
-							>
-								{#if !f.timbrada && data.puede.timbrar}
-									<Stamp
-										size={14}
-										aria-hidden="true"
-									/>
-								{/if}
-								Abrir
-							</Button>
-						{/if}
+						<Button
+							href="/panel/facturas/{f.id}"
+							variant="ghost"
+							size="sm"
+						>
+							{#if !f.timbrada && data.puede.timbrar}
+								<Stamp
+									size={14}
+									aria-hidden="true"
+								/>
+							{/if}
+							Abrir
+						</Button>
 					</span>
 				</td>
 			{/snippet}

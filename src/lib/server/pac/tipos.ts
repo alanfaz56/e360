@@ -65,6 +65,14 @@ export type ProveedorTimbrado = {
 	 */
 	asegurarReceptor(cfg: ConfigPac, datos: DatosReceptor, idExistente: string | null): Promise<string>;
 
+	/**
+	 * The receptor as the PAC currently has it on file, in OUR terms — never their raw payload,
+	 * same rule as everywhere else in this port. For checking what is actually registered over
+	 * there against what our own record says, e.g. tracking down a CFDI40145 name mismatch.
+	 * `null` when this RFC has no receptor registered yet.
+	 */
+	obtenerReceptor(cfg: ConfigPac, rfc: string): Promise<DatosReceptor | null>;
+
 	timbrar(cfg: ConfigPac, solicitud: SolicitudTimbrado): Promise<ResultadoTimbrado>;
 
 	/**

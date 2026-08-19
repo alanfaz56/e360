@@ -132,6 +132,21 @@
 	</aside>
 
 	<div class="md:pl-64">
+		{#if data.impersonando}
+			<div class="flex flex-wrap items-center justify-between gap-2 bg-accent-500 px-4 py-2 text-sm text-white md:px-8">
+				<span>
+					Viendo como <strong>{data.actor.name}</strong> — impersonado por {data.impersonando.adminName}
+				</span>
+				<form
+					method="POST"
+					action="/impersonar/salir"
+				>
+					<button class="rounded-md bg-white/20 px-3 py-1 font-medium transition-colors hover:bg-white/30">
+						Salir de impersonación
+					</button>
+				</form>
+			</div>
+		{/if}
 		<main class="mx-auto max-w-5xl px-4 py-6 md:px-8 md:py-10">
 			{@render children()}
 		</main>

@@ -29,7 +29,7 @@ import {
 	utilidadCotizacion,
 	type CotizacionEstado,
 } from "$lib/comercial";
-import { enZona, parseFecha, sumarDias } from "$lib/agenda";
+import { diasEntre, enZona, fechaEnZona, hoy, parseFecha, sumarDias } from "$lib/agenda";
 import { consumirFifo } from "./inventario";
 import { recordAudit } from "./audit";
 import { ClienteError, trim } from "./clientes";
@@ -224,7 +224,7 @@ export async function resumenDinero(desde: string | null, hasta: string | null) 
 	};
 }
 
-const rangoPagado = (desde: string | null | undefined, hasta: string | null | undefined) => {
+export const rangoPagado = (desde: string | null | undefined, hasta: string | null | undefined) => {
 	const d = parseFecha(desde);
 	const h = parseFecha(hasta);
 	if (!d && !h) return {};
@@ -1049,6 +1049,17 @@ export async function utilidadDeCotizacion(actor: Actor, cotizacionId: string): 
 
 // --- Crédito ---------------------------------------------------------------------------------
 
+/** What a set of invoices billed, and what has been paid against them, in cents. */
+function sumarFacturasYPagos(facturas: { total: Prisma.Decimal; pagos: { monto: Prisma.Decimal }[] }[]) {
+	let facturado = 0n;
+	let pagado = 0n;
+	for (const f of facturas) {
+		facturado += aCentavos(f.total);
+		for (const p of f.pagos) pagado += aCentavos(p.monto);
+	}
+	return { facturado, pagado };
+}
+
 /**
  * What the customer currently owes: issued credit invoices, minus everything paid against them.
  *
@@ -1060,12 +1071,7 @@ export async function saldoCliente(clienteId: string) {
 		select: { total: true, pagos: { select: { monto: true } } },
 	});
 
-	let facturado = 0n;
-	let pagado = 0n;
-	for (const f of facturas) {
-		facturado += aCentavos(f.total);
-		for (const p of f.pagos) pagado += aCentavos(p.monto);
-	}
+	const { facturado, pagado } = sumarFacturasYPagos(facturas);
 
 	const cliente = await prisma.cliente.findUnique({
 		where: { id: clienteId },
@@ -1084,6 +1090,49 @@ export async function saldoCliente(clienteId: string) {
 		diasCredito: cliente?.diasCredito ?? null,
 		saldoCents: saldo,
 		limiteCents: limite,
+	};
+}
+
+/**
+ * What a customer is worth, for their profile screen: what they've actually paid across EVERY
+ * invoice ever issued to them — cash or credit — not just the credit balance `saldoCliente`
+ * tracks. Cancelled and draft invoices are excluded on both sides; they were never real revenue.
+ *
+ * `abiertas` is every `emitida` invoice: paying one off in full transitions it to `pagada`
+ * (`registrarPago`), so `emitida` already means "still owes something," partial or whole.
+ */
+export async function resumenClienteFinanciero(clienteId: string) {
+	const [facturas, abiertas, ultimosPagos] = await Promise.all([
+		prisma.factura.findMany({
+			where: { clienteId, estado: { in: ["emitida", "pagada"] } },
+			select: { total: true, pagos: { select: { monto: true } } },
+		}),
+		listFacturas({ clienteId, estado: "emitida", perPage: 10 }),
+		prisma.pago.findMany({
+			where: { factura: { clienteId } },
+			orderBy: { pagadoAt: "desc" },
+			take: 5,
+			include: { factura: { select: { folio: true } } },
+		}),
+	]);
+
+	const { facturado, pagado } = sumarFacturasYPagos(facturas);
+
+	return {
+		totalFacturado: pesos(facturado),
+		totalPagado: pesos(pagado),
+		pendiente: pesos(facturado - pagado),
+		facturasAbiertas: abiertas.facturas,
+		// `abiertas.facturas` is capped at 10 for the summary list — this is the real count, for
+		// the heading, so a customer with more open invoices than fit on the card is not undercounted.
+		totalFacturasAbiertas: abiertas.total,
+		ultimosPagos: ultimosPagos.map((p) => ({
+			id: p.id,
+			facturaFolio: p.factura.folio,
+			monto: monto(p.monto),
+			metodoLabel: metodoPagoLabel(p.metodo),
+			pagadoAt: p.pagadoAt.toISOString(),
+		})),
 	};
 }
 
@@ -1219,6 +1268,10 @@ export const publicFactura = (f: FacturaRow) => {
 		condicionPago: f.condicionPago,
 		diasCredito: f.diasCredito,
 		vence: f.vence?.toISOString() ?? null,
+		// Signed, shop-local days: negative once it's overdue, 0 the day it's due. The one place
+		// "vence en 3 días" vs. "vencida hace 3 días" is computed — every screen reads this, none
+		// re-derives it from `vence` on its own.
+		diasParaVencer: f.vence ? diasEntre(hoy(), fechaEnZona(f.vence)) : null,
 		subtotal: monto(f.subtotal),
 		iva: monto(f.iva),
 		total: monto(f.total),
