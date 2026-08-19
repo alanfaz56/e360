@@ -103,10 +103,13 @@
 
 		<div class="border-t border-sand-200 p-3">
 			<div class="flex items-center gap-2">
-				<div class="min-w-0 flex-1">
+				<a
+					href="/panel/cuenta"
+					class="min-w-0 flex-1 rounded-md py-1 hover:bg-sand-100"
+				>
 					<p class="truncate px-3 text-sm font-medium text-sand-950">{data.actor.name}</p>
 					<p class="px-3 text-xs text-sand-500">{data.actor.roleLabel}</p>
-				</div>
+				</a>
 				<!-- Desktop copy of the bell. Only the button is duplicated; the drawer is mounted
 				     once, below, so there is never a second copy of the inbox in the DOM. -->
 				<span class="hidden md:block">
