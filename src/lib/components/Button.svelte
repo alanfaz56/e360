@@ -4,6 +4,7 @@
 -->
 <script lang="ts">
 	import type { Snippet } from "svelte";
+	import LoaderCircle from "@lucide/svelte/icons/loader-circle";
 
 	let {
 		href,
@@ -48,5 +49,17 @@
 {#if href}
 	<a {href} class={classes} {...rest}>{@render children()}</a>
 {:else}
-	<button {type} class={classes} {...rest}>{@render children()}</button>
+	<!--
+		aria-busy is set by una-vez.ts the moment a form submits — this just gives that state a
+		spinner. `contents` keeps the children in the button's own flex layout so the spinner can
+		center over them without a layout jump.
+	-->
+	<button {type} class="{classes} group relative" {...rest}>
+		<span class="contents group-aria-busy:invisible">{@render children()}</span>
+		<LoaderCircle
+			size={16}
+			aria-hidden="true"
+			class="absolute hidden animate-spin group-aria-busy:block"
+		/>
+	</button>
 {/if}

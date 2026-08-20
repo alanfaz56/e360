@@ -41,15 +41,6 @@
 </svelte:head>
 
 <div class="min-h-svh bg-sand-100">
-	<header class="border-b border-sand-200 bg-sand-50">
-		<nav class="mx-auto flex max-w-3xl items-center gap-4 px-4 py-3" aria-label="Principal">
-			<a href="/" class="font-display text-xl tracking-tight text-sand-950">
-				ESTACIÓN <span class="text-brand-600">360</span>
-			</a>
-			<a href="/login" class="ml-auto text-sm font-medium text-sand-600 hover:text-brand-600">Entrar</a>
-		</nav>
-	</header>
-
 	<main class="mx-auto max-w-3xl px-4 py-10">
 		<h1 class="font-display text-4xl text-sand-950 md:text-5xl">Agenda tu cita</h1>
 		<p class="mt-3 max-w-xl text-sand-600">

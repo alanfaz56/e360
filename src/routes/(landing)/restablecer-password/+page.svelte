@@ -8,14 +8,10 @@
 
 <svelte:head><title>Restablecer contraseña — Estación 360</title></svelte:head>
 
-<main class="flex min-h-svh items-center justify-center bg-sand-100 px-4 py-12">
+<main class="flex h-[calc(100dvh-5rem)] items-center justify-center overflow-y-auto bg-sand-100 px-4 py-6">
 	<div class="w-full max-w-sm">
-		<a href="/" class="font-display text-2xl text-sand-950">
-			ESTACIÓN <span class="text-brand-600">360</span>
-		</a>
-
 		{#if data.invalido || !data.token}
-			<div class="mt-6 space-y-4 rounded-lg border border-sand-200 bg-white p-6">
+			<div class="space-y-4 rounded-lg border border-sand-200 bg-white p-6">
 				<p class="flex items-center gap-2 text-sm font-bold text-danger">
 					<ShieldAlert size={18} aria-hidden="true" />
 					Link vencido o inválido
@@ -24,7 +20,7 @@
 				<Button href="/olvide-password" full>Pedir un link nuevo</Button>
 			</div>
 		{:else}
-			<form method="POST" class="mt-6 space-y-4 rounded-lg border border-sand-200 bg-white p-6">
+			<form method="POST" class="space-y-4 rounded-lg border border-sand-200 bg-white p-6">
 				<div>
 					<h1 class="font-display text-2xl text-sand-950">Nueva contraseña</h1>
 				</div>

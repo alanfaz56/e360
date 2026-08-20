@@ -1380,6 +1380,12 @@ model producto {
   /// the costo-aware mapper, same discipline as a secret in `ajustes`.
   costoReferencia Decimal? @db.Decimal(12, 4)
 
+  /// Lets `existencia` go negative for this product specifically — the shop ran out but the
+  /// job still went out the door. Admin-only to flip (see `producto:negativo` in roles.ts):
+  /// this is a real control most Gerentes/Operadores should not be able to quietly turn on to
+  /// stop seeing a "no alcanza" error, since it also hides the shortage from `bajoMinimo` alerts.
+  permiteNegativo Boolean @default(false)
+
   archivedAt DateTime?
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
@@ -1390,11 +1396,34 @@ model producto {
   conceptosFactura            factura_concepto[]
   solicitudes                 solicitud_refaccion[]
   conceptosCotizacionInterna  cotizacion_interna_concepto[]
+  componentes                 producto_receta[] @relation("paqueteReceta")
+  usadoEnRecetas              producto_receta[] @relation("productoComponente")
 
   @@index([nombre])
   @@index([tipo])
   @@index([archivedAt])
   @@map("producto")
+}
+
+/// One line of a package's recipe: how much of `componente` selling one `paquete` consumes.
+/// Flat, non-nested — a componente with its own recipe is rejected at write time (Rule: no
+/// unrequested complexity; nested bundles can be added later if actually needed).
+model producto_receta {
+  id           String   @id
+  paqueteId    String
+  paquete      producto @relation("paqueteReceta", fields: [paqueteId], references: [id], onDelete: Cascade)
+  componenteId String
+  componente   producto @relation("productoComponente", fields: [componenteId], references: [id], onDelete: Restrict)
+
+  cantidad Decimal @db.Decimal(12, 3)
+  orden    Int     @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@unique([paqueteId, componenteId])
+  @@index([paqueteId])
+  @@index([componenteId])
+  @@map("producto_receta")
 }
 
 /// A goods receipt: one delivery from one supplier, optionally backed by its CFDI.

@@ -51,14 +51,6 @@
 </svelte:head>
 
 <div class="min-h-svh bg-sand-100">
-	<header class="border-b border-sand-200 bg-sand-50">
-		<div class="mx-auto flex max-w-2xl items-center gap-3 px-4 py-3">
-			<span class="font-display text-xl tracking-tight text-sand-950">
-				ESTACIÓN <span class="text-brand-600">360</span>
-			</span>
-		</div>
-	</header>
-
 	<main class="mx-auto max-w-2xl space-y-4 px-4 py-6">
 		<section class="rounded-lg border border-sand-200 bg-white p-5">
 			<p class="text-xs font-medium uppercase tracking-wide text-sand-500">Nota de servicio #{data.nota.folio}</p>

@@ -151,6 +151,10 @@ export const PERMISOS_DEFAULT = {
 	// The cost basis behind precioVenta — margin is Admin-only, narrower than producto:manage.
 	// Gerente can still price a product; it just cannot see what that price is worth.
 	"producto:costo": ["admin"],
+	// Whether a product's existencia may go negative. Admin-only and separate from producto:manage —
+	// a Gerente can price and edit the catalogue but should not be able to silently turn off the
+	// "no alcanza" guard for a part, which is a shrinkage/accounting decision, not a pricing one.
+	"producto:negativo": ["admin"],
 	"inventario:read": ["admin", "gerente", "operador"],
 	// Receiving goods and correcting stock both move money; issuing a part to a job is daily work.
 	"inventario:entrada": ["admin", "gerente"],

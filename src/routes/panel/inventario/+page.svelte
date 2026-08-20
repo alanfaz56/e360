@@ -40,6 +40,16 @@
 	// The goods-receipt form grows rows client-side; with JS off it still ships three.
 	let renglones = $state(3);
 
+	// Recipe rows for the product drawer. Seeded from whatever the row being edited already has,
+	// plus one blank — same "grow client-side, three with JS off" idea as the goods-receipt rows.
+	let recetaFilas = $state(1);
+	$effect(() => {
+		drawer;
+		editando;
+		recetaFilas = Math.max(data.receta?.length ?? 0, 1);
+	});
+	const componentesDisponibles = $derived(data.productos.filter((p) => p.controlaInventario && p.id !== editando?.id));
+
 	const INPUT =
 		"mt-1 w-full rounded-md border border-sand-300 bg-white px-3 py-2 text-sm focus:border-brand-600 focus:outline-none";
 
@@ -83,6 +93,18 @@
 					aria-hidden="true"
 				/>
 				Recibir mercancía
+			</Button>
+		{/if}
+		{#if data.puede.entrada && data.puede.gestionar}
+			<Button
+				href="/panel/inventario/comprar-cfdi"
+				variant="outline"
+			>
+				<TruckIcon
+					size={18}
+					aria-hidden="true"
+				/>
+				Importar CFDI
 			</Button>
 		{/if}
 		{#if data.puede.gestionar}
@@ -257,6 +279,19 @@
 							/>
 							Capas
 						</Button>
+						{#if data.puede.entrada}
+							<Button
+								href={searchHref(page.url, { drawer: "comprar", producto: p.id })}
+								variant="ghost"
+								size="sm"
+							>
+								<Plus
+									size={15}
+									aria-hidden="true"
+								/>
+								Comprar
+							</Button>
+						{/if}
 					{/if}
 					{#if data.puede.gestionar}
 						<Button
@@ -488,6 +523,88 @@
 				hint="Opcional."
 			/>
 
+			{#if !p}
+				<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+					<Field
+						label="Existencia inicial"
+						name="existenciaInicial"
+						type="number"
+						step="0.001"
+						min="0"
+						hint="Opcional. Abre una capa real, como una entrada."
+					/>
+					<Field
+						label="Costo inicial"
+						name="costoInicial"
+						hint="Requerido si pones existencia inicial."
+					/>
+				</div>
+			{/if}
+
+			{#if data.puede.negativo}
+				<label class="flex cursor-pointer items-center gap-2 py-1.5 text-sm text-sand-700">
+					<input
+						type="checkbox"
+						name="permiteNegativo"
+						checked={p?.permiteNegativo ?? false}
+						class="size-4 accent-brand-600"
+					/>
+					Permitir existencia negativa
+				</label>
+				<p class="-mt-2 text-xs text-sand-500">
+					Deja surtir aunque no alcance — útil para componentes de receta que se agotan a medio
+					día. Solo Admin puede activarlo.
+				</p>
+			{/if}
+
+			<fieldset class="rounded border border-sand-200 p-3">
+				<legend class="px-1 text-xs font-medium text-sand-500">Componentes (receta)</legend>
+				<p class="mb-2 text-xs text-sand-500">
+					Si agregas componentes, este producto se vuelve un paquete: deja de llevar su propia
+					existencia y, al surtirse, consume estos componentes en su lugar.
+				</p>
+				{#each Array(recetaFilas) as _, i (i)}
+					{@const fila = data.receta?.[i]}
+					<div class="mt-2 grid grid-cols-[1fr_auto] gap-2 first:mt-0">
+						<select
+							name="componenteProductoId"
+							class={INPUT}
+						>
+							<option value="">—</option>
+							{#each componentesDisponibles as c (c.id)}
+								<option
+									value={c.id}
+									selected={fila?.componenteId === c.id}>{c.nombre}{c.sku ? ` · ${c.sku}` : ""}</option
+								>
+							{/each}
+						</select>
+						<input
+							name="componenteCantidad"
+							type="number"
+							step="0.001"
+							min="0"
+							placeholder="Cant."
+							value={fila?.cantidad ?? ""}
+							class="{INPUT} w-24"
+						/>
+					</div>
+				{/each}
+				<div class="mt-2">
+					<Button
+						type="button"
+						onclick={() => (recetaFilas += 1)}
+						variant="ghost"
+						size="sm"
+					>
+						<Plus
+							size={15}
+							aria-hidden="true"
+						/>
+						Otro componente
+					</Button>
+				</div>
+			</fieldset>
+
 			<Button full>{p ? "Guardar" : "Dar de alta"}</Button>
 		</form>
 	</Drawer>
@@ -564,6 +681,40 @@
 				>
 			</form>
 		{/if}
+	</Drawer>
+{/if}
+
+{#if drawer === "comprar" && editando && data.puede.entrada}
+	<Drawer
+		title="Comprar {editando.nombre}"
+		description="Una línea, sin proveedor ni CFDI — para cuando sólo hay que reponer una cosa."
+		closeHref={closeDrawer}
+	>
+		<form
+			method="POST"
+			action="?/comprarRapido"
+			class="space-y-4"
+		>
+			<input
+				type="hidden"
+				name="productoId"
+				value={editando.id}
+			/>
+			<Field
+				label="Cantidad"
+				name="cantidad"
+				type="number"
+				step="0.001"
+				min="0"
+				required
+			/>
+			<Field
+				label="Costo unitario"
+				name="costoUnitario"
+				required
+			/>
+			<Button full>Comprar</Button>
+		</form>
 	</Drawer>
 {/if}
 

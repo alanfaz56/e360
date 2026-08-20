@@ -10,6 +10,7 @@
 	import Fuel from "@lucide/svelte/icons/fuel";
 	import TriangleAlert from "@lucide/svelte/icons/triangle-alert";
 	import Share2 from "@lucide/svelte/icons/share-2";
+	import Eye from "@lucide/svelte/icons/eye";
 	import Mail from "@lucide/svelte/icons/mail";
 	import FilePlus from "@lucide/svelte/icons/file-plus";
 	import FileText from "@lucide/svelte/icons/file-text";
@@ -141,7 +142,13 @@
 	);
 
 	// --- Constructor de estimaciones de costo (cotización interna) ------------------------------
-	const filaCostoVacia = (): ConceptoFila => ({ productoId: "", tipo: "", descripcion: "", cantidad: "1", monto: "" });
+	const filaCostoVacia = (): ConceptoFila => ({
+		productoId: "",
+		tipo: "",
+		descripcion: "",
+		cantidad: "1",
+		monto: "",
+	});
 	let filasCosto = $state<ConceptoFila[]>([filaCostoVacia(), filaCostoVacia(), filaCostoVacia()]);
 	const formatoOpcionProductoCosto = (p: Record<string, unknown>) =>
 		`${p.nombre}${p.controlaInventario ? ` · ${Number(p.existencia)} ${p.unidad}` : ""}`;
@@ -781,11 +788,16 @@
 									 in pesos so nobody has to do the division in their head to sanity-check it. -->
 								<p class="mt-1 flex flex-wrap gap-x-3 text-xs text-sand-500">
 									<span>Costo: {formatoPesos(Number(m.costo))}</span>
-									<span>Utilidad: <span class="font-medium text-sand-800">{formatoPesos(Number(m.utilidad))}</span></span>
+									<span
+										>Utilidad: <span class="font-medium text-sand-800"
+											>{formatoPesos(Number(m.utilidad))}</span
+										></span
+									>
 									{#if m.margen != null}
 										<span
 											>Margen: <span
-												class="font-medium {m.margen < 0 ? 'text-danger' : 'text-sand-800'}">{m.margen}%</span
+												class="font-medium {m.margen < 0 ? 'text-danger' : 'text-sand-800'}"
+												>{m.margen}%</span
 											></span
 										>
 									{/if}
@@ -890,7 +902,19 @@
 									already sees the line items — no second surface to keep in sync, and the
 									partner taller stays absent by construction.
 								-->
-								{#if c.estado !== "borrador" && ligaWhatsapp(c) !== null}
+
+								<Button
+									href="/panel/cotizaciones/{c.id}/imprimir"
+									variant="outline"
+									size="sm"
+								>
+									<Eye
+										size={14}
+										aria-hidden="true"
+									/> Ver
+								</Button>
+
+								{#if c.estado !== "borrador" && ligaWhatsapp(c) !== null && c.estado !== "rechazada"}
 									<Button
 										href={ligaWhatsapp(c) ?? ""}
 										target="_blank"
@@ -905,7 +929,7 @@
 									</Button>
 								{/if}
 
-								{#if data.puede.enviarCotizacion && c.estado !== "borrador"}
+								{#if data.puede.enviarCotizacion && c.estado !== "borrador" && c.estado !== "rechazada"}
 									<form
 										method="POST"
 										action="?/reenviarCotizacionCorreo"
@@ -1008,8 +1032,11 @@
 						<li class="rounded border border-sand-200 p-3">
 							<div class="flex flex-wrap items-center gap-2">
 								<span class="font-medium text-sand-950">Estimación #{ci.folio}</span>
-								<Badge tone={cotizacionInternaEstadoTone(ci.estado)}>{cotizacionInternaEstadoLabel(ci.estado)}</Badge>
-								{#if ci.mecanicoNombre}<span class="text-xs text-sand-500">{ci.mecanicoNombre}</span>{/if}
+								<Badge tone={cotizacionInternaEstadoTone(ci.estado)}
+									>{cotizacionInternaEstadoLabel(ci.estado)}</Badge
+								>
+								{#if ci.mecanicoNombre}<span class="text-xs text-sand-500">{ci.mecanicoNombre}</span
+									>{/if}
 								<span class="ml-auto font-medium text-sand-900">{formatoPesos(Number(ci.total))}</span>
 							</div>
 
@@ -1097,7 +1124,9 @@
 										</Button>
 									</form>
 								{:else if ci.cotizacionFolio}
-									<span class="text-xs text-sand-500">Ligada a la cotización #{ci.cotizacionFolio}</span>
+									<span class="text-xs text-sand-500"
+										>Ligada a la cotización #{ci.cotizacionFolio}</span
+									>
 								{/if}
 							</div>
 						</li>
@@ -2411,7 +2440,9 @@
 						{#each g.comentarios as c (c.id)}
 							<li class="rounded border border-sand-200 p-2">
 								<p class="text-sand-800">{c.texto}</p>
-								<span class="text-xs text-sand-500">{c.autorEmail} · {new Date(c.createdAt).toLocaleString("es-MX")}</span>
+								<span class="text-xs text-sand-500"
+									>{c.autorEmail} · {new Date(c.createdAt).toLocaleString("es-MX")}</span
+								>
 							</li>
 						{/each}
 					</ul>

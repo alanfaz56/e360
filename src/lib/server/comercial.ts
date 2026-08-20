@@ -26,7 +26,6 @@ import {
 	cotizacionInternoLabel,
 	totales,
 	margenPorcentaje,
-	utilidadCotizacion,
 	type CotizacionEstado,
 } from "$lib/comercial";
 import { diasEntre, enZona, fechaEnZona, hoy, parseFecha, sumarDias } from "$lib/agenda";
@@ -1030,20 +1029,41 @@ export type MargenCotizacion = {
 	margen: number | null;
 };
 
+/**
+ * Cost = `cotizacion_interna` (aprobada — labor and anything not in the catalog) PLUS the real
+ * FIFO cost `surtirCotizacion` actually posted for this cotización's own conceptos
+ * (`inventario_movimiento.costoTotal` where `conceptoId` is one of them, `tipo:"salida"`). A
+ * package concepto carries several movement rows — one per BOM component — all pointing at the
+ * same conceptoId, so this picks all of them up for free; nobody has to re-type a parts cost
+ * that surtir already paid for real. A mechanic who ALSO hand-enters a parts cost in
+ * cotizacion_interna for something that was actually surtido will double-count — that's a
+ * workflow question (interna is for labor/misc now), not something this guards against.
+ */
 export async function utilidadDeCotizacion(actor: Actor, cotizacionId: string): Promise<MargenCotizacion | null> {
 	if (!can(actor.role, "cotizacion:costo")) return null;
-	const cotizacion = await prisma.cotizacion.findUnique({ where: { id: cotizacionId }, select: { total: true } });
-	if (!cotizacion) return null;
-	const internas = await prisma.cotizacion_interna.findMany({
-		where: { cotizacionId, estado: "aprobada" },
-		select: { estado: true, total: true },
+	const cotizacion = await prisma.cotizacion.findUnique({
+		where: { id: cotizacionId },
+		select: { total: true, conceptos: { select: { id: true } } },
 	});
+	if (!cotizacion) return null;
+	const [internas, inventario] = await Promise.all([
+		prisma.cotizacion_interna.findMany({
+			where: { cotizacionId, estado: "aprobada" },
+			select: { total: true },
+		}),
+		cotizacion.conceptos.length > 0
+			? prisma.inventario_movimiento.aggregate({
+					where: { conceptoId: { in: cotizacion.conceptos.map((c) => c.id) }, tipo: "salida" },
+					_sum: { costoTotal: true },
+				})
+			: null,
+	]);
+
 	const venta = aCentavos(cotizacion.total);
-	const costo = internas.reduce((s, i) => s + aCentavos(i.total), 0n);
-	const utilidad = utilidadCotizacion(
-		venta,
-		internas.map((i) => ({ estado: i.estado, total: aCentavos(i.total) })),
-	);
+	const costoInterno = internas.reduce((s, i) => s + aCentavos(i.total), 0n);
+	const costoPartes = aCentavos(inventario?._sum.costoTotal ?? new Prisma.Decimal(0));
+	const costo = costoInterno + costoPartes;
+	const utilidad = venta - costo;
 	return { venta: pesos(venta), costo: pesos(costo), utilidad: pesos(utilidad), margen: margenPorcentaje(venta, costo) };
 }
 
@@ -1821,12 +1841,17 @@ export async function surtirCotizacion(input: { actor: Actor; id: string }) {
 
 	const productos = await prisma.producto.findMany({
 		where: { id: { in: conProducto.map((c) => c.productoId!) } },
-		select: { id: true, nombre: true, controlaInventario: true },
+		select: { id: true, nombre: true, controlaInventario: true, _count: { select: { componentes: true } } },
 	});
 	const porId = new Map(productos.map((p) => [p.id, p]));
 
+	// A package never carries its own stock, so `controlaInventario` is false on it — but it still
+	// needs to be surtido, because that is what expands into its recipe's components below.
 	const pendientes = conProducto
-		.filter((c) => porId.get(c.productoId!)?.controlaInventario)
+		.filter((c) => {
+			const p = porId.get(c.productoId!);
+			return p?.controlaInventario || (p?._count.componentes ?? 0) > 0;
+		})
 		.map((c) => ({ concepto: c, falta: Number(c.cantidad) - Number(c.surtido) }))
 		.filter((x) => x.falta > 0.0005);
 
@@ -1835,15 +1860,31 @@ export async function surtirCotizacion(input: { actor: Actor; id: string }) {
 	const resultado = await prisma.$transaction(async (tx) => {
 		let costo = 0;
 		for (const { concepto, falta } of pendientes) {
-			const { costoTotal } = await consumirFifo(tx, {
-				actor: input.actor,
-				productoId: concepto.productoId!,
-				cantidad: falta,
-				notaId: current.notaId,
-				conceptoId: concepto.id,
-				motivo: `Cotización #${current.folio}`,
-			});
-			costo += costoTotal;
+			const receta = await tx.producto_receta.findMany({ where: { paqueteId: concepto.productoId! } });
+			if (receta.length > 0) {
+				const nombre = porId.get(concepto.productoId!)?.nombre ?? "";
+				for (const r of receta) {
+					const { costoTotal } = await consumirFifo(tx, {
+						actor: input.actor,
+						productoId: r.componenteId,
+						cantidad: falta * Number(r.cantidad),
+						notaId: current.notaId,
+						conceptoId: concepto.id,
+						motivo: `Receta de ${nombre} — Cotización #${current.folio}`,
+					});
+					costo += costoTotal;
+				}
+			} else {
+				const { costoTotal } = await consumirFifo(tx, {
+					actor: input.actor,
+					productoId: concepto.productoId!,
+					cantidad: falta,
+					notaId: current.notaId,
+					conceptoId: concepto.id,
+					motivo: `Cotización #${current.folio}`,
+				});
+				costo += costoTotal;
+			}
 
 			await tx.cotizacion_concepto.update({
 				where: { id: concepto.id },

@@ -23,4 +23,5 @@
 	leyenda={c.vigenciaHasta
 		? `Precios vigentes hasta el ${c.vigenciaHasta.slice(0, 10)}. Este documento no es un comprobante fiscal.`
 		: "Este documento no es un comprobante fiscal."}
+	estado={c.estado}
 />

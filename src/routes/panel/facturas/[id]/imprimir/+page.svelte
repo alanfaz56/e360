@@ -35,4 +35,5 @@
 	condicion={condicionPagoLabel(f.condicionPago)}
 	vence={f.vence}
 	{leyenda}
+	estado={f.estado}
 />

@@ -17,6 +17,7 @@ import {
 	crearProducto,
 	listProductos,
 	parseProductoQuery,
+	recetaDe,
 } from "$lib/server/productos";
 import { fallo } from "$lib/server/errores";
 
@@ -36,12 +37,13 @@ export const load: ServerLoad = async ({ locals, url }) => {
 	const drawer = url.searchParams.get("drawer");
 	const productoId = url.searchParams.get("producto");
 
-	const [lista, valor, pendientes, capas, movimientos] = await Promise.all([
+	const [lista, valor, pendientes, capas, movimientos, receta] = await Promise.all([
 		listProductos({ ...query, perPage: query.perPage ?? 50 }),
 		can(actor.role, "inventario:read") ? valorInventario() : null,
 		can(actor.role, "inventario:salida") ? listSolicitudes({ estado: "pendiente" }) : [],
 		productoId && drawer === "existencia" ? capasDe(productoId) : [],
 		drawer === "movimientos" ? listMovimientos({ productoId, perPage: 50 }).then((r) => r.movimientos) : [],
+		productoId && drawer === "editar" ? recetaDe(productoId) : [],
 	]);
 
 	// The cost basis never rides on `publicProducto` (this same list feeds the quote builder's
@@ -62,6 +64,7 @@ export const load: ServerLoad = async ({ locals, url }) => {
 		capas,
 		movimientos,
 		costos,
+		receta,
 		filtros: {
 			q: query.q ?? "",
 			tipo: query.tipo ?? "",
@@ -74,6 +77,7 @@ export const load: ServerLoad = async ({ locals, url }) => {
 			ajuste: can(actor.role, "inventario:ajuste"),
 			salida: can(actor.role, "inventario:salida"),
 			verCosto: can(actor.role, "producto:costo"),
+			negativo: can(actor.role, "producto:negativo"),
 		},
 	};
 };
@@ -85,9 +89,36 @@ const problema = (err: unknown) => {
 export const actions: Actions = {
 	crear: async ({ locals, request }) => {
 		const actor = requireUser(locals);
-		const body = Object.fromEntries(await request.formData()) as Record<string, unknown>;
+		const data = await request.formData();
+		const body = Object.fromEntries(data) as Record<string, unknown>;
+		body.permiteNegativo = data.get("permiteNegativo") !== null;
+		body.componenteProductoId = data.getAll("componenteProductoId");
+		body.componenteCantidad = data.getAll("componenteCantidad");
 		try {
 			await crearProducto({ actor, body });
+			redirect(303, "/panel/inventario");
+		} catch (err) {
+			return fallo(err);
+		}
+	},
+
+	/** One product, one line, no proveedor/CFDI — the front door for a quick restock. */
+	comprarRapido: async ({ locals, request }) => {
+		const actor = requireUser(locals);
+		const data = await request.formData();
+		try {
+			await registrarEntrada({
+				actor,
+				body: {
+					lineas: [
+						{
+							productoId: String(data.get("productoId")),
+							cantidad: data.get("cantidad"),
+							costoUnitario: data.get("costoUnitario"),
+						},
+					],
+				},
+			});
 			redirect(303, "/panel/inventario");
 		} catch (err) {
 			return fallo(err);
@@ -100,6 +131,9 @@ export const actions: Actions = {
 		const body = Object.fromEntries(data) as Record<string, unknown>;
 		// An unchecked checkbox posts nothing, so "off" has to be read as absence, not as a value.
 		body.controlaInventario = data.get("controlaInventario") !== null;
+		body.permiteNegativo = data.get("permiteNegativo") !== null;
+		body.componenteProductoId = data.getAll("componenteProductoId");
+		body.componenteCantidad = data.getAll("componenteCantidad");
 		try {
 			await actualizarProducto({ actor, id: String(data.get("id")), body });
 			redirect(303, "/panel/inventario");

@@ -337,6 +337,7 @@ async function main() {
 		const porDevice = new Map<string, MitallerReceipt[]>();
 		for (const r of receipts) {
 			const arr = porDevice.get(r.deviceId) ?? [];
+			r.status = "ENTREGADO"
 			arr.push(r);
 			porDevice.set(r.deviceId, arr);
 		}

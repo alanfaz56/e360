@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Prisma } from "../../generated/prisma/client.js";
+import { Prisma } from "../../generated/prisma/client.js";
 import prisma from "$lib/prisma";
 import { can } from "$lib/roles";
 import { isConceptoTipo } from "$lib/comercial";
@@ -60,6 +60,7 @@ export const publicProducto = (p: {
 	controlaInventario: boolean;
 	existencia: Prisma.Decimal;
 	minimo: Prisma.Decimal | null;
+	permiteNegativo: boolean;
 	archivedAt: Date | null;
 	createdAt: Date;
 }) => ({
@@ -80,6 +81,7 @@ export const publicProducto = (p: {
 	controlaInventario: p.controlaInventario,
 	existencia: p.existencia.toFixed(3),
 	minimo: p.minimo?.toFixed(3) ?? null,
+	permiteNegativo: p.permiteNegativo,
 	archivado: p.archivedAt !== null,
 	createdAt: p.createdAt.toISOString(),
 });
@@ -216,6 +218,21 @@ export async function getProducto(id: string) {
 	return producto;
 }
 
+/** A package's recipe, in save order — what the product drawer's edit form needs to reload. */
+export async function recetaDe(paqueteId: string) {
+	const filas = await prisma.producto_receta.findMany({
+		where: { paqueteId },
+		orderBy: { orden: "asc" },
+		include: { componente: { select: { nombre: true, unidad: true } } },
+	});
+	return filas.map((f) => ({
+		componenteId: f.componenteId,
+		nombre: f.componente.nombre,
+		unidad: f.componente.unidad,
+		cantidad: f.cantidad.toFixed(3),
+	}));
+}
+
 function leerProductoInput(body: Record<string, unknown>, actor: Actor) {
 	const nombre = trim(body.nombre, 200, "El nombre");
 	if (!nombre) throw new ClienteError(400, "El nombre del producto es obligatorio");
@@ -248,6 +265,9 @@ function leerProductoInput(body: Record<string, unknown>, actor: Actor) {
 	// Gated on the actor, not on what the body sent: a Gerente posting a costoReferencia (by hand
 	// or by replaying an Admin's request) must have it silently ignored, not error the whole save.
 	const puedeCosto = can(actor.role, "producto:costo");
+	// Same reasoning as costoReferencia — a Gerente's form still posting permiteNegativo (by hand
+	// or replay) must not silently flip a shrinkage/accounting control it cannot see.
+	const puedeNegativo = can(actor.role, "producto:negativo");
 
 	return {
 		nombre,
@@ -262,7 +282,75 @@ function leerProductoInput(body: Record<string, unknown>, actor: Actor) {
 		controlaInventario,
 		minimo: controlaInventario ? minimo : null,
 		...(puedeCosto ? { costoReferencia: costoOpcional(body.costoReferencia) } : {}),
+		...(puedeNegativo ? { permiteNegativo: body.permiteNegativo === true || body.permiteNegativo === "1" } : {}),
 	};
+}
+
+type LineaReceta = { componenteId: string; cantidad: number };
+
+/** Reads the parallel `componenteProductoId[]` / `componenteCantidad[]` arrays a recipe posts. */
+function leerComponentes(body: Record<string, unknown>, paqueteId: string | null): LineaReceta[] {
+	const ids = Array.isArray(body.componenteProductoId)
+		? body.componenteProductoId
+		: body.componenteProductoId
+			? [body.componenteProductoId]
+			: [];
+	const cantidades = Array.isArray(body.componenteCantidad)
+		? body.componenteCantidad
+		: body.componenteCantidad
+			? [body.componenteCantidad]
+			: [];
+
+	const vistos = new Set<string>();
+	const lineas: LineaReceta[] = [];
+	for (let i = 0; i < ids.length; i++) {
+		const componenteId = trim(ids[i]);
+		const cant = cantidad(cantidades[i]);
+		if (!componenteId || cant === null || cant <= 0) continue;
+		if (componenteId === paqueteId) throw new ClienteError(400, "Un producto no puede ser componente de sí mismo.");
+		if (vistos.has(componenteId)) throw new ClienteError(400, "Ese componente ya está en la receta.");
+		vistos.add(componenteId);
+		lineas.push({ componenteId, cantidad: cant });
+	}
+	return lineas;
+}
+
+/**
+ * Validate and write a package's recipe, replacing whatever was there — same "delete then
+ * recreate" shape `actualizarCotizacion` uses for `cotizacion_concepto`. Runs inside the
+ * caller's transaction so a bad recipe never leaves a package half-converted.
+ */
+async function guardarReceta(tx: Prisma.TransactionClient, paqueteId: string, lineas: LineaReceta[]) {
+	if (lineas.length > 0) {
+		const componentes = await tx.producto.findMany({
+			where: { id: { in: lineas.map((l) => l.componenteId) } },
+			include: { _count: { select: { componentes: true } } },
+		});
+		const porId = new Map(componentes.map((c) => [c.id, c]));
+
+		for (const l of lineas) {
+			const c = porId.get(l.componenteId);
+			if (!c) throw new ClienteError(404, "Uno de los componentes no existe");
+			if (c.archivedAt) throw new ClienteError(409, `${c.nombre} está archivado.`);
+			if (!c.controlaInventario) throw new ClienteError(400, `${c.nombre} no lleva inventario y no puede ser componente.`);
+			if (c._count.componentes > 0) {
+				throw new ClienteError(400, `${c.nombre} ya es un paquete y no puede ser componente de otro.`);
+			}
+		}
+	}
+
+	await tx.producto_receta.deleteMany({ where: { paqueteId } });
+	if (lineas.length > 0) {
+		await tx.producto_receta.createMany({
+			data: lineas.map((l, i) => ({
+				id: randomUUID(),
+				paqueteId,
+				componenteId: l.componenteId,
+				cantidad: new Prisma.Decimal(l.cantidad.toFixed(3)),
+				orden: i,
+			})),
+		});
+	}
 }
 
 export async function crearProducto(input: { actor: Actor; body: Record<string, unknown> }) {
@@ -274,19 +362,51 @@ export async function crearProducto(input: { actor: Actor; body: Record<string, 
 		if (repetido) throw new ClienteError(409, `Ya hay un producto con el SKU ${data.sku}.`);
 	}
 
-	const producto = await prisma.producto.create({ data: { id: randomUUID(), ...data } });
+	const id = randomUUID();
+	const componentes = leerComponentes(input.body, id);
+	// A package never carries its own stock — it consumes its recipe's components instead.
+	if (componentes.length > 0) Object.assign(data, { controlaInventario: false, minimo: null });
 
-	await recordAudit(prisma, {
-		action: "producto.create",
-		actor: input.actor,
-		entityId: producto.id,
-		entityLabel: producto.nombre,
-		summary: `Producto dado de alta: ${producto.nombre}`,
-		after: {
-			tipo: producto.tipo,
-			precioVenta: producto.precioVenta.toFixed(2),
-			claveProdServ: producto.claveProdServ,
-		},
+	// Opening stock, if given, only makes sense for something that actually carries its own
+	// existencia — never a package, never something with stock control off.
+	const existenciaInicial = data.controlaInventario ? cantidad(input.body.existenciaInicial) : null;
+	const costoInicial = data.controlaInventario ? cantidad(input.body.costoInicial) : null;
+	const abreCapa = existenciaInicial !== null && existenciaInicial > 0 && costoInicial !== null && costoInicial > 0;
+
+	const producto = await prisma.$transaction(async (tx) => {
+		const creado = await tx.producto.create({ data: { id, ...data } });
+		if (componentes.length > 0) await guardarReceta(tx, id, componentes);
+
+		if (abreCapa) {
+			// `productos.ts` never imports `inventario.ts` at the top level — that module already
+			// imports `getProducto` from here, and a static import back would be a cycle. Same fix
+			// `bootstrap.ts` uses for `correo/index.js`: load it only when this branch actually runs.
+			const { abrirCapa } = await import("./inventario.js");
+			await abrirCapa(tx, {
+				productoId: id,
+				cantidad: existenciaInicial,
+				costoUnitario: costoInicial,
+				motivo: "Alta inicial",
+				actor: input.actor,
+			});
+		}
+
+		await recordAudit(tx, {
+			action: "producto.create",
+			actor: input.actor,
+			entityId: creado.id,
+			entityLabel: creado.nombre,
+			summary: `Producto dado de alta: ${creado.nombre}`,
+			after: {
+				tipo: creado.tipo,
+				precioVenta: creado.precioVenta.toFixed(2),
+				claveProdServ: creado.claveProdServ,
+				...(componentes.length > 0 ? { componentes: componentes.length } : {}),
+				...(abreCapa ? { existenciaInicial, costoInicial } : {}),
+			},
+		});
+
+		return creado;
 	});
 
 	return producto;
@@ -320,8 +440,18 @@ export async function actualizarProducto(input: { actor: Actor; id: string; body
 		if (repetido) throw new ClienteError(409, `Ya hay un producto con el SKU ${data.sku}.`);
 	}
 
+	// Absence of the key means "this caller doesn't speak recipes" (e.g. the JSON API editing just
+	// a price) — leave whatever recipe exists untouched. Only a body that actually posts the field
+	// (the drawer form always does, even empty) means "replace the recipe with this".
+	const tocaReceta = "componenteProductoId" in input.body;
+	const componentes = tocaReceta ? leerComponentes(input.body, actual.id) : [];
+	// A package never carries its own stock — it consumes its recipe's components instead.
+	if (componentes.length > 0) Object.assign(data, { controlaInventario: false, minimo: null });
+
 	// Turning stock control OFF on something that still has units would strand them: the layers
-	// stay, the movements stay, and the number nobody looks at any more silently goes stale.
+	// stay, the movements stay, and the number nobody looks at any more silently goes stale. This
+	// is also what makes converting an existing stocked product into a package correctly fail
+	// until its own stock is drawn down to zero first.
 	if (actual.controlaInventario && !data.controlaInventario && Number(actual.existencia) !== 0) {
 		throw new ClienteError(
 			409,
@@ -329,26 +459,32 @@ export async function actualizarProducto(input: { actor: Actor; id: string; body
 		);
 	}
 
-	const producto = await prisma.producto.update({ where: { id: actual.id }, data });
+	const producto = await prisma.$transaction(async (tx) => {
+		const guardado = await tx.producto.update({ where: { id: actual.id }, data });
+		if (tocaReceta) await guardarReceta(tx, actual.id, componentes);
 
-	await recordAudit(prisma, {
-		action: "producto.update",
-		actor: input.actor,
-		entityId: producto.id,
-		entityLabel: producto.nombre,
-		summary: `Producto actualizado: ${producto.nombre}`,
-		before: {
-			nombre: actual.nombre,
-			precioVenta: actual.precioVenta.toFixed(2),
-			claveProdServ: actual.claveProdServ,
-			...("costoReferencia" in data ? { costoReferencia: actual.costoReferencia?.toFixed(4) ?? null } : {}),
-		},
-		after: {
-			nombre: producto.nombre,
-			precioVenta: producto.precioVenta.toFixed(2),
-			claveProdServ: producto.claveProdServ,
-			...("costoReferencia" in data ? { costoReferencia: producto.costoReferencia?.toFixed(4) ?? null } : {}),
-		},
+		await recordAudit(tx, {
+			action: "producto.update",
+			actor: input.actor,
+			entityId: guardado.id,
+			entityLabel: guardado.nombre,
+			summary: `Producto actualizado: ${guardado.nombre}`,
+			before: {
+				nombre: actual.nombre,
+				precioVenta: actual.precioVenta.toFixed(2),
+				claveProdServ: actual.claveProdServ,
+				...("costoReferencia" in data ? { costoReferencia: actual.costoReferencia?.toFixed(4) ?? null } : {}),
+			},
+			after: {
+				nombre: guardado.nombre,
+				precioVenta: guardado.precioVenta.toFixed(2),
+				claveProdServ: guardado.claveProdServ,
+				...("costoReferencia" in data ? { costoReferencia: guardado.costoReferencia?.toFixed(4) ?? null } : {}),
+				...(componentes.length > 0 ? { componentes: componentes.length } : {}),
+			},
+		});
+
+		return guardado;
 	});
 
 	return producto;

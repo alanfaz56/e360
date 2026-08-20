@@ -153,6 +153,12 @@ const CFDI = `<?xml version="1.0" encoding="UTF-8"?>
 <cfdi:Comprobante xmlns:cfdi="http://www.sat.gob.mx/cfd/4" Version="4.0" Fecha="2026-08-01T10:30:00" Total="5800.00" SubTotal="5000.00" Moneda="MXN">
   <cfdi:Emisor Rfc="AAA010101AAA" Nombre="Refacciones del Norte SA de CV" RegimenFiscal="601"/>
   <cfdi:Receptor Rfc="XAXX010101000" Nombre="Estacion 360"/>
+  <cfdi:Conceptos>
+    <cfdi:Concepto ClaveProdServ="15101514" NoIdentificacion="ACE-5W30" Cantidad="10.000" ClaveUnidad="H87" Unidad="Pieza" Descripcion="Aceite 5W30" ValorUnitario="120.00" Importe="1200.00">
+      <cfdi:Impuestos><cfdi:Traslados><cfdi:Traslado Base="1200.00" Impuesto="002" TipoFactor="Tasa" TasaOCuota="0.160000" Importe="192.00"/></cfdi:Traslados></cfdi:Impuestos>
+    </cfdi:Concepto>
+    <cfdi:Concepto ClaveProdServ="25172504" Cantidad="4.000" ClaveUnidad="H87" Unidad="Pieza" Descripcion="Filtro de aceite" ValorUnitario="50.00" Importe="200.00"/>
+  </cfdi:Conceptos>
   <cfdi:Complemento>
     <tfd:TimbreFiscalDigital xmlns:tfd="http://www.sat.gob.mx/TimbreFiscalDigital" UUID="A1B2C3D4-E5F6-4A7B-8C9D-0E1F2A3B4C5D"/>
   </cfdi:Complemento>
@@ -178,6 +184,23 @@ check("un archivo que no es CFDI devuelve null en vez de reventar", () => {
 	assert.equal(leerCfdi("no soy xml"), null);
 	assert.equal(leerCfdi("<html><body>hola</body></html>"), null);
 	assert.equal(leerCfdi(""), null);
+});
+
+check("los conceptos del CFDI se leen para el asistente de compra", () => {
+	const c = leerCfdi(CFDI);
+	assert.ok(c);
+	assert.equal(c.conceptos.length, 2);
+	assert.equal(c.conceptos[0].noIdentificacion, "ACE-5W30");
+	assert.equal(c.conceptos[0].cantidad, 10);
+	assert.equal(c.conceptos[0].valorUnitario, 120);
+	assert.equal(c.conceptos[0].descripcion, "Aceite 5W30");
+	assert.equal(c.conceptos[1].noIdentificacion, null, "sin NoIdentificacion se lee como null, no revienta");
+	assert.equal(c.conceptos[1].claveProdServ, "25172504");
+});
+
+check("sin bloque Conceptos, la lista sale vacía en vez de reventar", () => {
+	const sinConceptos = CFDI.replace(/<cfdi:Conceptos>[\s\S]*<\/cfdi:Conceptos>/, "");
+	assert.deepEqual(leerCfdi(sinConceptos)?.conceptos, []);
 });
 
 check("un CFDI sin timbre se lee igual, sólo sin UUID", () => {

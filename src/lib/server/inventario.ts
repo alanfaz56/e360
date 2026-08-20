@@ -171,6 +171,56 @@ function leerLineas(value: unknown): LineaEntrada[] {
 }
 
 /**
+ * Open ONE FIFO layer and move `producto.existencia` to match, inside the caller's transaction.
+ * The shared body behind every way stock enters the shop: a supplier delivery (`registrarEntrada`,
+ * one call per line), a product's opening stock (`crearProducto`), and the CFDI wizard's "create
+ * new product from this line" path all funnel through here so there is exactly one place that
+ * knows how a layer gets opened.
+ */
+export async function abrirCapa(
+	tx: Prisma.TransactionClient,
+	input: {
+		productoId: string;
+		cantidad: number;
+		costoUnitario: number;
+		entradaId?: string | null;
+		motivo?: string | null;
+		actor: Actor;
+	},
+) {
+	const capa = await tx.inventario_capa.create({
+		data: {
+			id: randomUUID(),
+			productoId: input.productoId,
+			entradaId: input.entradaId ?? null,
+			cantidad: dec(input.cantidad),
+			restante: dec(input.cantidad),
+			costoUnitario: decCosto(input.costoUnitario),
+		},
+	});
+
+	await tx.inventario_movimiento.create({
+		data: {
+			id: randomUUID(),
+			productoId: input.productoId,
+			tipo: "entrada",
+			cantidad: dec(input.cantidad),
+			costoUnitario: decCosto(input.costoUnitario),
+			costoTotal: decDinero(input.cantidad * input.costoUnitario),
+			capaId: capa.id,
+			entradaId: input.entradaId ?? null,
+			motivo: input.motivo ?? null,
+			registradoPorId: input.actor.id,
+		},
+	});
+
+	await tx.producto.update({
+		where: { id: input.productoId },
+		data: { existencia: { increment: dec(input.cantidad) } },
+	});
+}
+
+/**
  * Receive goods. Opens one FIFO layer per line and moves `producto.existencia` in the same
  * transaction.
  *
@@ -228,34 +278,12 @@ export async function registrarEntrada(input: { actor: Actor; body: Record<strin
 		});
 
 		for (const l of lineas) {
-			const capa = await tx.inventario_capa.create({
-				data: {
-					id: randomUUID(),
-					productoId: l.productoId,
-					entradaId: creada.id,
-					cantidad: dec(l.cantidad),
-					restante: dec(l.cantidad),
-					costoUnitario: decCosto(l.costoUnitario),
-				},
-			});
-
-			await tx.inventario_movimiento.create({
-				data: {
-					id: randomUUID(),
-					productoId: l.productoId,
-					tipo: "entrada",
-					cantidad: dec(l.cantidad),
-					costoUnitario: decCosto(l.costoUnitario),
-					costoTotal: decDinero(l.cantidad * l.costoUnitario),
-					capaId: capa.id,
-					entradaId: creada.id,
-					registradoPorId: input.actor.id,
-				},
-			});
-
-			await tx.producto.update({
-				where: { id: l.productoId },
-				data: { existencia: { increment: dec(l.cantidad) } },
+			await abrirCapa(tx, {
+				productoId: l.productoId,
+				cantidad: l.cantidad,
+				costoUnitario: l.costoUnitario,
+				entradaId: creada.id,
+				actor: input.actor,
 			});
 		}
 
@@ -311,12 +339,20 @@ export async function consumirFifo(
 
 	const producto = await tx.producto.findUnique({
 		where: { id: input.productoId },
-		select: { id: true, nombre: true, unidad: true, controlaInventario: true, existencia: true },
+		select: {
+			id: true,
+			nombre: true,
+			unidad: true,
+			controlaInventario: true,
+			existencia: true,
+			permiteNegativo: true,
+			costoReferencia: true,
+		},
 	});
 	if (!producto) throw new ClienteError(404, "Producto no encontrado");
 	if (!producto.controlaInventario) throw new ClienteError(400, `${producto.nombre} no maneja inventario.`);
 
-	if (Number(producto.existencia) < input.cantidad) {
+	if (!producto.permiteNegativo && Number(producto.existencia) < input.cantidad) {
 		throw new ClienteError(
 			409,
 			`No alcanza: hay ${formatoCantidad(producto.existencia.toFixed(3))} ${producto.unidad} de ${producto.nombre} y se piden ${formatoCantidad(input.cantidad)}.`,
@@ -331,12 +367,14 @@ export async function consumirFifo(
 	let porSurtir = input.cantidad;
 	let costoTotal = 0;
 	let movimientos = 0;
+	let ultimoCosto = 0;
 
 	for (const capa of capas) {
 		if (porSurtir <= 0) break;
 		const disponible = Number(capa.restante);
 		const toma = Math.min(disponible, porSurtir);
 		const costoUnitario = Number(capa.costoUnitario);
+		ultimoCosto = costoUnitario;
 		const costo = toma * costoUnitario;
 
 		await tx.inventario_capa.update({
@@ -365,14 +403,41 @@ export async function consumirFifo(
 		movimientos++;
 	}
 
-	// `existencia` said there was enough but the layers did not add up. That is real corruption,
-	// not a business case — refuse loudly and let the transaction roll back rather than issue a
-	// short quantity and quietly leave the denormalized number lying.
 	if (porSurtir > 0.0005) {
-		throw new ClienteError(
-			500,
-			`Inconsistencia de inventario en ${producto.nombre}: la existencia no coincide con las capas. No se aplicó nada.`,
-		);
+		if (!producto.permiteNegativo) {
+			// `existencia` said there was enough but the layers did not add up. That is real
+			// corruption, not a business case — refuse loudly and let the transaction roll back
+			// rather than issue a short quantity and quietly leave the denormalized number lying.
+			throw new ClienteError(
+				500,
+				`Inconsistencia de inventario en ${producto.nombre}: la existencia no coincide con las capas. No se aplicó nada.`,
+			);
+		}
+
+		// No layer left behind the remainder — the shop ran out and sold it anyway. One more
+		// movement, uncosted by any real layer: last layer's cost if one existed, else the
+		// manual cost basis, else 0 (a warning-worthy edge: nothing here prices this shortage).
+		const costoUnitario = ultimoCosto || Number(producto.costoReferencia ?? 0);
+		const costo = porSurtir * costoUnitario;
+
+		await tx.inventario_movimiento.create({
+			data: {
+				id: randomUUID(),
+				productoId: producto.id,
+				tipo: "salida",
+				cantidad: dec(porSurtir),
+				costoUnitario: decCosto(costoUnitario),
+				costoTotal: decDinero(costo),
+				capaId: null,
+				notaId: input.notaId ?? null,
+				conceptoId: input.conceptoId ?? null,
+				motivo: input.motivo ?? null,
+				registradoPorId: input.actor.id,
+			},
+		});
+
+		costoTotal += costo;
+		movimientos++;
 	}
 
 	await tx.producto.update({

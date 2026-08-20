@@ -23,7 +23,9 @@
 
 <div class="min-h-svh bg-sand-50">
 	<!-- Mobile top bar -->
-	<header class="sticky top-0 z-30 flex items-center gap-3 border-b border-sand-200 bg-white px-4 py-3 md:hidden">
+	<header
+		class="sticky top-0 z-30 flex items-center gap-3 border-b border-sand-200 bg-white px-4 py-3 md:hidden print:hidden"
+	>
 		<a
 			href={menuHref(true)}
 			aria-label="Abrir menú"
@@ -34,7 +36,14 @@
 				aria-hidden="true"
 			/>
 		</a>
-		<span class="font-display text-lg text-sand-950">ESTACIÓN <span class="text-brand-600">360</span></span>
+		<!-- <span class="font-display text-lg text-sand-950">ESTACIÓN <span class="text-brand-600">360</span></span> -->
+		<div class="w-full">
+			<img
+				src="/logo_simple_red.png"
+				alt="Estacion 360 Logo Simple"
+				class="w-14 mx-auto"
+			/>
+		</div>
 		<!-- Thumb-reachable on a phone: top-right of the bar the operator is already holding. -->
 		<div class="ml-auto">
 			<NotificationBell noLeidas={data.noLeidas} />
@@ -57,14 +66,18 @@
 	-->
 	<aside
 		class="fixed inset-y-0 left-0 z-50 flex w-64 flex-col border-r border-sand-200 bg-white transition-transform md:translate-x-0
-			{menuOpen ? 'translate-x-0' : '-translate-x-full'}"
+			{menuOpen ? 'translate-x-0' : '-translate-x-full'} print:hidden! print:w-0!"
 	>
 		<div class="flex items-center gap-2 border-b border-sand-200 px-5 py-4">
 			<a
 				href="/panel"
-				class="font-display text-lg text-sand-950"
+				class="font-display text-lg text-sand-950 w-full"
 			>
-				ESTACIÓN <span class="text-brand-600">360</span>
+				<img
+					src="/logo_red.png"
+					alt="Estacion 360 Logotipo"
+					class="h-24 mx-auto"
+				/>
 			</a>
 			{#if menuOpen}
 				<a
@@ -134,9 +147,11 @@
 		</div>
 	</aside>
 
-	<div class="md:pl-64">
+	<div class="md:pl-64 print:px-0!">
 		{#if data.impersonando}
-			<div class="flex flex-wrap items-center justify-between gap-2 bg-accent-500 px-4 py-2 text-sm text-white md:px-8">
+			<div
+				class="flex flex-wrap items-center justify-between gap-2 bg-accent-500 px-4 py-2 text-sm text-white md:px-8"
+			>
 				<span>
 					Viendo como <strong>{data.actor.name}</strong> — impersonado por {data.impersonando.adminName}
 				</span>
@@ -150,7 +165,7 @@
 				</form>
 			</div>
 		{/if}
-		<main class="mx-auto max-w-5xl px-4 py-6 md:px-8 md:py-10">
+		<main class="mx-auto max-w-5xl px-4 py-6 md:px-8 md:py-10 print:my-8!">
 			{@render children()}
 		</main>
 	</div>

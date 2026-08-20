@@ -46,6 +46,7 @@
 		condicion = null,
 		vence = null,
 		leyenda = null,
+		estado,
 	}: {
 		titulo: string;
 		folio: number;
@@ -63,6 +64,7 @@
 		condicion?: string | null;
 		vence?: string | null;
 		leyenda?: string | null;
+		estado: string;
 	} = $props();
 
 	const dia = (iso: string) => fechaLarga(iso.slice(0, 10));
@@ -91,9 +93,11 @@
 			</div>
 			<div class="text-right">
 				<p class="font-display text-xl text-sand-950">{titulo}</p>
-				<p class="text-sm text-sand-700">Folio #{folio}</p>
-				<p class="text-xs text-sand-500">{dia(fecha)}</p>
-				<p class="text-xs text-sand-500">{estadoLabel}</p>
+				<p class=" text-sand-700">Folio #{folio}</p>
+				<p class="text-sm text-sand-500">{dia(fecha)}</p>
+				<p class="text-sm {estado === 'rechazada' ? 'text-red-700 font-bold' : 'text-sand-500'}  ">
+					{estadoLabel}
+				</p>
 			</div>
 		</header>
 
