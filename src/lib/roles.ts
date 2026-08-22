@@ -148,6 +148,9 @@ export const PERMISOS_DEFAULT = {
 	// what the shop charges for it.
 	"producto:read": ["admin", "gerente", "operador"],
 	"producto:manage": ["admin", "gerente"],
+
+	"proveedor:read": ["admin", "gerente", "operador"],
+	"proveedor:manage": ["admin", "gerente"],
 	// The cost basis behind precioVenta — margin is Admin-only, narrower than producto:manage.
 	// Gerente can still price a product; it just cannot see what that price is worth.
 	"producto:costo": ["admin"],
@@ -223,6 +226,11 @@ export const PERMISOS_DEFAULT = {
 	// and handing them the key that stamps CFDIs in our name is not a decision the ladder makes.
 	"ajustes:read": ["admin"],
 	"ajustes:manage": ["admin"],
+
+	// Who may generate an AI report on a nota, and who may see how much AI usage the shop is
+	// racking up (visibility only — no spending cap, no billing).
+	"nota:reporte_ia": ["admin", "gerente", "operador"],
+	"ia:uso_read": ["admin", "gerente"],
 
 	// Estación 360's own contact info (phone, site). Deliberately NOT gated by `requireDueno` like
 	// `ajustes:*` above — a phone number is routine shop info, not a PAC credential, and the shop's

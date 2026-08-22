@@ -61,6 +61,10 @@ export const AUDIT_ACTIONS = {
 	"nota.close": "Nota entregada y cerrada",
 	"nota.cancel": "Nota cancelada",
 	"nota.liberacion": "Checklist de liberación guardado",
+	"nota.reporte_ia": "Reporte generado con IA",
+	"proveedor.create": "Proveedor creado",
+	"proveedor.editar": "Proveedor actualizado",
+	"proveedor.compra": "Compra registrada a proveedor",
 	"recordatorio.create": "Recordatorio creado",
 	"recordatorio.hecho": "Recordatorio marcado",
 	"taller.create": "Taller aliado dado de alta",
@@ -122,6 +126,9 @@ export const AUDIT_ACTIONS = {
 	"pago.register": "Pago registrado",
 	"cliente.credito": "Condiciones de crédito actualizadas",
 	"cliente.credito_override": "Venta a crédito autorizada sobre el límite",
+	"canal.vinculacion_generada": "Código de vinculación de canal generado",
+	"canal.vinculado": "Cuenta vinculada a WhatsApp/Telegram",
+	"canal.desvinculado": "Cuenta desvinculada de un canal",
 } as const satisfies Record<string, string>;
 
 export type AuditAction = keyof typeof AUDIT_ACTIONS;

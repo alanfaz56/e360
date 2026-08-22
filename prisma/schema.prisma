@@ -54,15 +54,19 @@ model user {
   suscripcionesPush   push_suscripcion[]         @relation("pushSuscripcion")
   preferenciasAviso   notificacion_preferencia[] @relation("notificacionPreferencia")
   talleresRevisados   taller[]                   @relation("tallerRevisadoPor")
+  canalesVinculados   canal_identidad[]          @relation("canalIdentidadUsuario")
+  canalVinculaciones  canal_vinculacion[]        @relation("canalVinculacionUsuario")
+  usosIA              ia_uso[]                   @relation("iaUsoActor")
+  reportesIAGenerados nota_reporte_ia[]          @relation("notaReporteIaGeneradoPor")
 
-  notasAsignadas       nota_servicio[]         @relation("notaMecanico")
-  entradasRegistradas  inventario_entrada[]    @relation("entradaRegistradaPor")
+  notasAsignadas         nota_servicio[]         @relation("notaMecanico")
+  entradasRegistradas    inventario_entrada[]    @relation("entradaRegistradaPor")
   movimientosRegistrados inventario_movimiento[] @relation("movimientoRegistradoPor")
-  refaccionesSolicitadas solicitud_refaccion[]  @relation("refaccionSolicitadaPor")
-  refaccionesResueltas   solicitud_refaccion[]  @relation("refaccionResueltaPor")
-  notasLiberadas         nota_servicio[]        @relation("notaLiberadaPor")
-  recordatoriosHechos    recordatorio[]         @relation("recordatorioHechoPor")
-  recordatoriosCreados   recordatorio[]         @relation("recordatorioCreadoPor")
+  refaccionesSolicitadas solicitud_refaccion[]   @relation("refaccionSolicitadaPor")
+  refaccionesResueltas   solicitud_refaccion[]   @relation("refaccionResueltaPor")
+  notasLiberadas         nota_servicio[]         @relation("notaLiberadaPor")
+  recordatoriosHechos    recordatorio[]          @relation("recordatorioHechoPor")
+  recordatoriosCreados   recordatorio[]          @relation("recordatorioCreadoPor")
 
   /// A cotización interna is attributed to a mecánico even though only Admin/Gerente can type it
   /// in — this is who the cost is ABOUT, not who submitted it.
@@ -189,8 +193,8 @@ model cliente {
   tipo String @db.VarChar(16)
 
   /// persona
-  nombre    String? @db.VarChar(120)
-  apellidos String? @db.VarChar(120)
+  nombre      String? @db.VarChar(120)
+  apellidos   String? @db.VarChar(120)
   /// organizacion
   razonSocial String? @db.VarChar(200)
 
@@ -226,11 +230,11 @@ model cliente {
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
 
-  contactos   cliente_contacto[]
-  telefonos   cliente_telefono[]
-  unidades    unidad[]
-  propiedades unidad_propietario[]
-  citas       cita[]
+  contactos     cliente_contacto[]
+  telefonos     cliente_telefono[]
+  unidades      unidad[]
+  propiedades   unidad_propietario[]
+  citas         cita[]
   /// Not `notas` — that name is already the free-text field above.
   notasServicio nota_servicio[]
   facturas      factura[]
@@ -238,6 +242,7 @@ model cliente {
 
   notificaciones    notificacion[]     @relation("notificacionCliente")
   suscripcionesPush push_suscripcion[] @relation("pushSuscripcionCliente")
+  canalesVinculados canal_identidad[]
 
   @@index([nombreCompleto])
   @@index([rfc])
@@ -252,9 +257,9 @@ model cliente_contacto {
   clienteId String
   cliente   cliente @relation(fields: [clienteId], references: [id], onDelete: Cascade)
 
-  nombre   String  @db.VarChar(200)
-  telefono String? @db.VarChar(32)
-  email    String? @db.VarChar(255)
+  nombre         String  @db.VarChar(200)
+  telefono       String? @db.VarChar(32)
+  email          String? @db.VarChar(255)
   /// Free-text ID note for counter verification, e.g. "INE 1234". Never document images.
   identificacion String? @db.VarChar(120)
   notas          String?
@@ -269,11 +274,11 @@ model cliente_contacto {
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
 
-  unidadesAutorizadas contacto_unidad[]
-  citasComoEntregador cita[]
-  notasEntregadas     nota_servicio[] @relation("notaEntregadaA")
-  notasEntregadasPorEl nota_servicio[] @relation("notaEntregoUnidad")
-  cotizacionesAutorizadas cotizacion[] @relation("cotizacionAutorizadaPor")
+  unidadesAutorizadas     contacto_unidad[]
+  citasComoEntregador     cita[]
+  notasEntregadas         nota_servicio[]   @relation("notaEntregadaA")
+  notasEntregadasPorEl    nota_servicio[]   @relation("notaEntregoUnidad")
+  cotizacionesAutorizadas cotizacion[]      @relation("cotizacionAutorizadaPor")
 
   @@index([clienteId])
   @@index([archivedAt])
@@ -327,14 +332,14 @@ model unidad {
   clienteId String
   cliente   cliente @relation(fields: [clienteId], references: [id], onDelete: Restrict)
 
-  marca  String  @db.VarChar(60)
-  modelo String  @db.VarChar(60)
-  anio   Int?
-  color  String? @db.VarChar(40)
+  marca           String  @db.VarChar(60)
+  modelo          String  @db.VarChar(60)
+  anio            Int?
+  color           String? @db.VarChar(40)
   /// Not unique: plates get reassigned between vehicles over time.
-  placas String? @db.VarChar(16)
+  placas          String? @db.VarChar(16)
   /// VIN/NIV — the real identity when present. Older units may not have one.
-  vin    String? @unique @db.VarChar(24)
+  vin             String? @unique @db.VarChar(24)
   /// The number a fleet paints on the door, and how they actually refer to a truck.
   numeroEconomico String? @db.VarChar(32)
   kilometraje     Int?
@@ -344,9 +349,9 @@ model unidad {
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
 
-  propietarios unidad_propietario[]
-  autorizados  contacto_unidad[]
-  citas        cita[]
+  propietarios  unidad_propietario[]
+  autorizados   contacto_unidad[]
+  citas         cita[]
   notasServicio nota_servicio[]
   lecturasKm    unidad_kilometraje[]
   recordatorios recordatorio[]
@@ -378,26 +383,28 @@ model unidad_propietario {
   @@map("unidad_propietario")
 }
 
-/// An appointment. Two origins, one table.
+/// An appointment. Four origins, one table.
 ///
-/// `origen = 'publico'` rows come from the anonymous form behind Cloudflare Turnstile and land
-/// as `estado = 'solicitada'` with a `fecha` + `franja` but no exact hour. Staff grant the hour
-/// when they confirm. `origen = 'panel'` rows are booked at the counter and always have `inicio`.
+/// `origen = 'publico'` rows come from the anonymous form behind Cloudflare Turnstile;
+/// `'whatsapp'`/`'telegram'` come from the chat bot instead (see `solicitarCitaPorCanal`) — same
+/// gate purpose, different channel. All three land as `estado = 'solicitada'` with a `fecha` +
+/// `franja` but no exact hour; staff grant the hour when they confirm. `origen = 'panel'` rows are
+/// booked at the counter and always have `inicio`.
 ///
 /// The contact and vehicle strings are kept as SUBMITTED, permanently, even after `clienteId` /
 /// `unidadId` are linked: an anonymous visitor cannot be trusted to identify a customer, and the
 /// record should always show what was actually said. Same reasoning as audit_log.entityLabel.
 model cita {
-  id String @id
+  id    String @id
   /// Said out loud on the phone: "su cita es la 1042".
-  folio Int @unique @default(autoincrement())
+  folio Int    @unique @default(autoincrement())
 
-  /// 'publico' | 'panel'
+  /// 'publico' | 'panel' | 'whatsapp' | 'telegram'
   origen String @db.VarChar(16)
   /// solicitada | confirmada | en_proceso | completada | cancelada | no_asistio
   estado String @default("solicitada") @db.VarChar(16)
   /// 'en_sitio' | 'recoleccion' — whether we go get the vehicle.
-  tipo String @db.VarChar(16)
+  tipo   String @db.VarChar(16)
 
   /// The day, always known. `franja` is what the customer asked for; `inicio`/`fin` is what the
   /// shop granted, and is null until somebody schedules it.
@@ -414,9 +421,9 @@ model cita {
   anio     Int?
   placas   String? @db.VarChar(16)
   /// What the customer says they need.
-  motivo String
+  motivo   String
   /// Internal, never shown to the customer and never writable from the public form.
-  notas String?
+  notas    String?
 
   /// Filled in when staff recognise the customer. Nullable because a public request exists
   /// before any of this is known — but CONFIRMING one requires both, enforced in confirmarCita.
@@ -440,7 +447,7 @@ model cita {
   asignadoId String?
   asignado   user?   @relation("citaAsignada", fields: [asignadoId], references: [id], onDelete: SetNull)
 
-  canceladoMotivo String? @db.VarChar(255)
+  canceladoMotivo         String? @db.VarChar(255)
   /// Why this appointment was closed WITHOUT a nota_servicio ever opening — a car that never
   /// showed up still has to explain itself. Only set on that path; a cita completed through
   /// crearNota/entregarNota never asks for it.
@@ -448,8 +455,12 @@ model cita {
 
   recordatorios recordatorio[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  /// The calendar's hot query: everything in this week, in order. Declared here as well as in
+  /// the citas migration so Prisma stops proposing to drop it on every future diff.
+  /// The service note opened when the vehicle actually arrived. At most one per appointment.
+  nota      nota_servicio?
 
   @@index([fecha])
   @@index([inicio])
@@ -457,11 +468,6 @@ model cita {
   @@index([asignadoId])
   @@index([clienteId])
   @@index([telefono])
-  /// The calendar's hot query: everything in this week, in order. Declared here as well as in
-  /// the citas migration so Prisma stops proposing to drop it on every future diff.
-  /// The service note opened when the vehicle actually arrived. At most one per appointment.
-  nota nota_servicio?
-
   @@index([fecha, inicio])
   /// Declared here, not only in SQL: an index that exists in the database but not in the schema
   /// is one Prisma proposes to DROP on the next diff — which is exactly how this one was lost
@@ -475,12 +481,12 @@ model cita {
 /// External only, by decision: internal work needs no transfer. These will eventually be
 /// onboarded as users of the `taller` role — that link does not exist yet, deliberately.
 model taller {
-  id       String  @id
-  nombre   String  @db.VarChar(160)
-  telefono String? @db.VarChar(32)
-  email    String? @db.VarChar(255)
-  contacto String? @db.VarChar(120)
-  direccion String? @db.VarChar(500)
+  id             String  @id
+  nombre         String  @db.VarChar(160)
+  telefono       String? @db.VarChar(32)
+  email          String? @db.VarChar(255)
+  contacto       String? @db.VarChar(120)
+  direccion      String? @db.VarChar(500)
   /// Free text for now: "hojalatería, pintura, transmisiones".
   especialidades String? @db.VarChar(500)
   notas          String?
@@ -526,10 +532,11 @@ model taller {
   updatedAt  DateTime  @updatedAt
 
   /// Their own people, with accounts. Only `taller`-role users; see `user.tallerId`.
-  mecanicos       user[]          @relation("tallerMecanicos")
+  mecanicos       user[]               @relation("tallerMecanicos")
   notas_recibidas nota_servicio[]
   transferencias  nota_transferencia[]
   sucursales      taller_sucursal[]
+  proveedores     proveedor_taller[]
 
   @@index([nombre])
   @@index([archivedAt])
@@ -552,12 +559,12 @@ model nota_servicio {
   folio Int    @unique @default(autoincrement())
 
   /// Where it came from. SetNull so deleting a request never erases the work that followed.
-  citaId String?       @unique
-  cita   cita?         @relation(fields: [citaId], references: [id], onDelete: SetNull)
+  citaId    String? @unique
+  cita      cita?   @relation(fields: [citaId], references: [id], onDelete: SetNull)
   clienteId String
-  cliente   cliente    @relation(fields: [clienteId], references: [id], onDelete: Restrict)
+  cliente   cliente @relation(fields: [clienteId], references: [id], onDelete: Restrict)
   unidadId  String
-  unidad    unidad     @relation(fields: [unidadId], references: [id], onDelete: Restrict)
+  unidad    unidad  @relation(fields: [unidadId], references: [id], onDelete: Restrict)
 
   /// recibida | en_diagnostico | en_taller | lista | entregada | cancelada
   estado String @default("recibida") @db.VarChar(20)
@@ -572,11 +579,11 @@ model nota_servicio {
   kilometraje        Int?
   combustibleOctavos Int?
   /// Damage and condition as found, in the operator's words.
-  condicion    String?
-  inspeccionAt DateTime?
+  condicion          String?
+  inspeccionAt       DateTime?
 
-  motivo       String
-  diagnostico  String?
+  motivo        String
+  diagnostico   String?
   observaciones String?
 
   /// The partner shop currently holding the vehicle. Denormalized from the open row in
@@ -597,12 +604,12 @@ model nota_servicio {
   ///
   /// The name is snapshotted even when the contact IS registered, so the record still reads after
   /// that contact is archived — same reasoning as `audit_log.entityLabel`.
-  entregoNombre    String? @db.VarChar(120)
-  entregoTelefono  String? @db.VarChar(32)
+  entregoNombre     String?           @db.VarChar(120)
+  entregoTelefono   String?           @db.VarChar(32)
   entregoContactoId String?
   entregoContacto   cliente_contacto? @relation("notaEntregoUnidad", fields: [entregoContactoId], references: [id], onDelete: SetNull)
 
-  entregadaAt DateTime?
+  entregadaAt          DateTime?
   /// Who physically collected the unit. Must be the customer or one of its `entregador` contacts.
   entregadaAContactoId String?
   entregadaAContacto   cliente_contacto? @relation("notaEntregadaA", fields: [entregadaAContactoId], references: [id], onDelete: SetNull)
@@ -643,15 +650,15 @@ model nota_servicio {
 
   /// The mechanic working on it. This is the ONLY thing the `taller` role can see: their own
   /// assigned notes. Without it that role has no screen at all.
-  mecanicoId String?
-  mecanico   user?   @relation("notaMecanico", fields: [mecanicoId], references: [id], onDelete: SetNull)
+  mecanicoId         String?
+  mecanico           user?     @relation("notaMecanico", fields: [mecanicoId], references: [id], onDelete: SetNull)
   /// The mechanic says "I'm done"; advancing the note itself stays with the counter. Two different
   /// facts — the work being finished and the job being ready to hand over — and conflating them is
   /// how a car gets promised to a customer before anybody checked it.
   trabajoTerminadoAt DateTime?
 
-  movimientos inventario_movimiento[]
-  solicitudes solicitud_refaccion[]
+  movimientos          inventario_movimiento[]
+  solicitudes          solicitud_refaccion[]
   cotizacionesInternas cotizacion_interna[]
 
   /// This note is a WARRANTY follow-up of `garantiaDe` — same vehicle, work that came back.
@@ -661,6 +668,9 @@ model nota_servicio {
   garantiaDeId String?
   garantiaDe   nota_servicio?  @relation("notaGarantia", fields: [garantiaDeId], references: [id], onDelete: SetNull)
   garantias    nota_servicio[] @relation("notaGarantia")
+
+  usosIA     ia_uso[]
+  reportesIA nota_reporte_ia[]
 
   @@index([estado])
   @@index([clienteId])
@@ -675,12 +685,12 @@ model nota_servicio {
 /// What was in the vehicle when it came in. A fixed catalogue (INVENTARIO_ITEMS) so the same
 /// things get checked every time — a missing jack is noticed on delivery, not argued about.
 model nota_inventario {
-  notaId String
-  nota   nota_servicio @relation(fields: [notaId], references: [id], onDelete: Cascade)
+  notaId   String
+  nota     nota_servicio @relation(fields: [notaId], references: [id], onDelete: Cascade)
   /// Key from INVENTARIO_ITEMS in src/lib/notas.ts.
-  item     String  @db.VarChar(40)
+  item     String        @db.VarChar(40)
   presente Boolean
-  notas    String? @db.VarChar(255)
+  notas    String?       @db.VarChar(255)
 
   @@id([notaId, item])
   @@map("nota_inventario")
@@ -692,13 +702,13 @@ model nota_inventario {
 /// (`unidadLiberada`) lives on `nota_servicio`, not here — this table is the 15 individual
 /// answers behind that verdict.
 model nota_liberacion {
-  notaId String
-  nota   nota_servicio @relation(fields: [notaId], references: [id], onDelete: Cascade)
+  notaId    String
+  nota      nota_servicio @relation(fields: [notaId], references: [id], onDelete: Cascade)
   /// Key from LIBERACION_ITEMS in src/lib/notas.ts.
-  item      String  @db.VarChar(40)
+  item      String        @db.VarChar(40)
   /// si | no | na
-  respuesta String  @db.VarChar(4)
-  notas     String? @db.VarChar(255)
+  respuesta String        @db.VarChar(4)
+  notas     String?       @db.VarChar(255)
 
   @@id([notaId, item])
   @@map("nota_liberacion")
@@ -722,7 +732,7 @@ model nota_evidencia {
   comentario   nota_comentario? @relation(fields: [comentarioId], references: [id], onDelete: Cascade)
 
   /// foto | documento | audio | video
-  tipo String @db.VarChar(16)
+  tipo        String  @db.VarChar(16)
   /// Key from FOTO_CATEGORIAS, e.g. `frente`, `tablero`, `dano`.
   categoria   String  @db.VarChar(32)
   /// R2 object key. Generated server-side — never taken from the client.
@@ -753,8 +763,8 @@ model nota_comentario {
   texto   String
   interno Boolean @default(true)
 
-  autorId String?
-  autor   user?    @relation("comentarioAutor", fields: [autorId], references: [id], onDelete: SetNull)
+  autorId    String?
+  autor      user?    @relation("comentarioAutor", fields: [autorId], references: [id], onDelete: SetNull)
   /// Snapshot, so the trail still reads correctly after the account is gone.
   autorEmail String   @db.VarChar(255)
   createdAt  DateTime @default(now())
@@ -777,9 +787,9 @@ model nota_transferencia {
   tallerId String
   taller   taller        @relation(fields: [tallerId], references: [id], onDelete: Restrict)
 
-  motivo   String   @db.VarChar(500)
-  desde    DateTime @default(now())
-  hasta    DateTime?
+  motivo    String    @db.VarChar(500)
+  desde     DateTime  @default(now())
+  hasta     DateTime?
   /// What the partner shop reported back when the unit returned.
   resultado String?
 
@@ -817,8 +827,8 @@ model unidad_kilometraje {
 
   kilometraje Int
   /// nota | alta | manual — see ORIGENES_KILOMETRAJE.
-  origen   String   @db.VarChar(16)
-  medidoAt DateTime @default(now())
+  origen      String   @db.VarChar(16)
+  medidoAt    DateTime @default(now())
 
   notaId String?
   nota   nota_servicio? @relation(fields: [notaId], references: [id], onDelete: SetNull)
@@ -826,8 +836,8 @@ model unidad_kilometraje {
   registradoPorId String?
   registradoPor   user?   @relation("kilometrajeRegistradoPor", fields: [registradoPorId], references: [id], onDelete: SetNull)
   /// Set when somebody knowingly recorded a reading below the previous one.
-  correccion Boolean @default(false)
-  notas      String? @db.VarChar(255)
+  correccion      Boolean @default(false)
+  notas           String? @db.VarChar(255)
 
   createdAt DateTime @default(now())
 
@@ -845,13 +855,13 @@ model unidad_kilometraje {
 /// fecha < hoy()`, computed at read time exactly like `motivoVencida` on `cita` — nothing to
 /// sweep, nothing to go stale.
 model recordatorio {
-  id        String   @id
+  id        String         @id
   unidadId  String
-  unidad    unidad   @relation(fields: [unidadId], references: [id], onDelete: Cascade)
+  unidad    unidad         @relation(fields: [unidadId], references: [id], onDelete: Cascade)
   /// Copied from the unit's current owner at creation — a snapshot, same reasoning as
   /// nota_servicio.clienteId not following a later transfer.
   clienteId String
-  cliente   cliente  @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  cliente   cliente        @relation(fields: [clienteId], references: [id], onDelete: Cascade)
   /// Where this reminder came from, for later reference — never more than one of these at once,
   /// since a nota only ever exists off a cita and a reminder converted to a cita only carries
   /// the cita until it links a nota of its own.
@@ -910,23 +920,23 @@ model cotizacion {
   vigenciaHasta DateTime?
   notas         String?
 
-  enviadaAt DateTime?
+  enviadaAt               DateTime?
   /// WHO on the customer's side approved it — a contact holding `autorizador`, or null when the
   /// customer is a persona approving their own work.
   autorizadaPorContactoId String?
   autorizadaPorContacto   cliente_contacto? @relation("cotizacionAutorizadaPor", fields: [autorizadaPorContactoId], references: [id], onDelete: SetNull)
   /// How the approval arrived: teléfono, WhatsApp, en persona.
-  autorizadaMedio String?   @db.VarChar(60)
-  autorizadaAt    DateTime?
-  rechazadaMotivo String?   @db.VarChar(500)
+  autorizadaMedio         String?           @db.VarChar(60)
+  autorizadaAt            DateTime?
+  rechazadaMotivo         String?           @db.VarChar(500)
 
   creadaPorId String?
   creadaPor   user?    @relation("cotizacionCreadaPor", fields: [creadaPorId], references: [id], onDelete: SetNull)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  conceptos cotizacion_concepto[]
-  facturas  factura[]
+  conceptos            cotizacion_concepto[]
+  facturas             factura[]
   cotizacionesInternas cotizacion_interna[]
 
   @@index([notaId])
@@ -940,8 +950,8 @@ model cotizacion_concepto {
   cotizacion   cotizacion @relation(fields: [cotizacionId], references: [id], onDelete: Cascade)
 
   /// refaccion | mano_obra | insumo | externo
-  tipo        String  @db.VarChar(16)
-  descripcion String  @db.VarChar(500)
+  tipo           String  @db.VarChar(16)
+  descripcion    String  @db.VarChar(500)
   /// Fractional on purpose: 1.5 hours of labour is a real line.
   cantidad       Decimal @db.Decimal(10, 2)
   precioUnitario Decimal @db.Decimal(12, 2)
@@ -952,6 +962,18 @@ model cotizacion_concepto {
   /// cabeza con el torno de la esquina") is a real quote line that will never be a product.
   productoId String?
   producto   producto? @relation(fields: [productoId], references: [id], onDelete: SetNull)
+
+  /// Which purchase this line came from, when it was imported from a supplier's CFDI — lets a
+  /// cotización grow incrementally as parts are bought over time, each line traceable to its
+  /// receipt. Null for a line typed in by hand.
+  entradaId String?
+  entrada   inventario_entrada? @relation(fields: [entradaId], references: [id], onDelete: SetNull)
+
+  /// What this line actually cost, from the purchase it came from — set only on lines created via
+  /// a CFDI import (`entradaId` non-null). Lets `utilidadDeCotizacion` count margin on a line that
+  /// was never stocked (no `inventario_movimiento` to derive cost from otherwise). Null for a
+  /// hand-typed line, same as a stocked line whose real cost already comes from FIFO layers.
+  costoUnitario Decimal? @db.Decimal(12, 4)
 
   /// SAT keys COPIED from the product at the moment the line was written, never read through the
   /// relation. Re-classifying a product later must not silently rewrite what was already quoted —
@@ -973,20 +995,20 @@ model cotizacion_concepto {
 /// An invoice. `credito` is the only condition that consumes the customer's limit, and the due
 /// date is derived from their `diasCredito` at the moment it is issued.
 model factura {
-  id     String  @id
-  folio  Int     @unique @default(autoincrement())
-  notaId String?
-  nota   nota_servicio? @relation(fields: [notaId], references: [id], onDelete: SetNull)
+  id           String         @id
+  folio        Int            @unique @default(autoincrement())
+  notaId       String?
+  nota         nota_servicio? @relation(fields: [notaId], references: [id], onDelete: SetNull)
   /// Who it is billed to. Restrict: a customer with invoices is never hard-deleted.
-  clienteId String
-  cliente   cliente @relation(fields: [clienteId], references: [id], onDelete: Restrict)
+  clienteId    String
+  cliente      cliente        @relation(fields: [clienteId], references: [id], onDelete: Restrict)
   cotizacionId String?
-  cotizacion   cotizacion? @relation(fields: [cotizacionId], references: [id], onDelete: SetNull)
+  cotizacion   cotizacion?    @relation(fields: [cotizacionId], references: [id], onDelete: SetNull)
 
   /// borrador | emitida | pagada | cancelada
-  estado String @default("borrador") @db.VarChar(16)
+  estado        String    @default("borrador") @db.VarChar(16)
   /// contado | credito
-  condicionPago String @default("contado") @db.VarChar(16)
+  condicionPago String    @default("contado") @db.VarChar(16)
   diasCredito   Int?
   vence         DateTime?
 
@@ -998,25 +1020,25 @@ model factura {
   /// invoice was actually stamped, which is why `timbradaAt` is a different fact from `emitidaAt`:
   /// the shop issues, the SAT stamps, and there is a window where the first happened and the
   /// second did not.
-  uuid         String? @unique @db.VarChar(36)
-  serie        String? @db.VarChar(25)
+  uuid                 String?   @unique @db.VarChar(36)
+  serie                String?   @db.VarChar(25)
   /// factura.com's own id for the document. Needed to fetch the PDF/XML or cancel it — the UUID
   /// alone is not enough for their API.
-  pacUid       String? @db.VarChar(64)
+  pacUid               String?   @db.VarChar(64)
   /// Which environment stamped it. A sandbox document must never be mistaken for a fiscal one.
-  pacEntorno   String? @db.VarChar(16)
-  timbradaAt   DateTime?
-  emitidaAt    DateTime?
-  canceladaAt  DateTime?
-  canceladoMotivo String? @db.VarChar(255)
+  pacEntorno           String?   @db.VarChar(16)
+  timbradaAt           DateTime?
+  emitidaAt            DateTime?
+  canceladaAt          DateTime?
+  canceladoMotivo      String?   @db.VarChar(255)
   /// SAT cancellation is asynchronous and can sit "en proceso" needing the receiver's approval,
   /// so the request and its outcome are two different things. Null = never requested.
-  cancelacionEstatus String? @db.VarChar(32)
+  cancelacionEstatus   String?   @db.VarChar(32)
   /// Clave 01–04. `01` (comprobante emitido con errores CON relación) needs a replacement UUID,
   /// which is why it is stored beside it rather than being derivable.
-  cancelacionMotivo  String? @db.VarChar(2)
-  cancelacionSustituye String? @db.VarChar(36)
-  notas        String?
+  cancelacionMotivo    String?   @db.VarChar(2)
+  cancelacionSustituye String?   @db.VarChar(36)
+  notas                String?
 
   creadaPorId String?
   creadaPor   user?    @relation("facturaCreadaPor", fields: [creadaPorId], references: [id], onDelete: SetNull)
@@ -1047,8 +1069,8 @@ model factura_concepto {
   factura   factura @relation(fields: [facturaId], references: [id], onDelete: Cascade)
 
   /// refaccion | mano_obra | insumo | externo — same vocabulary as cotizacion_concepto.
-  tipo        String  @db.VarChar(16)
-  descripcion String  @db.VarChar(500)
+  tipo           String  @db.VarChar(16)
+  descripcion    String  @db.VarChar(500)
   /// Fractional on purpose: 1.5 hours of labour is a real line.
   cantidad       Decimal @db.Decimal(10, 2)
   precioUnitario Decimal @db.Decimal(12, 2)
@@ -1075,7 +1097,7 @@ model pago {
   facturaId String
   factura   factura @relation(fields: [facturaId], references: [id], onDelete: Restrict)
 
-  monto  Decimal @db.Decimal(12, 2)
+  monto      Decimal @db.Decimal(12, 2)
   /// efectivo | tarjeta | transferencia | cheque | otro
   metodo     String  @db.VarChar(16)
   referencia String? @db.VarChar(120)
@@ -1095,7 +1117,7 @@ model pago {
 model configurations {
   id         Int      @default(autoincrement())
   created_at DateTime @default(now()) @db.Timestamp(6)
-  key        String   @db.VarChar(255) @unique
+  key        String   @unique @db.VarChar(255)
   value      String?  @db.VarChar(255)
 
   @@id([id, key])
@@ -1142,6 +1164,50 @@ model permiso_rol {
 
 /// has a composite primary key on an autoincrementing id plus its own unique key, and a
 /// VarChar(255) value an encrypted secret outgrows.
+/// A generated AI report, kept for later reference and re-sharing — the narrative and what went
+/// into it, snapshotted at generation time. `fotos`/`cotizaciones` store ids + display data as
+/// JSON rather than live relations: a cotización's total can change after the fact, and a report
+/// should keep saying what it said when it was written, not silently reflect later edits. Photo
+/// URLs are re-derived fresh on each view (`urlDeLectura`), since signed URLs expire in 1h and
+/// this row can be opened long after it was created.
+model nota_reporte_ia {
+  id            String        @id
+  notaId        String
+  nota          nota_servicio @relation(fields: [notaId], references: [id], onDelete: Cascade)
+  generadoPorId String?
+  generadoPor   user?         @relation("notaReporteIaGeneradoPor", fields: [generadoPorId], references: [id], onDelete: SetNull)
+  proveedor     String        @db.VarChar(16)
+  modelo        String        @db.VarChar(64)
+  /// The nota's estado AT THE TIME — a report on a nota still "en_taller" should keep reading
+  /// as a progress update even after the nota later reaches "entregada".
+  estadoNota    String        @db.VarChar(16)
+  narrativa     String
+  fotos         Json
+  cotizaciones  Json
+
+  createdAt DateTime @default(now())
+
+  @@index([notaId, createdAt])
+  @@map("nota_reporte_ia")
+}
+
+/// One row per AI call, purely for usage visibility — no billing, no credits.
+model ia_uso {
+  id            String         @id
+  proveedor     String         @db.VarChar(16) // "anthropic" | "openai" | "gemini"
+  modelo        String         @db.VarChar(64)
+  notaId        String?
+  nota          nota_servicio? @relation(fields: [notaId], references: [id], onDelete: SetNull)
+  actorId       String?
+  actor         user?          @relation("iaUsoActor", fields: [actorId], references: [id], onDelete: SetNull)
+  tokensEntrada Int
+  tokensSalida  Int
+  createdAt     DateTime       @default(now())
+
+  @@index([proveedor, createdAt])
+  @@map("ia_uso")
+}
+
 model ajuste {
   clave   String  @id @db.VarChar(64)
   valor   String?
@@ -1183,11 +1249,11 @@ model empresa_config {
 model cuenta_bancaria {
   id String @id
 
-  banco         String  @db.VarChar(100)
-  titular       String  @db.VarChar(200)
-  clabe         String? @db.VarChar(18)
-  numeroCuenta  String? @db.VarChar(30)
-  notas         String? @db.VarChar(255)
+  banco        String  @db.VarChar(100)
+  titular      String  @db.VarChar(200)
+  clabe        String? @db.VarChar(18)
+  numeroCuenta String? @db.VarChar(30)
+  notas        String? @db.VarChar(255)
 
   /// The one account shown in cotización emails. At most one live row may hold it — enforced by
   /// a partial unique index (see the migration), the same pattern as the taller sucursal.
@@ -1219,18 +1285,18 @@ model cuenta_bancaria {
 model notificacion {
   id String @id
 
-  userId String?
-  user   user?   @relation("notificacionDestinatario", fields: [userId], references: [id], onDelete: Cascade)
+  userId    String?
+  user      user?    @relation("notificacionDestinatario", fields: [userId], references: [id], onDelete: Cascade)
   /// Customer-facing copy. NEVER names a partner taller — see notaParaCliente in server/notas.ts.
   clienteId String?
   cliente   cliente? @relation("notificacionCliente", fields: [clienteId], references: [id], onDelete: Cascade)
 
   /// Key from NOTIFICACION_EVENTOS in src/lib/notificaciones.ts.
-  evento String @db.VarChar(48)
-  titulo String @db.VarChar(120)
-  cuerpo String @db.VarChar(500)
+  evento String  @db.VarChar(48)
+  titulo String  @db.VarChar(120)
+  cuerpo String  @db.VarChar(500)
   /// Deep link. Staff links point into /panel; customer links into /seguimiento/<token>.
-  url String? @db.VarChar(500)
+  url    String? @db.VarChar(500)
 
   /// What it is about, so a screen can show only its own notifications.
   entidad   String? @db.VarChar(32)
@@ -1256,8 +1322,8 @@ model notificacion {
 model push_suscripcion {
   id String @id
 
-  userId String?
-  user   user?   @relation("pushSuscripcion", fields: [userId], references: [id], onDelete: Cascade)
+  userId    String?
+  user      user?    @relation("pushSuscripcion", fields: [userId], references: [id], onDelete: Cascade)
   clienteId String?
   cliente   cliente? @relation("pushSuscripcionCliente", fields: [clienteId], references: [id], onDelete: Cascade)
 
@@ -1265,8 +1331,8 @@ model push_suscripcion {
   /// piling up duplicates that would each deliver the same notification.
   endpoint String @unique @db.VarChar(500)
   /// RFC 8291 keys, base64url, exactly as the browser hands them over.
-  p256dh String @db.VarChar(255)
-  auth   String @db.VarChar(64)
+  p256dh   String @db.VarChar(255)
+  auth     String @db.VarChar(64)
 
   /// What the person will recognise in the device list: "Chrome en Android".
   etiqueta  String? @db.VarChar(80)
@@ -1294,11 +1360,87 @@ model notificacion_preferencia {
 
   enApp Boolean @default(true)
   push  Boolean @default(true)
+  chat  Boolean @default(true)
 
   updatedAt DateTime @updatedAt
 
   @@id([userId, evento])
   @@map("notificacion_preferencia")
+}
+
+/// Maps a WhatsApp/Telegram external identity to exactly one principal (cliente OR user).
+/// Enforced by CHECK constraint added in the migration SQL (Prisma has no native XOR support).
+model canal_identidad {
+  id          String  @id
+  canal       String  @db.VarChar(16) // "whatsapp" | "telegram"
+  /// WhatsApp: E.164 phone. Telegram: numeric chat_id (never the @username — see plan doc).
+  idExterno   String  @db.VarChar(64)
+  /// Telegram @username, display-only, never the lookup key.
+  nombreCanal String? @db.VarChar(64)
+
+  clienteId String?
+  cliente   cliente? @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  userId    String?
+  user      user?    @relation("canalIdentidadUsuario", fields: [userId], references: [id], onDelete: Cascade)
+
+  verificadoAt DateTime  @default(now())
+  ultimoUsoAt  DateTime?
+  revocadoAt   DateTime?
+
+  @@unique([canal, idExterno])
+  @@index([clienteId])
+  @@index([userId])
+  @@map("canal_identidad")
+}
+
+/// Multi-turn state for chat-driven flows (e.g. booking a cita over several messages).
+/// `@@unique([canal, idExterno])` doubles as the compare-and-swap key for step transitions —
+/// see docs/whatsapp-telegram note in the review plan.
+model conversacion_estado {
+  id        String   @id
+  canal     String   @db.VarChar(16)
+  idExterno String   @db.VarChar(64)
+  paso      String   @db.VarChar(32)
+  datos     Json
+  expiraAt  DateTime
+
+  @@unique([canal, idExterno])
+  @@map("conversacion_estado")
+}
+
+/// Inbound webhook dedup. Insert is the claim: a unique conflict on (canal, eventoExternoId)
+/// means this exact provider delivery was already seen — never reprocess, just ack.
+/// `idExterno` (the sender) is separate from `eventoExternoId` (the provider's message id) and
+/// exists only so per-sender rate limiting can query it without touching canal_identidad.
+model canal_evento {
+  id              String    @id
+  canal           String    @db.VarChar(16)
+  eventoExternoId String    @db.VarChar(128)
+  idExterno       String    @db.VarChar(64)
+  tipo            String    @db.VarChar(32)
+  recibidoAt      DateTime  @default(now())
+  procesadoAt     DateTime?
+  error           String?
+
+  @@unique([canal, eventoExternoId])
+  @@index([canal, idExterno, recibidoAt])
+  @@map("canal_evento")
+}
+
+/// One-time employee pairing code, modeled on `invitation`: hashed code, TTL, one-time claim via
+/// conditional updateMany, revocable. Generated from /panel/usuarios, redeemed by the bot.
+model canal_vinculacion {
+  id         String    @id
+  userId     String
+  user       user      @relation("canalVinculacionUsuario", fields: [userId], references: [id], onDelete: Cascade)
+  canal      String    @db.VarChar(16)
+  codigoHash String    @unique
+  expiraAt   DateTime
+  usadoAt    DateTime?
+  revocadoAt DateTime?
+  creadoAt   DateTime  @default(now())
+
+  @@map("canal_vinculacion")
 }
 
 // ============================================================================================
@@ -1354,26 +1496,26 @@ model producto {
   nombre      String  @db.VarChar(200)
   descripcion String? @db.VarChar(500)
   /// refaccion | mano_obra | insumo | externo — the same vocabulary as cotizacion_concepto.tipo.
-  tipo String @db.VarChar(16)
+  tipo        String  @db.VarChar(16)
 
   /// SAT c_ClaveProdServ (8 digits) and c_ClaveUnidad (up to 3 chars). Claves, never labels —
   /// the same rule as `cliente.regimenFiscal`.
   claveProdServ String @db.VarChar(8)
   claveUnidad   String @db.VarChar(3)
   /// What a human reads: "Pieza", "Hora", "Litro".
-  unidad String @db.VarChar(20)
+  unidad        String @db.VarChar(20)
 
   /// What we charge. Money is Decimal, never Float.
   precioVenta Decimal @default(0) @db.Decimal(12, 2)
   /// IVA rate for this line. Stored per product because not everything is 16%.
-  ivaTasa Decimal @default(0.16) @db.Decimal(5, 4)
+  ivaTasa     Decimal @default(0.16) @db.Decimal(5, 4)
 
-  controlaInventario Boolean @default(true)
+  controlaInventario Boolean  @default(true)
   /// Denormalized sum of the open FIFO layers, so a product list needs no subquery. Written in
   /// the SAME transaction as the layers — exactly like `unidad.kilometraje`.
-  existencia Decimal @default(0) @db.Decimal(12, 3)
+  existencia         Decimal  @default(0) @db.Decimal(12, 3)
   /// Reorder point. Null means nobody wants to be told.
-  minimo Decimal? @db.Decimal(12, 3)
+  minimo             Decimal? @db.Decimal(12, 3)
 
   /// Manual cost basis for products/services with no FIFO layers (mano_obra, externo) or as an
   /// editable override. Gated by `producto:costo` — never returned by `publicProducto`, only by
@@ -1390,14 +1532,14 @@ model producto {
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
 
-  capas                       inventario_capa[]
-  movimientos                 inventario_movimiento[]
-  conceptos                   cotizacion_concepto[]
-  conceptosFactura            factura_concepto[]
-  solicitudes                 solicitud_refaccion[]
-  conceptosCotizacionInterna  cotizacion_interna_concepto[]
-  componentes                 producto_receta[] @relation("paqueteReceta")
-  usadoEnRecetas              producto_receta[] @relation("productoComponente")
+  capas                      inventario_capa[]
+  movimientos                inventario_movimiento[]
+  conceptos                  cotizacion_concepto[]
+  conceptosFactura           factura_concepto[]
+  solicitudes                solicitud_refaccion[]
+  conceptosCotizacionInterna cotizacion_interna_concepto[]
+  componentes                producto_receta[]             @relation("paqueteReceta")
+  usadoEnRecetas             producto_receta[]             @relation("productoComponente")
 
   @@index([nombre])
   @@index([tipo])
@@ -1430,13 +1572,47 @@ model producto_receta {
 ///
 /// The XML is stored VERBATIM. A parsed summary is convenient, but the stamped document is the
 /// thing the SAT and the supplier both recognise, and re-deriving it from columns is impossible.
+/// Purchase-side vendor. New concept — no prior model in this schema played this role.
+model proveedor {
+  id         String    @id
+  rfc        String    @unique @db.VarChar(13)
+  nombre     String    @db.VarChar(200)
+  contacto   String?   @db.VarChar(120)
+  telefono   String?   @db.VarChar(32)
+  email      String?   @db.VarChar(160)
+  archivedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  talleres proveedor_taller[]
+  entradas inventario_entrada[]
+
+  @@map("proveedor")
+}
+
+/// Which talleres a provider supplies. First many-to-many join table in this schema — every
+/// other "many of X per Y" relation here is a direct FK, but provider↔taller is genuinely
+/// many-to-many (a provider can supply several talleres, a taller can buy from several providers).
+model proveedor_taller {
+  proveedorId String
+  proveedor   proveedor @relation(fields: [proveedorId], references: [id], onDelete: Cascade)
+  tallerId    String
+  taller      taller    @relation(fields: [tallerId], references: [id], onDelete: Cascade)
+  creadoAt    DateTime  @default(now())
+
+  @@id([proveedorId, tallerId])
+  @@map("proveedor_taller")
+}
+
 model inventario_entrada {
   id    String @id
   folio Int    @unique @default(autoincrement())
 
-  proveedor  String? @db.VarChar(200)
+  /// Free text — kept for old rows and for receipts with no structured provider on file.
+  proveedor    String?    @db.VarChar(200)
+  proveedorId  String?
+  proveedorRel proveedor? @relation(fields: [proveedorId], references: [id], onDelete: SetNull)
   /// The supplier's own invoice or remission number, for people who do not use CFDI.
-  referencia String? @db.VarChar(120)
+  referencia   String?    @db.VarChar(120)
 
   /// CFDI 4.0, all optional: plenty of parts arrive with a paper note and nothing else.
   /// `cfdiUuid` is unique so the same invoice cannot be received into stock twice.
@@ -1454,8 +1630,9 @@ model inventario_entrada {
   recibidaAt      DateTime @default(now())
   createdAt       DateTime @default(now())
 
-  capas       inventario_capa[]
-  movimientos inventario_movimiento[]
+  capas               inventario_capa[]
+  movimientos         inventario_movimiento[]
+  cotizacionConceptos cotizacion_concepto[]
 
   @@index([recibidaAt])
   @@map("inventario_entrada")
@@ -1467,16 +1644,16 @@ model inventario_entrada {
 /// $80 and ten more at $95 are not twenty filters at $87.50 — the cost of the next one out is $80
 /// until the first ten are gone, and a margin computed any other way is fiction.
 model inventario_capa {
-  id         String   @id
+  id         String              @id
   productoId String
-  producto   producto @relation(fields: [productoId], references: [id], onDelete: Restrict)
+  producto   producto            @relation(fields: [productoId], references: [id], onDelete: Restrict)
   entradaId  String?
   entrada    inventario_entrada? @relation(fields: [entradaId], references: [id], onDelete: SetNull)
 
-  cantidad Decimal @db.Decimal(12, 3)
+  cantidad      Decimal @db.Decimal(12, 3)
   /// What is LEFT in this layer. Reaches zero and the layer is spent, never deleted — the
   /// movements that consumed it still point here.
-  restante Decimal @db.Decimal(12, 3)
+  restante      Decimal @db.Decimal(12, 3)
   /// Four decimals: unit cost divides, and rounding it to cents at this stage loses money slowly.
   costoUnitario Decimal @db.Decimal(12, 4)
 
@@ -1501,10 +1678,10 @@ model inventario_movimiento {
   producto   producto @relation(fields: [productoId], references: [id], onDelete: Restrict)
 
   /// entrada | salida | ajuste
-  tipo String @db.VarChar(16)
+  tipo          String  @db.VarChar(16)
   /// Always POSITIVE. `tipo` carries the direction — a signed quantity plus a type is two sources
   /// of truth for the same fact, and they drift.
-  cantidad Decimal @db.Decimal(12, 3)
+  cantidad      Decimal @db.Decimal(12, 3)
   /// Cost this movement moved, at the layer's unit cost.
   costoUnitario Decimal @db.Decimal(12, 4)
   costoTotal    Decimal @db.Decimal(12, 2)
@@ -1515,8 +1692,8 @@ model inventario_movimiento {
   entrada   inventario_entrada? @relation(fields: [entradaId], references: [id], onDelete: SetNull)
 
   /// What it was for. A part issued to a job points at both.
-  notaId    String?
-  nota      nota_servicio? @relation(fields: [notaId], references: [id], onDelete: SetNull)
+  notaId     String?
+  nota       nota_servicio?       @relation(fields: [notaId], references: [id], onDelete: SetNull)
   conceptoId String?
   concepto   cotizacion_concepto? @relation(fields: [conceptoId], references: [id], onDelete: SetNull)
 
@@ -1545,20 +1722,20 @@ model solicitud_refaccion {
   nota   nota_servicio @relation(fields: [notaId], references: [id], onDelete: Cascade)
 
   /// Free text, because a mechanic knows what they need before it has a SKU.
-  descripcion String  @db.VarChar(500)
+  descripcion String    @db.VarChar(500)
   productoId  String?
   producto    producto? @relation(fields: [productoId], references: [id], onDelete: SetNull)
   cantidad    Decimal   @db.Decimal(12, 3)
 
   /// pendiente | surtida | rechazada
-  estado String @default("pendiente") @db.VarChar(16)
+  estado           String  @default("pendiente") @db.VarChar(16)
   /// Mandatory on a rejection — it is what the mechanic reads to know what to do instead.
   resolucionMotivo String? @db.VarChar(500)
 
   solicitadaPorId String?
-  solicitadaPor   user?   @relation("refaccionSolicitadaPor", fields: [solicitadaPorId], references: [id], onDelete: SetNull)
+  solicitadaPor   user?     @relation("refaccionSolicitadaPor", fields: [solicitadaPorId], references: [id], onDelete: SetNull)
   resueltaPorId   String?
-  resueltaPor     user?   @relation("refaccionResueltaPor", fields: [resueltaPorId], references: [id], onDelete: SetNull)
+  resueltaPor     user?     @relation("refaccionResueltaPor", fields: [resueltaPorId], references: [id], onDelete: SetNull)
   resueltaAt      DateTime?
 
   createdAt DateTime @default(now())
@@ -1604,8 +1781,8 @@ model cotizacion_interna {
 
   /// Who typed this in — almost always Admin/Gerente relaying a mechanic's message, not the
   /// mechanic themselves (the `taller` role holds no permission on this table at all).
-  creadaPorId String?
-  creadaPor   user?     @relation("cotizacionInternaCreadaPor", fields: [creadaPorId], references: [id], onDelete: SetNull)
+  creadaPorId   String?
+  creadaPor     user?     @relation("cotizacionInternaCreadaPor", fields: [creadaPorId], references: [id], onDelete: SetNull)
   resueltaPorId String?
   resueltaPor   user?     @relation("cotizacionInternaResueltaPor", fields: [resueltaPorId], references: [id], onDelete: SetNull)
   resueltaAt    DateTime?

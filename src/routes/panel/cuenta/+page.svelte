@@ -54,4 +54,44 @@
 
 		<Button full>Cambiar contraseña</Button>
 	</form>
+
+	<h2 class="font-display mt-8 mb-3 text-lg text-sand-950">Telegram</h2>
+
+	<div class="space-y-4 rounded-lg border border-sand-200 bg-white p-6">
+		{#if form?.canalDesvinculado === "telegram"}
+			<p role="status" class="rounded border border-ok/30 bg-ok/10 px-3 py-2 text-sm text-sand-800">
+				Telegram desvinculado.
+			</p>
+		{/if}
+		{#if form?.message}
+			<p role="alert" class="rounded border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
+				{form.message}
+			</p>
+		{/if}
+
+		{#if form?.canal === "telegram"}
+			<p class="text-sm text-sand-700">
+				Manda este mensaje al bot de Telegram, dentro de los próximos {form.expiraMinutos} minutos:
+			</p>
+			<p class="rounded border border-sand-200 bg-sand-50 px-3 py-2 font-mono text-sm text-sand-950">
+				/vincular {form.codigo}
+			</p>
+		{:else if data.canales.some((c) => c.canal === "telegram")}
+			{@const tg = data.canales.find((c) => c.canal === "telegram")}
+			<p class="text-sm text-sand-700">
+				Vinculado{tg?.nombreCanal ? ` como @${tg.nombreCanal}` : ""}. Ya puedes usar el bot para comentar notas
+				(si tu rol lo permite) y agendar citas.
+			</p>
+			<form method="POST" action="?/desvincularTelegram">
+				<Button variant="outline" size="sm">Desvincular Telegram</Button>
+			</form>
+		{:else}
+			<p class="text-sm text-sand-700">
+				Vincula tu cuenta para comentar notas o agendar citas desde Telegram en vez del panel.
+			</p>
+			<form method="POST" action="?/vincularTelegram">
+				<Button size="sm">Vincular Telegram</Button>
+			</form>
+		{/if}
+	</div>
 </div>

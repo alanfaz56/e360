@@ -27,7 +27,9 @@ export type NavItem = {
 		| "settings"
 		| "bell"
 		| "landmark"
-		| "shield-check";
+		| "shield-check"
+		| "sparkles"
+		| "truck";
 	permission: Permission;
 	/**
 	 * Hide the entry from anybody who ALSO holds this permission.
@@ -73,9 +75,11 @@ export const NAV: readonly NavItem[] = [
 	{ href: "/panel/clientes", label: "Clientes", icon: "contact", permission: "cliente:read" },
 	{ href: "/panel/unidades", label: "Unidades", icon: "car", permission: "unidad:read" },
 	{ href: "/panel/talleres", label: "Talleres aliados", icon: "wrench", permission: "taller:read" },
+	{ href: "/panel/proveedores", label: "Proveedores", icon: "truck", permission: "proveedor:read" },
 	{ href: "/panel/recordatorios", label: "Recordatorios", icon: "bell", permission: "recordatorio:manage" },
 	{ href: "/panel/usuarios", label: "Usuarios", icon: "users", permission: "user:list" },
 	{ href: "/panel/auditoria", label: "Auditoría", icon: "scroll-text", permission: "audit:read" },
+	{ href: "/panel/ia-uso", label: "Uso de IA", icon: "sparkles", permission: "ia:uso_read" },
 	{ href: "/panel/empresa", label: "Datos de la empresa", icon: "contact", permission: "empresa:manage" },
 	{
 		href: "/panel/cuentas-bancarias",

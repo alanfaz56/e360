@@ -100,6 +100,12 @@ export const FLASH: Record<string, string> = {
 	"aviso.enviado": "Aviso enviado.",
 	"aviso.preferencias": "Preferencias guardadas.",
 	"aviso.dispositivo": "Dispositivo dado de baja.",
+
+	// --- Proveedores -----------------------------------------------------------------------------
+	"proveedor.crear": "Proveedor dado de alta.",
+	"proveedor.editar": "Datos del proveedor actualizados.",
+	"proveedor.asignarTaller": "Taller asignado al proveedor.",
+	"proveedor.quitarTaller": "Taller quitado del proveedor.",
 };
 
 export const flashMensaje = (clave: string | null): string | null =>

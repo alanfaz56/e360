@@ -8,6 +8,7 @@
 	import Layers from "@lucide/svelte/icons/layers";
 	import TruckIcon from "@lucide/svelte/icons/truck";
 	import Scale from "@lucide/svelte/icons/scale";
+	import { leerCfdi } from "$lib/cfdi";
 	import Badge from "$lib/components/Badge.svelte";
 	import Button from "$lib/components/Button.svelte";
 	import DataTable from "$lib/components/DataTable.svelte";
@@ -38,7 +39,37 @@
 	const closeDrawer = $derived(searchHref(page.url, { drawer: null, producto: null }));
 
 	// The goods-receipt form grows rows client-side; with JS off it still ships three.
-	let renglones = $state(3);
+	type FilaEntrada = { productoId: string; cantidad: string; costoUnitario: string };
+	const filaVacia = (): FilaEntrada => ({ productoId: "", cantidad: "", costoUnitario: "" });
+	let filasEntrada = $state<FilaEntrada[]>([filaVacia(), filaVacia(), filaVacia()]);
+
+	/**
+	 * Read the CFDI in the browser and fill the rows — no server round trip needed, `leerCfdi` is
+	 * pure and dependency-free. Matches the same way the CFDI wizards do (SKU, then name); an
+	 * unmatched row is left with an empty producto, same as before this existed.
+	 */
+	async function onCfdiChange(e: Event) {
+		const input = e.currentTarget as HTMLInputElement;
+		const file = input.files?.[0];
+		if (!file) return;
+		const cfdi = leerCfdi(await file.text());
+		if (!cfdi || cfdi.conceptos.length === 0) return;
+
+		const porSku = new Map(conStock.filter((p) => p.sku).map((p) => [p.sku!.toLowerCase(), p]));
+		const porNombre = new Map(conStock.map((p) => [p.nombre.toLowerCase(), p]));
+
+		filasEntrada = cfdi.conceptos.map((c) => {
+			const match =
+				(c.noIdentificacion && porSku.get(c.noIdentificacion.toLowerCase())) ||
+				(c.descripcion && porNombre.get(c.descripcion.toLowerCase())) ||
+				null;
+			return {
+				productoId: match?.id ?? "",
+				cantidad: c.cantidad !== null ? c.cantidad.toFixed(3) : "",
+				costoUnitario: c.valorUnitario !== null ? c.valorUnitario.toFixed(4) : "",
+			};
+		});
+	}
 
 	// Recipe rows for the product drawer. Seeded from whatever the row being edited already has,
 	// plus one blank — same "grow client-side, three with JS off" idea as the goods-receipt rows.
@@ -744,7 +775,7 @@
 			<Field
 				label="CFDI del proveedor (XML, opcional)"
 				name="cfdi"
-				hint="Si lo subes, no se puede recibir dos veces."
+				hint="Si lo subes, no se puede recibir dos veces. Con JavaScript, llena los renglones solo."
 			>
 				{#snippet children(id)}
 					<input
@@ -753,13 +784,14 @@
 						name="cfdi"
 						accept=".xml,text/xml,application/xml"
 						class={INPUT}
+						onchange={onCfdiChange}
 					/>
 				{/snippet}
 			</Field>
 
 			<fieldset class="space-y-3">
 				<legend class="text-xs font-medium text-sand-500">Qué llegó</legend>
-				{#each Array(renglones) as _, i (i)}
+				{#each filasEntrada as fila, i (i)}
 					<div class="rounded border border-sand-200 p-3">
 						<Field
 							label="Producto"
@@ -770,6 +802,7 @@
 									{id}
 									name="productoId"
 									class={INPUT}
+									bind:value={fila.productoId}
 								>
 									<option value="">—</option>
 									{#each conStock as p (p.id)}
@@ -785,10 +818,14 @@
 								type="number"
 								step="0.001"
 								min="0"
+								value={fila.cantidad}
+								oninput={(e: Event) => (fila.cantidad = (e.currentTarget as HTMLInputElement).value)}
 							/>
 							<Field
 								label="Costo unitario"
 								name="costoUnitario"
+								value={fila.costoUnitario}
+								oninput={(e: Event) => (fila.costoUnitario = (e.currentTarget as HTMLInputElement).value)}
 							/>
 						</div>
 					</div>
@@ -796,7 +833,7 @@
 				<!-- Progressive enhancement: three rows always render, more only with JS. -->
 				<Button
 					type="button"
-					onclick={() => (renglones += 1)}
+					onclick={() => (filasEntrada = [...filasEntrada, filaVacia()])}
 					variant="ghost"
 					size="sm"
 				>

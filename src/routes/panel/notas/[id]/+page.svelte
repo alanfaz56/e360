@@ -19,6 +19,8 @@
 	import Send from "@lucide/svelte/icons/send";
 	import ThumbsUp from "@lucide/svelte/icons/thumbs-up";
 	import ThumbsDown from "@lucide/svelte/icons/thumbs-down";
+	import Sparkles from "@lucide/svelte/icons/sparkles";
+	import { CLAVES_PROD_SERV, CLAVES_UNIDAD } from "$lib/sat-catalogos";
 	import Adjuntos from "$lib/components/Adjuntos.svelte";
 	import AdjuntarArchivos from "$lib/components/AdjuntarArchivos.svelte";
 	import Badge from "$lib/components/Badge.svelte";
@@ -749,6 +751,19 @@
 							Nueva cotización
 						</Button>
 					{/if}
+					{#if data.puede.comprarCfdi && n.estado !== "cancelada"}
+						<Button
+							href={searchHref(page.url, { drawer: "comprarCfdi" })}
+							variant="outline"
+							size="sm"
+						>
+							<FilePlus
+								size={16}
+								aria-hidden="true"
+							/>
+							Importar CFDI a cotización
+						</Button>
+					{/if}
 				</div>
 			</div>
 
@@ -1424,7 +1439,39 @@
 			Cancelar nota
 		</Button>
 	{/if}
+	{#if data.puede.reporteIA}
+		<Button
+			href={searchHref(page.url, { drawer: "reporteIA" })}
+			variant="outline"
+			size="sm"
+		>
+			<Sparkles
+				size={16}
+				aria-hidden="true"
+			/>
+			Reporte con IA
+		</Button>
+	{/if}
 </div>
+
+{#if data.reportesIA.length > 0}
+	<div class="mt-4 rounded-lg border border-sand-200 bg-white p-4">
+		<p class="text-sm font-medium text-sand-700">Reportes con IA generados</p>
+		<ul class="mt-2 space-y-1 text-sm">
+			{#each data.reportesIA as r (r.id)}
+				<li>
+					<a
+						href="/panel/notas/{n.id}/reporte-ia/{r.id}"
+						class="text-brand-700 hover:underline"
+					>
+						{new Date(r.createdAt).toLocaleString("es-MX", { dateStyle: "medium", timeStyle: "short" })} · {r.estadoLabel}
+					</a>
+					{#if r.generadoPor}<span class="text-sand-500"> · {r.generadoPor}</span>{/if}
+				</li>
+			{/each}
+		</ul>
+	</div>
+{/if}
 
 {#if drawer === "inspeccion" && data.puede.inspeccionar}
 	<Drawer
@@ -1871,6 +1918,309 @@
 			/>
 			<Button full>Cancelar la nota</Button>
 		</form>
+	</Drawer>
+{/if}
+
+{#if drawer === "reporteIA" && data.puede.reporteIA}
+	<Drawer
+		title="Reporte con IA"
+		description="Elige qué incluir. Los comentarios internos nunca se ofrecen aquí — nunca llegan a un reporte."
+		closeHref={closeDrawer}
+	>
+		<form
+			method="POST"
+			action="?/reporteIA"
+			class="space-y-4"
+		>
+			<label class="flex items-center gap-2 text-sm text-sand-700">
+				<input
+					type="checkbox"
+					name="incluirDiagnostico"
+					value="1"
+					checked
+					class="size-4 accent-brand-600"
+				/>
+				Incluir diagnóstico
+			</label>
+
+			{#if data.comentarios.filter((c) => !c.interno).length > 0}
+				<fieldset class="space-y-1">
+					<legend class="mb-1 text-sm font-medium text-sand-700">Comentarios</legend>
+					{#each data.comentarios.filter((c) => !c.interno) as c (c.id)}
+						<label class="flex items-start gap-2 text-sm text-sand-700">
+							<input
+								type="checkbox"
+								name="comentarioIds"
+								value={c.id}
+								class="mt-0.5 size-4 accent-brand-600"
+							/>
+							<span class="line-clamp-2">{c.texto}</span>
+						</label>
+					{/each}
+				</fieldset>
+			{/if}
+
+			{#if data.evidencias.filter((e) => e.tipo === "foto").length > 0}
+				<fieldset class="space-y-1">
+					<legend class="mb-1 text-sm font-medium text-sand-700">Fotografías</legend>
+					{#each data.evidencias.filter((e) => e.tipo === "foto") as e (e.id)}
+						<label class="flex items-center gap-2 text-sm text-sand-700">
+							<input
+								type="checkbox"
+								name="evidenciaIds"
+								value={e.id}
+								class="size-4 accent-brand-600"
+							/>
+							{e.nombre}
+						</label>
+					{/each}
+				</fieldset>
+			{/if}
+
+			{#if data.cotizaciones.length > 0}
+				<fieldset class="space-y-1">
+					<legend class="mb-1 text-sm font-medium text-sand-700">Cotizaciones</legend>
+					{#each data.cotizaciones as c (c.id)}
+						<label class="flex items-center gap-2 text-sm text-sand-700">
+							<input
+								type="checkbox"
+								name="cotizacionIds"
+								value={c.id}
+								class="size-4 accent-brand-600"
+							/>
+							Cotización #{c.folio} — {formatoPesos(Number(c.total))}
+						</label>
+					{/each}
+				</fieldset>
+			{/if}
+
+			<Button full>
+				<Sparkles
+					size={16}
+					aria-hidden="true"
+				/>
+				Generar reporte
+			</Button>
+		</form>
+	</Drawer>
+{/if}
+
+{#if drawer === "comprarCfdi" && data.puede.comprarCfdi}
+	<Drawer
+		title="Importar CFDI a cotización"
+		description={form?.previewCfdi
+			? "Elige qué renglones entran a la cotización y cuáles también surten inventario."
+			: "Sube la factura de un proveedor y arma la cotización sin retipear renglones."}
+		closeHref={closeDrawer}
+	>
+		{#if form?.recibidoCfdi}
+			<p class="rounded border border-ok/30 bg-ok/10 px-3 py-2 text-sm text-sand-800">Compra registrada y agregada a la cotización.</p>
+		{:else if form?.previewCfdi}
+			<form
+				method="POST"
+				action="?drawer=comprarCfdi&/confirmarCfdi"
+				class="space-y-4"
+			>
+				<textarea
+					name="xml"
+					class="hidden">{form.xml}</textarea
+				>
+				{#if form.emisor}
+					<p class="text-sm text-sand-600">Proveedor: <strong class="text-sand-950">{form.emisor}</strong></p>
+				{/if}
+
+				<div class="space-y-3">
+					{#each form.filas as fila, i (i)}
+						<div class="rounded-lg border border-sand-200 bg-white p-3">
+							<div class="flex items-start justify-between gap-3">
+								<p class="text-sm font-medium text-sand-950">{fila.descripcion || `Renglón ${i + 1}`}</p>
+								<label class="flex shrink-0 items-center gap-2 text-xs text-sand-700">
+									<input
+										type="checkbox"
+										name="incluir_{i}"
+										value="1"
+										checked
+										class="size-4 accent-brand-600"
+									/>
+									Incluir
+								</label>
+							</div>
+							<p class="mt-0.5 text-xs text-sand-500">
+								{fila.claveProdServ || "—"} · {fila.claveUnidad} · {fila.unidad}
+								{#if fila.noIdentificacion}· {fila.noIdentificacion}{/if}
+							</p>
+
+							<div class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
+								<Field
+									label="Cantidad"
+									name="cantidad"
+									type="number"
+									step="0.001"
+									min="0"
+									value={fila.cantidad}
+									required
+								/>
+								<Field
+									label="Costo (CFDI)"
+									name="costoUnitario"
+									value={fila.costoReferencia}
+									hint="Lo que pagamos."
+								/>
+								<Field
+									label="Precio al cliente"
+									name="precioVenta"
+									value={fila.precioVenta}
+									required
+								/>
+							</div>
+
+							<Field
+								label="Nombre para el cliente"
+								name="nombreCliente"
+								value={fila.nombreCliente}
+								hint="Lo que ve el cliente en la cotización. Edítalo libremente."
+							/>
+
+							<div class="mt-2 flex flex-wrap gap-4">
+								<label class="flex items-center gap-2 text-xs text-sand-700">
+									<input
+										type="checkbox"
+										name="agregarInventario_{i}"
+										value="1"
+										checked={fila.matchId !== ""}
+										class="size-4 accent-brand-600"
+									/>
+									También agregar a inventario
+								</label>
+								<label class="flex items-center gap-2 text-xs text-sand-700">
+									<input
+										type="checkbox"
+										name="paquete_{i}"
+										value="1"
+										class="size-4 accent-brand-600"
+									/>
+									Agrupar en un paquete (una sola línea combinada)
+								</label>
+							</div>
+
+							<Field
+								label="Producto (si se agrega a inventario)"
+								name="productoId"
+							>
+								{#snippet children(id)}
+									<select
+										{id}
+										name="productoId"
+										class="mt-1 w-full rounded-md border border-sand-300 bg-white px-3 py-2 text-sm focus:border-brand-600 focus:outline-none"
+									>
+										<option value="">— Crear producto nuevo —</option>
+										{#each form.catalogo as p (p.id)}
+											<option
+												value={p.id}
+												selected={fila.matchId === p.id}>{p.nombre}{p.sku ? ` · ${p.sku}` : ""}</option
+											>
+										{/each}
+									</select>
+								{/snippet}
+							</Field>
+
+							<div class="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+								<Field
+									label="ClaveProdServ"
+									name="claveProdServ"
+								>
+									{#snippet children(id)}
+										<input
+											{id}
+											name="claveProdServ"
+											list="claves-prodserv-cfdi"
+											pattern="[0-9]{'{'}8{'}'}"
+											class="mt-1 w-full rounded-md border border-sand-300 bg-white px-3 py-2 text-sm focus:border-brand-600 focus:outline-none"
+											value={fila.claveProdServ}
+										/>
+									{/snippet}
+								</Field>
+								<Field
+									label="ClaveUnidad"
+									name="claveUnidad"
+								>
+									{#snippet children(id)}
+										<select
+											{id}
+											name="claveUnidad"
+											class="mt-1 w-full rounded-md border border-sand-300 bg-white px-3 py-2 text-sm focus:border-brand-600 focus:outline-none"
+										>
+											{#each CLAVES_UNIDAD as u (u.clave)}
+												<option
+													value={u.clave}
+													selected={fila.claveUnidad === u.clave}
+												>
+													{u.clave} · {u.descripcion}
+												</option>
+											{/each}
+										</select>
+									{/snippet}
+								</Field>
+							</div>
+							<input
+								type="hidden"
+								name="unidad"
+								value={fila.unidad || "Pieza"}
+							/>
+						</div>
+					{/each}
+				</div>
+
+				<datalist id="claves-prodserv-cfdi">
+					{#each CLAVES_PROD_SERV as c (c.clave)}
+						<option value={c.clave}>{c.descripcion}</option>
+					{/each}
+				</datalist>
+
+				<div class="rounded-lg border border-dashed border-sand-300 p-3">
+					<p class="text-xs font-medium text-sand-500">
+						Si agrupaste renglones arriba, dales una sola línea combinada aquí (el costo de esos renglones se suma solo):
+					</p>
+					<div class="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+						<Field
+							label="Nombre del paquete"
+							name="paqueteNombre"
+						/>
+						<Field
+							label="Precio del paquete"
+							name="paquetePrecio"
+						/>
+					</div>
+				</div>
+
+				<Button full>Agregar a la cotización</Button>
+			</form>
+		{:else}
+			<form
+				method="POST"
+				action="?drawer=comprarCfdi&/previsualizarCfdi"
+				enctype="multipart/form-data"
+				class="space-y-4"
+			>
+				<Field
+					label="CFDI del proveedor (XML)"
+					name="cfdi"
+					required
+				>
+					{#snippet children(id)}
+						<input
+							{id}
+							type="file"
+							name="cfdi"
+							accept=".xml,text/xml,application/xml"
+							required
+							class="mt-1 w-full rounded-md border border-sand-300 bg-white px-3 py-2 text-sm focus:border-brand-600 focus:outline-none"
+						/>
+					{/snippet}
+				</Field>
+				<Button full>Revisar renglones</Button>
+			</form>
+		{/if}
 	</Drawer>
 {/if}
 

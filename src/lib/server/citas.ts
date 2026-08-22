@@ -516,19 +516,18 @@ const finPorDefecto = (inicio: Date) => new Date(inicio.getTime() + DURACION_MIN
  * forced here rather than trusted: a public submission can never arrive already confirmed, never
  * name a cliente/unidad/assignee, never carry internal notes, and never grant itself an hour.
  */
-export async function solicitarCita(input: {
-	body: Record<string, unknown>;
-	turnstileToken: unknown;
-	ip?: string | null;
-}) {
-	const verificacion = await verifyTurnstile(input.turnstileToken, input.ip);
-	if (!verificacion.ok) throw new ClienteError(verificacion.status, verificacion.message);
+/**
+ * The shared core of every unauthenticated booking, whatever gate stands in front of it
+ * (Turnstile for the web form, a verified chat webhook for `solicitarCitaPorCanal`). Forces the
+ * same invariants either way: never confirmed, never linked to a cliente/unidad/assignee, never
+ * carries an hour or internal notes.
+ */
+async function crearCitaPublica(body: Record<string, unknown>, origen: string) {
+	const contacto = leerDatosContacto(body);
+	const { tipo, direccionRecoleccion } = leerTipo(body);
+	const fecha = leerFecha(body.fecha, { futuro: true });
 
-	const contacto = leerDatosContacto(input.body);
-	const { tipo, direccionRecoleccion } = leerTipo(input.body);
-	const fecha = leerFecha(input.body.fecha, { futuro: true });
-
-	const franja = input.body.franja;
+	const franja = body.franja;
 	if (!isFranja(franja)) throw new ClienteError(400, "Elige si prefieres mañana o tarde");
 
 	const cita = await prisma.cita.create({
@@ -539,8 +538,7 @@ export async function solicitarCita(input: {
 			direccionRecoleccion,
 			fecha: enZona(fecha),
 			franja,
-			// Forced, not read from the body — the whole point of this function.
-			origen: "publico",
+			origen,
 			estado: "solicitada",
 			inicio: null,
 			fin: null,
@@ -557,8 +555,8 @@ export async function solicitarCita(input: {
 		actor: ACTOR_PUBLICO,
 		entityId: cita.id,
 		entityLabel: citaLabel(cita),
-		summary: `Cita solicitada por ${cita.nombre} para el ${fecha} (${FRANJAS[franja].label})`,
-		after: { fecha, franja, tipo, telefono: cita.telefono },
+		summary: `Cita solicitada por ${cita.nombre} para el ${fecha} (${FRANJAS[franja].label}) vía ${origen}`,
+		after: { fecha, franja, tipo, telefono: cita.telefono, origen },
 	});
 
 	// A request nobody sees is a lost sale — this is the same failure `citas vencidas` reports
@@ -574,6 +572,26 @@ export async function solicitarCita(input: {
 	});
 
 	return cita;
+}
+
+export async function solicitarCita(input: {
+	body: Record<string, unknown>;
+	turnstileToken: unknown;
+	ip?: string | null;
+}) {
+	const verificacion = await verifyTurnstile(input.turnstileToken, input.ip);
+	if (!verificacion.ok) throw new ClienteError(verificacion.status, verificacion.message);
+	return crearCitaPublica(input.body, "publico");
+}
+
+/**
+ * Same as `solicitarCita`, gated by a WhatsApp/Telegram webhook instead of Turnstile — the
+ * provider's signed request IS the "is this really them" check, done by the webhook route before
+ * this is ever called. `origen` records which channel, same free-text column `"publico"`/`"panel"`
+ * already use.
+ */
+export async function solicitarCitaPorCanal(body: Record<string, unknown>, canal: "whatsapp" | "telegram") {
+	return crearCitaPublica(body, canal);
 }
 
 /** The counter path. Staff book an exact hour, so `inicio` is required. */

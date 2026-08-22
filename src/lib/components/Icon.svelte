@@ -19,6 +19,8 @@
 	import Bell from "@lucide/svelte/icons/bell";
 	import Landmark from "@lucide/svelte/icons/landmark";
 	import ShieldCheck from "@lucide/svelte/icons/shield-check";
+	import Sparkles from "@lucide/svelte/icons/sparkles";
+	import Truck from "@lucide/svelte/icons/truck";
 	import type { NavItem } from "$lib/nav";
 
 	const ICONS = {
@@ -38,6 +40,8 @@
 		bell: Bell,
 		landmark: Landmark,
 		"shield-check": ShieldCheck,
+		sparkles: Sparkles,
+		truck: Truck,
 	};
 
 	let { name, ...rest }: { name: NavItem["icon"]; [key: string]: unknown } = $props();

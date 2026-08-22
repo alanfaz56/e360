@@ -3,17 +3,20 @@ import { auth } from "$lib/auth";
 import { ROLE_LABEL } from "$lib/roles";
 import { requireUser } from "$lib/server/guard";
 import { MIN_PASSWORD_LENGTH } from "$lib/server/invitations";
+import { desvincularCanal, generarVinculacion, misCanales } from "$lib/server/canales/identidad";
+import { ClienteError } from "$lib/server/clientes";
 
 /**
- * Self-service password change. No permission key — same reasoning as your own notification
- * inbox in roles.ts: changing YOUR OWN password is inherent to having an account, not a
- * capability the registry grants or withholds.
+ * Self-service password change (and, below, self-service channel linking). No permission key —
+ * same reasoning as your own notification inbox in roles.ts: managing YOUR OWN account is
+ * inherent to having one, not a capability the registry grants or withholds.
  */
 export const load: ServerLoad = async ({ locals }) => {
 	const actor = requireUser(locals);
 	return {
 		actor: { name: actor.name, email: actor.email, roleLabel: ROLE_LABEL[actor.role] },
 		minPasswordLength: MIN_PASSWORD_LENGTH,
+		canales: await misCanales(actor),
 	};
 };
 
@@ -48,5 +51,22 @@ export const actions: Actions = {
 		}
 
 		return { success: true };
+	},
+
+	vincularTelegram: async ({ locals }) => {
+		const actor = requireUser(locals);
+		const { codigo, expiraMinutos } = await generarVinculacion(actor, "telegram");
+		return { canal: "telegram" as const, codigo, expiraMinutos };
+	},
+
+	desvincularTelegram: async ({ locals }) => {
+		const actor = requireUser(locals);
+		try {
+			await desvincularCanal(actor, "telegram");
+			return { canalDesvinculado: "telegram" as const };
+		} catch (err) {
+			if (err instanceof ClienteError) return fail(err.status, { message: err.message });
+			throw err;
+		}
 	},
 };

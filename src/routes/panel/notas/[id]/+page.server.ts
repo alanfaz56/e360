@@ -1,4 +1,10 @@
 import { redirect, type Actions, type ServerLoad } from "@sveltejs/kit";
+
+// The `reporteIA` action calls an external LLM (up to 45s internally, see src/lib/server/ia) —
+// raises this route's ceiling on Vercel so that call isn't cut short. Every other action here
+// returns in milliseconds regardless; this only raises the cap, not a floor.
+export const config = { maxDuration: 60 };
+
 import { hoy } from "$lib/agenda";
 import { conFlash } from "$lib/flash";
 import prisma from "$lib/prisma";
@@ -15,13 +21,16 @@ import {
 	comentarNota,
 	entregarNota,
 	faltantesInventario,
+	generarReporteIA,
 	getNotaDetalle,
+	listReportesIA,
 	guardarLiberacion,
 	inspeccionarNota,
 	recibirDeTaller,
 	transferirNota,
 } from "$lib/server/notas";
 import {
+	agregarConceptosDesdeCompra,
 	avanzarInterno,
 	cambiarEstadoCotizacion,
 	cancelarFactura,
@@ -39,10 +48,21 @@ import {
 	utilidadDeCotizacion,
 	vincularCotizacionInterna,
 } from "$lib/server/comercial";
-import { listSolicitudes, resolverSolicitud } from "$lib/server/inventario";
-import { listProductos } from "$lib/server/productos";
+import { listSolicitudes, registrarCompra, resolverSolicitud } from "$lib/server/inventario";
+import { crearProducto, listProductos } from "$lib/server/productos";
 import { fallo } from "$lib/server/errores";
 import { cancelarEnSat, timbrarFactura } from "$lib/server/timbrado";
+import { leerCfdi } from "$lib/cfdi";
+import { ClienteError } from "$lib/server/clientes";
+
+async function productosEmparejablesCfdi() {
+	const rows = await prisma.producto.findMany({
+		where: { archivedAt: null, controlaInventario: true },
+		select: { id: true, sku: true, nombre: true, precioVenta: true, _count: { select: { componentes: true } } },
+	});
+	// A package never carries its own stock — it cannot be the target of a purchase line.
+	return rows.filter((p) => p._count.componentes === 0);
+}
 
 export const load: ServerLoad = async ({ locals, params, url }) => {
 	const actor = requirePermission(locals, "nota:read");
@@ -109,9 +129,12 @@ export const load: ServerLoad = async ({ locals, params, url }) => {
 	// `saldoCents`/`limiteCents` are internal bigints and must not cross to the browser.
 	const creditoPublico = credito ? (({ saldoCents: _s, limiteCents: _l, ...resto }) => resto)(credito) : null;
 
+	const reportesIA = can(actor.role, "nota:reporte_ia") ? await listReportesIA(actor, nota.id) : [];
+
 	return {
 		...detalle,
 		talleres,
+		reportesIA,
 		// Only contacts who may actually receive the unit; the server re-checks the same rule.
 		entregadores: contactos
 			.filter((c) => c.roles.includes("entregador"))
@@ -183,6 +206,8 @@ export const load: ServerLoad = async ({ locals, params, url }) => {
 			cotizarInterna: can(actor.role, "cotizacion_interna:create"),
 			aprobarInterna: can(actor.role, "cotizacion_interna:authorize"),
 			verUtilidad: can(actor.role, "cotizacion:costo"),
+			reporteIA: can(actor.role, "nota:reporte_ia"),
+			comprarCfdi: can(actor.role, "cotizacion:create") && can(actor.role, "inventario:entrada"),
 		},
 	};
 };
@@ -603,6 +628,214 @@ export const actions: Actions = {
 		try {
 			await cancelarNota({ actor, id: params.id!, motivo: data.get("motivo") });
 			redirect(303, conFlash(`/panel/notas/${params.id}`, "nota.cancelar"));
+		} catch (err) {
+			return fallo(err);
+		}
+	},
+
+	// Same shape as the global /panel/inventario/comprar-cfdi wizard (parse → review → confirm,
+	// XML re-parsed server-side on confirm — never trusted from client-editable fields), but
+	// nota-scoped and cotización-shaped instead of inventory-only. No redirect on either step:
+	// the review table and the result both render inline via `form`, same as `reporteIA`.
+	previsualizarCfdi: async ({ locals, request }) => {
+		const actor = requirePermission(locals, "cotizacion:create");
+		if (!can(actor.role, "inventario:entrada")) throw new ClienteError(403, "Sin permiso: inventario:entrada");
+
+		const data = await request.formData();
+		const archivo = data.get("cfdi");
+		const xml = archivo instanceof File && archivo.size > 0 ? await archivo.text() : null;
+		if (!xml) return fallo(new ClienteError(400, "Sube el XML del CFDI"));
+
+		const cfdi = leerCfdi(xml);
+		if (!cfdi) return fallo(new ClienteError(400, "Ese archivo no parece un CFDI."));
+		if (cfdi.conceptos.length === 0) return fallo(new ClienteError(400, "El CFDI no trae conceptos que revisar."));
+
+		const disponibles = await productosEmparejablesCfdi();
+		const porSku = new Map(disponibles.filter((p) => p.sku).map((p) => [p.sku!.toLowerCase(), p]));
+		const porNombre = new Map(disponibles.map((p) => [p.nombre.toLowerCase(), p]));
+
+		const filas = cfdi.conceptos.map((c) => {
+			const match =
+				(c.noIdentificacion && porSku.get(c.noIdentificacion.toLowerCase())) ||
+				(c.descripcion && porNombre.get(c.descripcion.toLowerCase())) ||
+				null;
+			const costoReferencia = c.valorUnitario !== null ? c.valorUnitario.toFixed(4) : "";
+			return {
+				claveProdServ: c.claveProdServ ?? "",
+				noIdentificacion: c.noIdentificacion ?? "",
+				cantidad: c.cantidad !== null ? c.cantidad.toFixed(3) : "",
+				claveUnidad: c.claveUnidad ?? "H87",
+				unidad: c.unidad ?? "",
+				// The name staff sees on THIS row and the name the customer will read start the
+				// same, but travel separately from here: `nombreCliente` is what gets typed over,
+				// `descripcion` is only ever shown as read-only context.
+				descripcion: c.descripcion ?? "",
+				nombreCliente: match?.nombre ?? c.descripcion ?? "",
+				costoReferencia,
+				precioVenta: match ? Number(match.precioVenta).toFixed(2) : costoReferencia,
+				matchId: match?.id ?? "",
+			};
+		});
+
+		return {
+			previewCfdi: true as const,
+			xml,
+			emisor: cfdi.emisorNombre,
+			filas,
+			catalogo: disponibles.map((p) => ({ id: p.id, nombre: p.nombre, sku: p.sku })),
+		};
+	},
+
+	confirmarCfdi: async ({ locals, params, request }) => {
+		const actor = requirePermission(locals, "cotizacion:create");
+		if (!can(actor.role, "inventario:entrada")) throw new ClienteError(403, "Sin permiso: inventario:entrada");
+
+		const notaId = params.id!;
+		const data = await request.formData();
+		const xml = String(data.get("xml") ?? "");
+		const cfdi = leerCfdi(xml);
+		if (!cfdi) return fallo(new ClienteError(400, "El XML de la revisión ya no es válido. Sube el CFDI de nuevo."));
+
+		const productoId = data.getAll("productoId").map(String);
+		const cantidad = data.getAll("cantidad").map(String);
+		const costoUnitario = data.getAll("costoUnitario").map(String);
+		const precioVenta = data.getAll("precioVenta").map(String);
+		const nombreCliente = data.getAll("nombreCliente").map(String);
+		const claveProdServ = data.getAll("claveProdServ").map(String);
+		const claveUnidad = data.getAll("claveUnidad").map(String);
+		const unidad = data.getAll("unidad").map(String);
+
+		const disponibles = new Map((await productosEmparejablesCfdi()).map((p) => [p.id, p]));
+
+		try {
+			const lineasInventario: { productoId: string; cantidad: number; costoUnitario: number }[] = [];
+			const conceptosCotizacion: Record<string, unknown>[] = [];
+
+			// Rows checked "agrupar en un paquete" never become their own line — their cost feeds
+			// the ONE combined line built after the loop. Ad-hoc only: nothing is saved to the
+			// product catalog, this exists for this cotización alone.
+			let costoPaquete = 0;
+			let filasEnPaquete = 0;
+
+			for (let i = 0; i < cantidad.length; i++) {
+				if (data.get(`incluir_${i}`) !== "1") continue;
+				if (!cantidad[i] || !precioVenta[i]) continue;
+
+				let idProducto = productoId[i] || null;
+				const agregarInventario = data.get(`agregarInventario_${i}`) === "1";
+				const enPaquete = data.get(`paquete_${i}`) === "1";
+
+				if (agregarInventario) {
+					if (idProducto) {
+						if (!disponibles.has(idProducto)) {
+							return fallo(
+								new ClienteError(400, `El renglón ${i + 1} apunta a un producto que ya no se puede recibir.`),
+							);
+						}
+					} else {
+						if (!nombreCliente[i]) {
+							return fallo(
+								new ClienteError(
+									400,
+									`El renglón ${i + 1}: dale un nombre para crear el producto, o quita "agregar a inventario".`,
+								),
+							);
+						}
+						const nuevo = await crearProducto({
+							actor,
+							body: {
+								nombre: nombreCliente[i],
+								tipo: "refaccion",
+								claveProdServ: claveProdServ[i],
+								claveUnidad: claveUnidad[i],
+								unidad: unidad[i],
+								precioVenta: precioVenta[i],
+								controlaInventario: true,
+							},
+						});
+						idProducto = nuevo.id;
+					}
+					lineasInventario.push({
+						productoId: idProducto,
+						cantidad: Number(cantidad[i]),
+						costoUnitario: Number(costoUnitario[i] || 0),
+					});
+				}
+
+				if (enPaquete) {
+					costoPaquete += Number(cantidad[i]) * Number(costoUnitario[i] || 0);
+					filasEnPaquete++;
+					continue;
+				}
+
+				conceptosCotizacion.push({
+					tipo: "refaccion",
+					productoId: idProducto,
+					descripcion: idProducto ? "" : nombreCliente[i] || "",
+					cantidad: cantidad[i],
+					precioUnitario: precioVenta[i],
+					costoUnitario: costoUnitario[i] || undefined,
+				});
+			}
+
+			if (filasEnPaquete > 0) {
+				const paqueteNombre = String(data.get("paqueteNombre") ?? "").trim();
+				const paquetePrecio = String(data.get("paquetePrecio") ?? "");
+				if (!paqueteNombre || !paquetePrecio) {
+					return fallo(
+						new ClienteError(400, "Agrupaste renglones en un paquete — dale nombre y precio al paquete."),
+					);
+				}
+				conceptosCotizacion.push({
+					tipo: "refaccion",
+					productoId: null,
+					descripcion: paqueteNombre,
+					cantidad: "1",
+					precioUnitario: paquetePrecio,
+					costoUnitario: costoPaquete > 0 ? costoPaquete.toFixed(4) : undefined,
+				});
+			}
+
+			if (conceptosCotizacion.length === 0) {
+				return fallo(new ClienteError(400, "No quedó ningún renglón seleccionado."));
+			}
+
+			const entrada = await registrarCompra({ actor, cfdiXml: xml, lineas: lineasInventario });
+
+			const existente = await listCotizaciones({ notaId, estado: "borrador", perPage: 1 });
+			if (existente.cotizaciones.length > 0) {
+				await agregarConceptosDesdeCompra({
+					actor,
+					cotizacionId: existente.cotizaciones[0].id,
+					entradaId: entrada.id,
+					conceptos: conceptosCotizacion,
+				});
+			} else {
+				await crearCotizacion({ actor, notaId, body: { conceptos: conceptosCotizacion }, entradaId: entrada.id });
+			}
+		} catch (err) {
+			return fallo(err);
+		}
+
+		return { recibidoCfdi: true as const };
+	},
+
+	reporteIA: async ({ locals, params, request }) => {
+		const actor = requireUser(locals);
+		const data = await request.formData();
+		try {
+			const reporte = await generarReporteIA({
+				actor,
+				id: params.id!,
+				comentarioIds: data.getAll("comentarioIds"),
+				evidenciaIds: data.getAll("evidenciaIds"),
+				cotizacionIds: data.getAll("cotizacionIds"),
+				incluirDiagnostico: data.get("incluirDiagnostico") === "1",
+			});
+			// Its own page, not inline: a saved report needs a stable link to reference or share,
+			// and rendering it on a dedicated page (nothing else on it) is what makes "print just
+			// the report" trivial — there's no sibling content to hide from the print stylesheet.
+			redirect(303, `/panel/notas/${params.id}/reporte-ia/${reporte.id}`);
 		} catch (err) {
 			return fallo(err);
 		}

@@ -12,6 +12,7 @@ import { getProducto } from "./productos";
 import { leerCfdi } from "$lib/cfdi";
 import type { Actor } from "./guard";
 import { alcanceDeTaller } from "./notas";
+import { resolverProveedorPorCfdi } from "./proveedores";
 
 /**
  * FIFO inventory.
@@ -300,6 +301,96 @@ export async function registrarEntrada(input: { actor: Actor; body: Record<strin
 				cfdiUuid: cfdi?.uuid ?? null,
 				cfdiTotal: cfdi?.total ?? null,
 				proveedor: creada.proveedor,
+			},
+		});
+
+		return creada;
+	});
+
+	return entrada;
+}
+
+/**
+ * A purchase that may or may not touch stock — the CFDI→cotización flow (nota-scoped): some
+ * lines get checked "agregar a inventario" and open a layer, others exist only as a cotización
+ * reference. Unlike `registrarEntrada` (a goods receipt, which makes no sense with zero goods),
+ * `lineas` may be empty here — the entrada row still gets written as the purchase header so
+ * `listComprasDeProveedor` has something to show even when nothing was stocked.
+ */
+export async function registrarCompra(input: {
+	actor: Actor;
+	cfdiXml: string;
+	lineas: { productoId: string; cantidad: number; costoUnitario: number }[];
+}) {
+	if (!can(input.actor.role, "inventario:entrada")) throw new ClienteError(403, "Sin permiso: inventario:entrada");
+
+	const cfdi = leerCfdi(input.cfdiXml);
+	if (!cfdi) throw new ClienteError(400, "Ese archivo no parece un CFDI.");
+	if (!cfdi.uuid) throw new ClienteError(400, "El CFDI no trae folio fiscal (UUID).");
+
+	const repetido = await prisma.inventario_entrada.findUnique({
+		where: { cfdiUuid: cfdi.uuid },
+		select: { folio: true },
+	});
+	if (repetido) {
+		throw new ClienteError(409, `Ese CFDI ya se recibió en la entrada #${repetido.folio}. No se duplica.`);
+	}
+
+	if (input.lineas.length > 0) {
+		const productos = await prisma.producto.findMany({
+			where: { id: { in: [...new Set(input.lineas.map((l) => l.productoId))] } },
+			select: { id: true, nombre: true, controlaInventario: true, archivedAt: true },
+		});
+		const porId = new Map(productos.map((p) => [p.id, p]));
+		for (const l of input.lineas) {
+			const p = porId.get(l.productoId);
+			if (!p) throw new ClienteError(404, "Uno de los productos no existe");
+			if (p.archivedAt) throw new ClienteError(409, `${p.nombre} está archivado.`);
+			if (!p.controlaInventario) throw new ClienteError(400, `${p.nombre} no maneja inventario.`);
+		}
+	}
+
+	const proveedorId = cfdi.emisorRfc
+		? await resolverProveedorPorCfdi(cfdi.emisorRfc, cfdi.emisorNombre ?? cfdi.emisorRfc)
+		: null;
+
+	const entrada = await prisma.$transaction(async (tx) => {
+		const creada = await tx.inventario_entrada.create({
+			data: {
+				id: randomUUID(),
+				proveedor: cfdi.emisorNombre,
+				proveedorId,
+				cfdiUuid: cfdi.uuid,
+				cfdiEmisorRfc: cfdi.emisorRfc,
+				cfdiEmisorNombre: cfdi.emisorNombre,
+				cfdiTotal: cfdi.total !== null ? decDinero(cfdi.total) : null,
+				cfdiFecha: cfdi.fecha,
+				cfdiXml: input.cfdiXml,
+				registradaPorId: input.actor.id,
+			},
+		});
+
+		for (const l of input.lineas) {
+			await abrirCapa(tx, {
+				productoId: l.productoId,
+				cantidad: l.cantidad,
+				costoUnitario: l.costoUnitario,
+				entradaId: creada.id,
+				actor: input.actor,
+			});
+		}
+
+		await recordAudit(tx, {
+			action: "proveedor.compra",
+			actor: input.actor,
+			entityId: creada.id,
+			entityLabel: `Compra #${creada.folio}${creada.proveedor ? ` · ${creada.proveedor}` : ""}`,
+			summary: `Compra #${creada.folio}: ${input.lineas.length} renglón(es) a inventario, resto solo referencia`,
+			after: {
+				renglones: input.lineas.length,
+				cfdiUuid: cfdi.uuid,
+				cfdiTotal: cfdi.total,
+				proveedorId,
 			},
 		});
 

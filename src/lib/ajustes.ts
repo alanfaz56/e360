@@ -33,6 +33,16 @@ export const GRUPOS = {
 		descripcion:
 			"Cotizaciones, facturas, avisos de unidad, invitaciones y recuperación de contraseña. Sin estas llaves, esos correos simplemente no salen — el resto del taller sigue funcionando.",
 	},
+	canales: {
+		label: "WhatsApp y Telegram",
+		descripcion:
+			"Citas y avisos por chat. Telegram no necesita cuenta de desarrollador — se configura hablando con @BotFather dentro de Telegram. WhatsApp usa Meta Cloud API y sí requiere una cuenta de Meta Business/Developer. Sin estas llaves, los webhooks responden 501/503 en vez de fallar callados — igual que factura.com.",
+	},
+	ia: {
+		label: "Inteligencia artificial",
+		descripcion:
+			"Llave para generar el reporte con IA de una nota de servicio. Puedes cargar una o varias — el proveedor activo decide cuál se usa. Solo se cobra tokens de uso, no hay créditos ni facturación dentro de la app.",
+	},
 } as const satisfies Record<string, { label: string; descripcion: string }>;
 
 export type GrupoAjuste = keyof typeof GRUPOS;
@@ -90,6 +100,84 @@ export const AJUSTES = {
 		tipo: "texto",
 		grupo: "correo",
 		ayuda: 'Ej. "Estación 360 <no-reply@tudominio.com>" — el dominio debe estar verificado en Resend.',
+	},
+	"canales.telegram_bot_token": {
+		label: "Telegram: Bot Token",
+		descripcion: "El token que identifica al bot ante la API de Telegram.",
+		tipo: "secreto",
+		grupo: "canales",
+		ayuda:
+			'1) En Telegram, busca "@BotFather" y mándale /newbot. 2) Dale un nombre y un usuario único terminado en "bot" (ej. Estacion360Bot). 3) BotFather responde con el token, formato "123456:ABC-...". Pégalo aquí — no se vuelve a mostrar después de guardarlo.',
+	},
+	"canales.telegram_webhook_secret": {
+		label: "Telegram: Webhook Secret",
+		descripcion: "Cadena que Telegram regresa en cada actualización para probar que la llamada es suya.",
+		tipo: "secreto",
+		grupo: "canales",
+		ayuda:
+			"Invéntala tú (cualquier cadena larga y aleatoria sirve, ej. genera una con un gestor de contraseñas). Se usa al registrar el webhook con setWebhook (secret_token) y el servidor la compara contra el header X-Telegram-Bot-Api-Secret-Token en cada mensaje entrante.",
+	},
+	"canales.whatsapp_token": {
+		label: "WhatsApp: Access Token",
+		descripcion: "El token de acceso permanente de la app de WhatsApp Business en Meta.",
+		tipo: "secreto",
+		grupo: "canales",
+		ayuda:
+			"Meta for Developers → tu app → WhatsApp → API Setup. El token temporal de prueba expira en 24h; para producción genera uno permanente vinculado a un usuario de sistema.",
+	},
+	"canales.whatsapp_phone_id": {
+		label: "WhatsApp: Phone Number ID",
+		descripcion: "El id numérico del número de WhatsApp Business registrado (no el número telefónico).",
+		tipo: "texto",
+		grupo: "canales",
+		ayuda: "Meta for Developers → tu app → WhatsApp → API Setup, junto al número de prueba o el número ya verificado.",
+	},
+	"canales.whatsapp_app_secret": {
+		label: "WhatsApp: App Secret",
+		descripcion: "Usado para verificar la firma HMAC (X-Hub-Signature-256) de cada webhook entrante.",
+		tipo: "secreto",
+		grupo: "canales",
+		ayuda: "Meta for Developers → tu app → Configuración básica → Clave secreta de la app.",
+	},
+	"canales.whatsapp_verify_token": {
+		label: "WhatsApp: Verify Token",
+		descripcion: "Cadena que Meta pide de vuelta (hub.challenge) al registrar la URL del webhook.",
+		tipo: "secreto",
+		grupo: "canales",
+		ayuda:
+			"Invéntala tú, cualquier cadena sirve. Se captura al configurar el webhook en Meta for Developers → WhatsApp → Configuration, y debe coincidir exactamente con lo guardado aquí.",
+	},
+	"ia.proveedor": {
+		label: "Proveedor activo",
+		descripcion: "Cuál de las llaves de abajo se usa para generar el reporte.",
+		tipo: "opcion",
+		grupo: "ia",
+		opciones: [
+			{ valor: "anthropic", label: "Claude (Anthropic)" },
+			{ valor: "openai", label: "OpenAI" },
+			{ valor: "gemini", label: "Gemini (Google)" },
+		],
+	},
+	"ia.anthropic_apiKey": {
+		label: "Claude: API Key",
+		descripcion: "La API key de la cuenta de Anthropic.",
+		tipo: "secreto",
+		grupo: "ia",
+		ayuda: "console.anthropic.com → API Keys.",
+	},
+	"ia.openai_apiKey": {
+		label: "OpenAI: API Key",
+		descripcion: "La API key de la cuenta de OpenAI.",
+		tipo: "secreto",
+		grupo: "ia",
+		ayuda: "platform.openai.com → API keys.",
+	},
+	"ia.gemini_apiKey": {
+		label: "Gemini: API Key",
+		descripcion: "La API key de la cuenta de Google AI.",
+		tipo: "secreto",
+		grupo: "ia",
+		ayuda: "aistudio.google.com → Get API key.",
 	},
 } as const satisfies Record<string, DefinicionAjuste>;
 

@@ -10,11 +10,23 @@
 
 <main class="flex min-h-svh items-center justify-center bg-sand-100 px-4 py-12">
 	<div class="w-full max-w-sm">
-		<a href="/" class="font-display text-2xl text-sand-950">
-			ESTACIÓN <span class="text-brand-600">360</span>
+		<a
+			href="/"
+			class="font-display text-2xl text-sand-950"
+		>
+			<div class="w-full">
+				<img
+					src="/logo_simple_red.png"
+					alt="Estacion 360 Logo Simple"
+					class="w-14 mx-auto"
+				/>
+			</div>
 		</a>
 
-		<form method="POST" class="mt-6 space-y-4 rounded-lg border border-sand-200 bg-white p-6">
+		<form
+			method="POST"
+			class="mt-6 space-y-4 rounded-lg border border-sand-200 bg-white p-6"
+		>
 			<div>
 				<h1 class="font-display text-2xl text-sand-950">Activa tu cuenta</h1>
 				<dl class="mt-3 space-y-1 text-sm text-sand-600">
@@ -30,12 +42,22 @@
 			</div>
 
 			{#if form?.message}
-				<p role="alert" class="rounded border border-brand-200 bg-brand-50 px-3 py-2 text-sm text-brand-900">
+				<p
+					role="alert"
+					class="rounded border border-brand-200 bg-brand-50 px-3 py-2 text-sm text-brand-900"
+				>
 					{form.message}
 				</p>
 			{/if}
 
-			<Field label="Tu nombre" name="name" required minlength={2} autocomplete="name" value={form?.name ?? ""} />
+			<Field
+				label="Tu nombre"
+				name="name"
+				required
+				minlength={2}
+				autocomplete="name"
+				value={form?.name ?? ""}
+			/>
 			<Field
 				label="Contraseña"
 				name="password"

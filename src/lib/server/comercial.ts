@@ -236,6 +236,21 @@ export const rangoPagado = (desde: string | null | undefined, hasta: string | nu
 };
 
 /** Line items from the request, validated. Amounts are recomputed, never taken on trust. */
+/**
+ * `costoUnitario` rides along on the raw concepto object but `leerConceptos` never reads it —
+ * a manual quote line has no cost, so the parser stays agnostic of it. Extracted separately,
+ * same array order (`leerConceptos` preserves order 1:1 via `orden: i`), so callers can zip it
+ * back onto the parsed line by index.
+ */
+function extraerCostos(value: unknown): (number | null)[] {
+	if (!Array.isArray(value)) return [];
+	return value.map((raw) => {
+		const c = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>).costoUnitario : undefined;
+		const n = Number(c);
+		return Number.isFinite(n) && n > 0 ? n : null;
+	});
+}
+
 function leerConceptos(value: unknown) {
 	if (!Array.isArray(value) || value.length === 0) {
 		throw new ClienteError(400, "Agrega al menos un concepto");
@@ -336,7 +351,13 @@ async function exigirSinTaller(conceptos: { descripcion: string }[]) {
 const conImportes = <T extends { cantidad: number; precioUnitario: bigint }>(conceptos: T[]) =>
 	conceptos.map((c) => ({ ...c, importe: importeConcepto(c.cantidad, c.precioUnitario) }));
 
-export async function crearCotizacion(input: { actor: Actor; notaId: string; body: Record<string, unknown> }) {
+export async function crearCotizacion(input: {
+	actor: Actor;
+	notaId: string;
+	body: Record<string, unknown>;
+	/** Set only when this cotización is being seeded from an imported purchase. */
+	entradaId?: string;
+}) {
 	if (!can(input.actor.role, "cotizacion:create")) {
 		throw new ClienteError(403, "Sin permiso: cotizacion:create");
 	}
@@ -351,6 +372,7 @@ export async function crearCotizacion(input: { actor: Actor; notaId: string; bod
 	const conceptos = conImportes(await resolverProductos(leerConceptos(input.body.conceptos)));
 	await exigirSinTaller(conceptos);
 	const { subtotal, iva, total } = totales(conceptos);
+	const costos = extraerCostos(input.body.conceptos);
 
 	const cotizacion = await prisma.$transaction(async (tx) => {
 		const creada = await tx.cotizacion.create({
@@ -365,19 +387,21 @@ export async function crearCotizacion(input: { actor: Actor; notaId: string; bod
 				notas: trim(input.body.notas),
 				creadaPorId: input.actor.id,
 				conceptos: {
-					create: conceptos.map((c) => ({
+					create: conceptos.map((c, i) => ({
 						id: randomUUID(),
 						tipo: c.tipo,
 						descripcion: c.descripcion,
 						cantidad: new Prisma.Decimal(c.cantidad),
 						precioUnitario: dec(c.precioUnitario),
 						importe: dec(c.importe),
+						costoUnitario: costos[i] != null ? new Prisma.Decimal(costos[i]!.toFixed(4)) : null,
 						orden: c.orden,
 						productoId: c.productoId,
 						// Copied, never read through the relation: re-classifying the product later
 						// must not rewrite what was already quoted.
 						claveProdServ: c.claveProdServ,
 						claveUnidad: c.claveUnidad,
+						entradaId: input.entradaId ?? null,
 					})),
 				},
 			},
@@ -455,6 +479,84 @@ export async function actualizarCotizacion(input: { actor: Actor; id: string; bo
 			summary: `Cotización #${actualizada.folio} actualizada a ${pesos(total)}`,
 			before: { total: current.total.toString() },
 			after: { total: pesos(total), conceptos: conceptos.length },
+		});
+
+		return actualizada;
+	});
+
+	return cotizacion;
+}
+
+/**
+ * Append lines from an imported purchase (`registrarCompra`) onto an EXISTING cotización — never
+ * replaces what's already there, unlike `actualizarCotizacion`'s full-rewrite. This is what lets
+ * a job's quote grow incrementally as parts are bought over several trips to a supplier, each
+ * batch of lines still traceable back to the `inventario_entrada` it came from via `entradaId`.
+ */
+export async function agregarConceptosDesdeCompra(input: {
+	actor: Actor;
+	cotizacionId: string;
+	entradaId: string;
+	conceptos: unknown;
+}) {
+	if (!can(input.actor.role, "cotizacion:create")) {
+		throw new ClienteError(403, "Sin permiso: cotizacion:create");
+	}
+
+	const current = await getCotizacion(input.cotizacionId);
+	if (current.estado !== "borrador") {
+		throw new ClienteError(
+			409,
+			`Una cotización ${cotizacionEstadoLabel(current.estado).toLowerCase()} ya no se edita. Haz una nueva.`,
+		);
+	}
+
+	const nuevos = conImportes(await resolverProductos(leerConceptos(input.conceptos)));
+	await exigirSinTaller(nuevos);
+	const costos = extraerCostos(input.conceptos);
+
+	const existentes = current.conceptos.map((c) => ({
+		cantidad: Number(c.cantidad),
+		precioUnitario: aCentavos(c.precioUnitario),
+		importe: aCentavos(c.importe),
+	}));
+	const { subtotal, iva, total } = totales([...existentes, ...nuevos]);
+
+	const cotizacion = await prisma.$transaction(async (tx) => {
+		const actualizada = await tx.cotizacion.update({
+			where: { id: current.id },
+			data: {
+				subtotal: dec(subtotal),
+				iva: dec(iva),
+				total: dec(total),
+				conceptos: {
+					create: nuevos.map((c, i) => ({
+						id: randomUUID(),
+						tipo: c.tipo,
+						descripcion: c.descripcion,
+						cantidad: new Prisma.Decimal(c.cantidad),
+						precioUnitario: dec(c.precioUnitario),
+						importe: dec(c.importe),
+						costoUnitario: costos[i] != null ? new Prisma.Decimal(costos[i]!.toFixed(4)) : null,
+						orden: current.conceptos.length + i,
+						productoId: c.productoId,
+						claveProdServ: c.claveProdServ,
+						claveUnidad: c.claveUnidad,
+						entradaId: input.entradaId,
+					})),
+				},
+			},
+			include: COTIZACION_INCLUDE,
+		});
+
+		await recordAudit(tx, {
+			action: "cotizacion.update",
+			actor: input.actor,
+			entityId: actualizada.id,
+			entityLabel: `Cotización #${actualizada.folio}`,
+			summary: `Cotización #${actualizada.folio}: ${nuevos.length} renglón(es) agregados desde compra a proveedor`,
+			before: { total: current.total.toString() },
+			after: { total: pesos(total), conceptos: nuevos.length },
 		});
 
 		return actualizada;
@@ -1043,25 +1145,41 @@ export async function utilidadDeCotizacion(actor: Actor, cotizacionId: string): 
 	if (!can(actor.role, "cotizacion:costo")) return null;
 	const cotizacion = await prisma.cotizacion.findUnique({
 		where: { id: cotizacionId },
-		select: { total: true, conceptos: { select: { id: true } } },
+		select: { total: true, conceptos: { select: { id: true, cantidad: true, costoUnitario: true } } },
 	});
 	if (!cotizacion) return null;
-	const [internas, inventario] = await Promise.all([
+	const [internas, movimientosPorConcepto] = await Promise.all([
 		prisma.cotizacion_interna.findMany({
 			where: { cotizacionId, estado: "aprobada" },
 			select: { total: true },
 		}),
 		cotizacion.conceptos.length > 0
-			? prisma.inventario_movimiento.aggregate({
+			? prisma.inventario_movimiento.groupBy({
+					by: ["conceptoId"],
 					where: { conceptoId: { in: cotizacion.conceptos.map((c) => c.id) }, tipo: "salida" },
 					_sum: { costoTotal: true },
 				})
-			: null,
+			: [],
 	]);
+	const costoMovimientoPorConcepto = new Map(
+		movimientosPorConcepto
+			.filter((m) => m.conceptoId !== null)
+			.map((m) => [m.conceptoId as string, aCentavos(m._sum.costoTotal ?? new Prisma.Decimal(0))]),
+	);
 
 	const venta = aCentavos(cotizacion.total);
 	const costoInterno = internas.reduce((s, i) => s + aCentavos(i.total), 0n);
-	const costoPartes = aCentavos(inventario?._sum.costoTotal ?? new Prisma.Decimal(0));
+	// A concepto that was actually surtido costs what the FIFO layers it drew from say — real,
+	// never estimated. One that never went through inventory (a purchase imported as reference
+	// only) has no movement to ask, so its `costoUnitario` — the price on the CFDI it came from —
+	// is the only cost data that exists for it. Never both: a stocked-and-surtido line's movement
+	// cost wins outright, so a purchase reference never double-counts alongside its own capa.
+	const costoPartes = cotizacion.conceptos.reduce((s, c) => {
+		const deMovimiento = costoMovimientoPorConcepto.get(c.id);
+		if (deMovimiento !== undefined) return s + deMovimiento;
+		if (c.costoUnitario === null) return s;
+		return s + importeConcepto(Number(c.cantidad), aCentavos(c.costoUnitario));
+	}, 0n);
 	const costo = costoInterno + costoPartes;
 	const utilidad = venta - costo;
 	return { venta: pesos(venta), costo: pesos(costo), utilidad: pesos(utilidad), margen: margenPorcentaje(venta, costo) };

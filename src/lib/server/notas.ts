@@ -27,12 +27,14 @@ import {
 	type NotaEstado,
 } from "$lib/notas";
 import { TALLER_PUEDE_RECIBIR } from "$lib/talleres";
-import { conceptoTipoLabel, cotizacionEstadoLabel, facturaEstadoLabel } from "$lib/comercial";
+import { conceptoTipoLabel, cotizacionEstadoLabel, facturaEstadoLabel, formatoPesos } from "$lib/comercial";
 import { tallerMencionado } from "./talleres";
 import { recordAudit } from "./audit";
 import { ClienteError, trim } from "./clientes";
 import { cuentaBancariaPrincipal } from "./cuentas-bancarias";
+import { getCotizacion } from "./comercial";
 import { listSolicitudes } from "./inventario";
+import { generarNarrativa, registrarUsoIA } from "./ia";
 import { avisarClienteDeNota, notificar, nuevoTokenSeguimiento } from "./notificaciones";
 import { pageMeta, parsePageParams, skipFor, type PageParams } from "./paginate";
 import { borrarObjeto, firmarSubida, urlDeLectura } from "./r2";
@@ -351,6 +353,13 @@ export async function listNotas(query: NotaQuery) {
 export async function getNota(id: string) {
 	const nota = await prisma.nota_servicio.findUnique({ where: { id }, include: INCLUDE });
 	if (!nota) throw new ClienteError(404, "Nota de servicio no encontrada");
+	return nota;
+}
+
+/** Resolve the short number a human says out loud ("la nota 482") to its real id. Read-only. */
+export async function notaPorFolio(folio: number) {
+	const nota = await prisma.nota_servicio.findFirst({ where: { folio }, select: { id: true } });
+	if (!nota) throw new ClienteError(404, `No encuentro la nota #${folio}.`);
 	return nota;
 }
 
@@ -1056,6 +1065,11 @@ function leerLiberacion(body: Record<string, unknown>): { item: string; respuest
 
 export async function avanzarNota(input: { actor: Actor; id: string; estado: unknown }) {
 	if (!can(input.actor.role, "nota:advance")) throw new ClienteError(403, "Sin permiso: nota:advance");
+	// Role-only checks above assume the actor operates shop-wide (today: admin/gerente/operador,
+	// all with tallerId null). If `nota:advance` is ever granted to `taller` via the live
+	// permission editor, this stops a mechanic from advancing a note outside their own taller —
+	// same boundary `comentarNota` already enforces.
+	if (!can(input.actor.role, "nota:read")) await exigirNotaPropia(input.actor, input.id);
 
 	const destino = input.estado;
 	if (!isNotaEstado(destino)) throw new ClienteError(400, "Estado inválido");
@@ -1569,6 +1583,7 @@ export async function registrarResultadoTransferencia(input: {
  */
 export async function entregarNota(input: { actor: Actor; id: string; contactoId?: unknown; observaciones?: unknown }) {
 	if (!can(input.actor.role, "nota:close")) throw new ClienteError(403, "Sin permiso: nota:close");
+	if (!can(input.actor.role, "nota:read")) await exigirNotaPropia(input.actor, input.id);
 
 	const current = await getNota(input.id);
 	if (!puedeTransicionarNota(current.estado, "entregada")) {
@@ -1651,6 +1666,7 @@ export async function entregarNota(input: { actor: Actor; id: string; contactoId
 
 export async function cancelarNota(input: { actor: Actor; id: string; motivo: unknown }) {
 	if (!can(input.actor.role, "nota:cancel")) throw new ClienteError(403, "Sin permiso: nota:cancel");
+	if (!can(input.actor.role, "nota:read")) await exigirNotaPropia(input.actor, input.id);
 
 	const motivo = trim(input.motivo, 255, "El motivo");
 	if (!motivo) throw new ClienteError(400, "El motivo de la cancelación es obligatorio");
@@ -2307,4 +2323,189 @@ export async function mecanicosDisponibles() {
 		select: { id: true, name: true, email: true },
 	});
 	return filas;
+}
+
+// --- Reporte con IA ---------------------------------------------------------------------------
+
+const REPORTE_FRAMING: Record<NotaEstado, string> = {
+	recibida:
+		"Escribe un REPORTE DE RECEPCIÓN: resume en qué estado llegó la unidad y qué se detectó al recibirla. No es un reporte final.",
+	en_diagnostico:
+		"Escribe un REPORTE DE DIAGNÓSTICO: resume qué se ha encontrado hasta ahora. No prometas fecha de entrega ni dilo terminado.",
+	en_taller:
+		"Escribe un REPORTE DE AVANCE: la unidad está en un taller aliado, resume el estatus del trabajo hasta ahora.",
+	lista: "Escribe un REPORTE DE AVANCE: la unidad ya está lista para entrega, resume el trabajo realizado.",
+	entregada:
+		"Escribe un REPORTE FINAL: la unidad ya fue entregada al cliente, resume el trabajo realizado de principio a fin.",
+	cancelada: "Escribe un REPORTE DE CANCELACIÓN: resume, con el motivo registrado, por qué el servicio no se llevó a cabo.",
+};
+
+/**
+ * AI-written narrative for a nota, framed by its current estado (a report on a nota still "en
+ * taller" reads as a progress update, never as a closing summary). Text-only: photos are
+ * embedded in the rendered report as-is, never sent to the model — keeps every call fast and
+ * bounded, which matters on Vercel's function timeout. Comments marked `interno` are never
+ * eligible, mirroring the same customer-visibility boundary `comentarNota` enforces.
+ */
+export async function generarReporteIA(input: {
+	actor: Actor;
+	id: string;
+	comentarioIds?: unknown;
+	evidenciaIds?: unknown;
+	cotizacionIds?: unknown;
+	incluirDiagnostico?: unknown;
+}) {
+	if (!can(input.actor.role, "nota:reporte_ia")) throw new ClienteError(403, "Sin permiso: nota:reporte_ia");
+	if (!can(input.actor.role, "nota:read")) await exigirNotaPropia(input.actor, input.id);
+
+	const nota = await getNota(input.id);
+
+	const idsFrom = (v: unknown) => [
+		...new Set(
+			(Array.isArray(v) ? v : [v]).flatMap((x) => (typeof x === "string" && x.trim() ? [x.trim()] : [])),
+		),
+	];
+	const comentarioIds = idsFrom(input.comentarioIds);
+	const evidenciaIds = idsFrom(input.evidenciaIds);
+	const cotizacionIds = idsFrom(input.cotizacionIds);
+	const incluirDiagnostico = input.incluirDiagnostico === true || input.incluirDiagnostico === "1";
+
+	const [comentarios, evidencias, cotizacionesSeleccionadas] = await Promise.all([
+		comentarioIds.length
+			? prisma.nota_comentario.findMany({
+					where: { id: { in: comentarioIds }, notaId: nota.id, interno: false },
+					orderBy: { createdAt: "asc" },
+				})
+			: Promise.resolve([]),
+		evidenciaIds.length
+			? prisma.nota_evidencia.findMany({
+					where: { id: { in: evidenciaIds }, notaId: nota.id, tipo: "foto" },
+				})
+			: Promise.resolve([]),
+		cotizacionIds.length ? Promise.all(cotizacionIds.map((cid) => getCotizacion(cid).catch(() => null))) : Promise.resolve([]),
+	]);
+	// Never trust a caller-supplied cotización id past this note's own scope.
+	const cotizaciones = cotizacionesSeleccionadas.filter((c): c is NonNullable<typeof c> => c !== null && c.notaId === nota.id);
+
+	// `clave`, not a signed URL — a signed URL expires in 1h and this gets persisted for later
+	// viewing. Re-derived fresh (`urlDeLectura`) every time the saved report is opened.
+	const fotos = evidencias.map((e) => ({ id: e.id, nombre: e.nombre, clave: e.clave }));
+
+	const partes: string[] = [];
+	partes.push(`Nota de servicio #${nota.folio} — cliente: ${nota.cliente?.nombreCompleto ?? "no especificado"}.`);
+	if (nota.unidad) {
+		partes.push(`Unidad: ${nota.unidad.marca} ${nota.unidad.modelo} ${nota.unidad.anio ?? ""}`.trim() + ".");
+	}
+	partes.push(`Motivo del servicio: ${nota.motivo ?? "no especificado"}.`);
+	if (nota.estado === "cancelada" && nota.canceladoMotivo) partes.push(`Motivo de cancelación: ${nota.canceladoMotivo}.`);
+	if (incluirDiagnostico && nota.diagnostico) partes.push(`Diagnóstico:\n${nota.diagnostico}`);
+	if (comentarios.length) {
+		partes.push("Comentarios seleccionados (orden cronológico):");
+		for (const c of comentarios) partes.push(`- ${c.createdAt.toISOString().slice(0, 10)}: ${c.texto}`);
+	}
+	if (cotizaciones.length) {
+		partes.push("Cotizaciones seleccionadas:");
+		for (const c of cotizaciones) {
+			partes.push(`- Cotización #${c.folio} (${cotizacionEstadoLabel(c.estado)}), total ${formatoPesos(Number(c.total))}:`);
+			for (const cc of c.conceptos) {
+				partes.push(`  · ${cc.cantidad} x ${cc.descripcion} — ${formatoPesos(Number(cc.importe))}`);
+			}
+		}
+	}
+	if (fotos.length) partes.push(`Se adjuntan ${fotos.length} fotografía(s) al reporte (no se describen aquí, van como imagen).`);
+
+	const prompt = [
+		"Eres un asistente de Estación 360, un taller mecánico. Escribe en español de México, tono profesional y claro, dirigido al cliente dueño de la unidad.",
+		REPORTE_FRAMING[nota.estado as NotaEstado] ?? REPORTE_FRAMING.en_diagnostico,
+		"No inventes información que no esté en los datos de abajo. No prometas fechas ni precios que no aparezcan explícitamente. No menciones talleres aliados por nombre.",
+		"---",
+		partes.join("\n"),
+	].join("\n\n");
+
+	const resultado = await generarNarrativa(prompt);
+
+	await registrarUsoIA({
+		proveedor: resultado.proveedor,
+		modelo: resultado.modelo,
+		notaId: nota.id,
+		actorId: input.actor.id,
+		tokensEntrada: resultado.tokensEntrada,
+		tokensSalida: resultado.tokensSalida,
+	});
+
+	await recordAudit(prisma, {
+		action: "nota.reporte_ia",
+		actor: input.actor,
+		entityId: nota.id,
+		entityLabel: notaLabel(nota),
+		summary: `Reporte generado con IA (${resultado.proveedor}) para nota #${nota.folio}`,
+	});
+
+	// Persisted, not just returned — "for later reference or re-sharing" means it needs its own
+	// stable, reloadable, linkable record, not a one-shot value handed to a single form response.
+	const reporte = await prisma.nota_reporte_ia.create({
+		data: {
+			id: randomUUID(),
+			notaId: nota.id,
+			generadoPorId: input.actor.id,
+			proveedor: resultado.proveedor,
+			modelo: resultado.modelo,
+			estadoNota: nota.estado,
+			narrativa: resultado.texto,
+			fotos,
+			cotizaciones: cotizaciones.map((c) => ({
+				folio: c.folio,
+				estadoLabel: cotizacionEstadoLabel(c.estado),
+				total: formatoPesos(Number(c.total)),
+			})),
+		},
+	});
+
+	return reporte;
+}
+
+/** Every AI report generated for this nota, newest first — the "further reference" list. */
+export async function listReportesIA(actor: Actor, notaId: string) {
+	if (!can(actor.role, "nota:reporte_ia")) throw new ClienteError(403, "Sin permiso: nota:reporte_ia");
+	if (!can(actor.role, "nota:read")) await exigirNotaPropia(actor, notaId);
+
+	const filas = await prisma.nota_reporte_ia.findMany({
+		where: { notaId },
+		orderBy: { createdAt: "desc" },
+		select: { id: true, proveedor: true, estadoNota: true, createdAt: true, generadoPor: { select: { name: true } } },
+	});
+	return filas.map((f) => ({
+		id: f.id,
+		proveedor: f.proveedor,
+		estadoLabel: notaEstadoLabel(f.estadoNota),
+		generadoPor: f.generadoPor?.name ?? null,
+		createdAt: f.createdAt.toISOString(),
+	}));
+}
+
+/** One saved report, for its own page. Same authorization shape as generating one. */
+export async function getReporteIA(actor: Actor, notaId: string, reporteId: string) {
+	if (!can(actor.role, "nota:reporte_ia")) throw new ClienteError(403, "Sin permiso: nota:reporte_ia");
+	if (!can(actor.role, "nota:read")) await exigirNotaPropia(actor, notaId);
+
+	const reporte = await prisma.nota_reporte_ia.findUnique({ where: { id: reporteId } });
+	if (!reporte || reporte.notaId !== notaId) throw new ClienteError(404, "Reporte no encontrado");
+
+	const nota = await getNota(notaId);
+	const fotos = (reporte.fotos as { id: string; nombre: string; clave: string }[]).map((f) => ({
+		id: f.id,
+		nombre: f.nombre,
+		url: urlDeLectura(f.clave),
+	}));
+
+	return {
+		id: reporte.id,
+		narrativa: reporte.narrativa,
+		proveedor: reporte.proveedor,
+		createdAt: reporte.createdAt.toISOString(),
+		estadoLabel: notaEstadoLabel(reporte.estadoNota),
+		fotos,
+		cotizaciones: reporte.cotizaciones as { folio: number; estadoLabel: string; total: string }[],
+		nota: { folio: nota.folio },
+	};
 }
