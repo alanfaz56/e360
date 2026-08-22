@@ -21,7 +21,7 @@ export const load: ServerLoad = async ({ locals }) => {
 };
 
 export const actions: Actions = {
-	default: async ({ request, locals }) => {
+	cambiarPassword: async ({ request, locals }) => {
 		requireUser(locals);
 		const form = await request.formData();
 		const currentPassword = String(form.get("currentPassword") ?? "");

@@ -97,6 +97,23 @@ export async function registrarWebhook(url: string): Promise<void> {
 	await llamar("setWebhook", { url, secret_token: secreto, allowed_updates: ["message", "callback_query"] });
 }
 
+/**
+ * Download a photo or document the bot received, by its `file_id`. Just bytes — deciding the
+ * content type, size limit and where it belongs (a note's evidence) is the caller's job, same
+ * "thin client" boundary as everything else in this file.
+ *
+ * The Bot API caps a bot's own file downloads at 20 MB regardless of the file itself, so this
+ * never needs a size check before fetching.
+ */
+export async function descargarArchivo(fileId: string): Promise<Uint8Array> {
+	const { file_path } = await llamar<{ file_path?: string }>("getFile", { file_id: fileId });
+	if (!file_path) throw new Error("Telegram no devolvió la ruta del archivo");
+
+	const res = await fetch(`${API}/file/bot${await token()}/${file_path}`);
+	if (!res.ok) throw new Error(`Telegram descarga de archivo falló: ${res.status}`);
+	return new Uint8Array(await res.arrayBuffer());
+}
+
 // --- The inbound shapes we actually read. Telegram's Update object has ~30 optional fields; -----
 // --- these are the ones this bot understands. Unknown updates are ignored, not errors. ----------
 
@@ -118,5 +135,9 @@ export type TelegramMessage = {
 	chat: { id: number };
 	from?: TelegramUser;
 	text?: string;
+	caption?: string;
 	contact?: { phone_number: string; user_id?: number };
+	/** Telegram re-encodes every photo into several sizes, smallest first — the last is the largest. */
+	photo?: { file_id: string; file_size?: number }[];
+	document?: { file_id: string; file_name?: string; mime_type?: string; file_size?: number };
 };

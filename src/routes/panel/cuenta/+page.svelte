@@ -13,7 +13,7 @@
 <div class="max-w-sm">
 	<h2 class="font-display mt-6 mb-3 text-lg text-sand-950">Cambiar contraseña</h2>
 
-	<form method="POST" class="space-y-4 rounded-lg border border-sand-200 bg-white p-6">
+	<form method="POST" action="?/cambiarPassword" class="space-y-4 rounded-lg border border-sand-200 bg-white p-6">
 		{#if form?.message}
 			<p role="alert" class="rounded border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
 				{form.message}
