@@ -62,6 +62,7 @@ export const FLASH: Record<string, string> = {
 
 	// --- Ajustes del sistema ---------------------------------------------------------------------
 	"ajuste.guardar": "Ajustes guardados.",
+	"canal.webhook_registrado": "Webhook de Telegram registrado con esta URL.",
 	"empresa.guardar": "Datos de la empresa guardados.",
 	"cuentaBancaria.crear": "Cuenta bancaria agregada.",
 	"cuentaBancaria.editar": "Cuenta bancaria actualizada.",

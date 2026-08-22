@@ -3,6 +3,8 @@ import { GRUPOS, GRUPO_KEYS } from "$lib/ajustes";
 import { PROVEEDOR_DEFAULT, PROVEEDORES } from "$lib/server/pac";
 import { conFlash } from "$lib/flash";
 import { guardarAjustes, leerAjustes, puedeGuardarSecretos } from "$lib/server/ajustes";
+import { obtenerInfoWebhook, registrarWebhook, telegramConfigurado } from "$lib/server/canales/telegram";
+import { ClienteError } from "$lib/server/clientes";
 import { fallaEnCarga, fallo } from "$lib/server/errores";
 import { requireDueno, requireUser } from "$lib/server/guard";
 import { usoDeTimbrado } from "$lib/server/timbrado";
@@ -22,6 +24,14 @@ export const load: ServerLoad = async ({ locals, url }) => {
 
 		const [ajustes, uso] = await Promise.all([leerAjustes(), usoDeTimbrado(desde)]);
 
+		// What Telegram actually has on file — separate from the bot token/secret above, and the
+		// one thing that tells "nobody ever registered it for this environment" apart from "it's
+		// registered but broken". Best-effort: a bad token must not take the whole settings page
+		// down, since this screen is exactly where someone would come to fix that token.
+		const telegramWebhook = (await telegramConfigurado())
+			? await obtenerInfoWebhook().catch((err) => ({ error: err instanceof Error ? err.message : String(err) }))
+			: null;
+
 		return {
 			ajustes,
 			uso,
@@ -32,6 +42,7 @@ export const load: ServerLoad = async ({ locals, url }) => {
 			puedeGuardarSecretos: puedeGuardarSecretos(),
 			proveedores: Object.values(PROVEEDORES).map((p) => ({ clave: p.clave, label: p.label })),
 			proveedorActivo: PROVEEDOR_DEFAULT,
+			telegramWebhook,
 		};
 	} catch (err) {
 		fallaEnCarga(err);
@@ -51,5 +62,28 @@ export const actions: Actions = {
 			return fallo(err);
 		}
 		redirect(303, conFlash("/panel/ajustes", "ajuste.guardar"));
+	},
+
+	/**
+	 * Points Telegram at THIS deployment. `url.origin` — the origin the request actually arrived
+	 * on — not `BETTER_AUTH_URL`: an env var can be stale or absent for a given environment, but
+	 * the request's own origin is definitionally the address that just reached us. This is the
+	 * step `scripts/telegram-set-webhook.ts` automates for local/CI use; this button is the same
+	 * call for whoever cannot run a script against prod's env.
+	 */
+	registrarWebhookTelegram: async ({ locals, url }) => {
+		requireDueno(locals, "ajustes:manage");
+		try {
+			// Same guard `scripts/telegram-set-webhook.ts` opens with — Telegram rejects anything
+			// else, and a localhost origin (testing this button in dev) would otherwise reach that
+			// rejection as a raw Telegram API error instead of a message that explains why.
+			if (url.protocol !== "https:") {
+				throw new ClienteError(400, "Esta URL no es https — Telegram la rechaza. Este botón solo sirve algo desde el dominio real de producción.");
+			}
+			await registrarWebhook(`${url.origin}/api/telegram/webhook`);
+		} catch (err) {
+			return fallo(err);
+		}
+		redirect(303, conFlash("/panel/ajustes", "canal.webhook_registrado"));
 	},
 };

@@ -12,6 +12,7 @@
 	import PageHeader from "$lib/components/PageHeader.svelte";
 	import StatCard from "$lib/components/StatCard.svelte";
 	import { entornoLabel } from "$lib/facturacion";
+	import { page } from "$app/state";
 
 	let { data, form } = $props();
 
@@ -241,6 +242,59 @@
 		Guardar ajustes
 	</Button>
 </form>
+
+<!-- Webhook de Telegram -------------------------------------------------------------------------
+	A separate form and section, not inside the ajustes grid above — nesting it there would put a
+	<form> inside the "Guardar ajustes" <form>, which browsers silently reflow and break. This is
+	also a different KIND of write: not a stored credential, a live call to Telegram's own API. -->
+<section class="mt-6 rounded-lg border border-sand-200 bg-white p-4">
+	<h2 class="font-display text-lg text-sand-950">Webhook de Telegram</h2>
+	<p class="mt-0.5 text-sm text-sand-600">
+		Lo que Telegram tiene registrado ahora mismo — no lo que un despliegue anterior haya dejado.
+	</p>
+
+	<div class="mt-3 rounded-md border border-sand-200 bg-sand-50 p-3">
+		{#if data.telegramWebhook === null}
+			<p class="text-sm text-sand-600">Configura y guarda el bot token de arriba para poder registrarlo.</p>
+		{:else if "error" in data.telegramWebhook}
+			<p class="text-sm text-danger">No se pudo consultar con Telegram: {data.telegramWebhook.error}</p>
+		{:else}
+			<p class="text-sm text-sand-700">
+				Registrado en Telegram: <code class="font-mono text-xs">{data.telegramWebhook.url || "(nada registrado)"}</code>
+			</p>
+			{#if data.telegramWebhook.pendingUpdateCount > 0}
+				<p class="mt-1 text-xs text-sand-500">
+					{data.telegramWebhook.pendingUpdateCount} actualización(es) sin entregar — Telegram no puede llegar a esa
+					URL.
+				</p>
+			{/if}
+			{#if data.telegramWebhook.lastErrorMessage}
+				<p class="mt-1 text-sm text-danger">
+					Último error de Telegram{data.telegramWebhook.lastErrorDate
+						? ` (${fecha(new Date(data.telegramWebhook.lastErrorDate * 1000).toISOString())})`
+						: ""}: {data.telegramWebhook.lastErrorMessage}
+				</p>
+			{/if}
+		{/if}
+
+		<p class="mt-2 text-xs text-sand-500">
+			Este botón lo registra en: <code class="font-mono">{page.url.origin}/api/telegram/webhook</code>
+		</p>
+		<form
+			method="POST"
+			action="?/registrarWebhookTelegram"
+			class="mt-2"
+		>
+			<Button
+				type="submit"
+				variant="outline"
+				size="sm"
+			>
+				Registrar webhook con esta URL
+			</Button>
+		</form>
+	</div>
+</section>
 
 <p class="mt-6 flex items-start gap-2 text-xs text-sand-500">
 	<KeyRound

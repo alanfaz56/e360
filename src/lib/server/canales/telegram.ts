@@ -97,6 +97,34 @@ export async function registrarWebhook(url: string): Promise<void> {
 	await llamar("setWebhook", { url, secret_token: secreto, allowed_updates: ["message", "callback_query"] });
 }
 
+export type TelegramWebhookInfo = {
+	url: string;
+	pendingUpdateCount: number;
+	lastErrorDate: number | null;
+	lastErrorMessage: string | null;
+};
+
+/**
+ * What Telegram actually has on file right now — independent of what a deploy or a script
+ * THINKS it set. `url: ""` means no webhook is registered at all. This is the only reliable way
+ * to tell "nobody ever ran the setup step for this environment" apart from "it's registered but
+ * failing", which is the exact ambiguity that makes a silent prod bot hard to diagnose.
+ */
+export async function obtenerInfoWebhook(): Promise<TelegramWebhookInfo> {
+	const info = await llamar<{
+		url: string;
+		pending_update_count: number;
+		last_error_date?: number;
+		last_error_message?: string;
+	}>("getWebhookInfo", {});
+	return {
+		url: info.url,
+		pendingUpdateCount: info.pending_update_count,
+		lastErrorDate: info.last_error_date ?? null,
+		lastErrorMessage: info.last_error_message ?? null,
+	};
+}
+
 /**
  * Download a photo or document the bot received, by its `file_id`. Just bytes — deciding the
  * content type, size limit and where it belongs (a note's evidence) is the caller's job, same
