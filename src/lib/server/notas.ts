@@ -29,6 +29,7 @@ import {
 import { TALLER_PUEDE_RECIBIR } from "$lib/talleres";
 import { conceptoTipoLabel, cotizacionEstadoLabel, facturaEstadoLabel, formatoPesos } from "$lib/comercial";
 import { tallerMencionado } from "./talleres";
+import { confirmarAlRecibir } from "./citas";
 import { recordAudit } from "./audit";
 import { ClienteError, trim } from "./clientes";
 import { cuentaBancariaPrincipal } from "./cuentas-bancarias";
@@ -497,6 +498,7 @@ export async function crearNota(input: { actor: Actor; body: Record<string, unkn
 	let clienteId = trim(input.body.clienteId);
 	let unidadId = trim(input.body.unidadId);
 	let motivo = trim(input.body.motivo, 2000, "El motivo");
+	let citaEstadoOriginal: string | null = null;
 
 	if (citaId) {
 		const cita = await prisma.cita.findUnique({
@@ -520,6 +522,7 @@ export async function crearNota(input: { actor: Actor; body: Record<string, unkn
 		clienteId ??= cita.clienteId;
 		unidadId ??= cita.unidadId;
 		motivo ??= cita.motivo;
+		citaEstadoOriginal = cita.estado;
 	}
 
 	if (!clienteId) throw new ClienteError(400, "Falta el cliente");
@@ -568,6 +571,15 @@ export async function crearNota(input: { actor: Actor; body: Record<string, unkn
 
 	const kilometraje = int(input.body.kilometraje);
 	const entrego = await resolverQuienEntrego(clienteId!, input.body);
+
+	// Receiving the vehicle is what completes a cita — but `solicitada → completada` is not a
+	// legal single hop (see TRANSICIONES in lib/citas.ts). A walk-in whose appointment was
+	// requested but never explicitly confirmed still needs that real hop, with its own
+	// notification, before the transaction below fast-forwards it to completada.
+	const ahoraRecepcion = new Date();
+	if (citaId && citaEstadoOriginal === "solicitada") {
+		await confirmarAlRecibir(input.actor, citaId, ahoraRecepcion);
+	}
 
 	const nota = await prisma
 		.$transaction(async (tx) => {
@@ -622,10 +634,13 @@ export async function crearNota(input: { actor: Actor; body: Record<string, unkn
 				// first — it IS when the appointment happened — then complete it. Two statements, not a
 				// data-modifying CTE: every part of one command shares a snapshot, so the second half
 				// would not see the first.
+				// `solicitada` stays in this list only as the fallback for the rare race where the
+				// confirm above ran but something changed the estado again before this transaction
+				// opened — the ordinary path already moved it to `confirmada` by now.
 				const VIVAS = ["solicitada", "confirmada", "en_proceso"];
 				await tx.cita.updateMany({
 					where: { id: citaId, estado: { in: VIVAS }, inicio: null },
-					data: { inicio: new Date() },
+					data: { inicio: ahoraRecepcion },
 				});
 				await tx.cita.updateMany({
 					where: { id: citaId, estado: { in: VIVAS } },
@@ -1881,9 +1896,17 @@ async function exigirNotaPropia(actor: Actor, notaId: string) {
 	// their workshop holds even though nobody assigned it to them by name.
 	const fila = await prisma.nota_servicio.findFirst({
 		where: { id: notaId, ...alcanceDeTaller(actor) },
-		select: { id: true },
+		select: { id: true, estado: true },
 	});
 	if (!fila) throw new ClienteError(404, "Nota no encontrada");
+	// `alcanceDeTaller` matches ANY workshop that ever held this note, not just the one holding it
+	// now — a shop that finished its part in March and lost custody in August must not still be
+	// able to write on it in December just because the note once passed through their hands. Same
+	// boundary `capturarDiagnostico` already enforces; staff with `nota:read` are never scoped
+	// through this function at all (the early return above), so this never touches their access.
+	if (fila.estado === "entregada" || fila.estado === "cancelada") {
+		throw new ClienteError(409, `Una nota ${notaEstadoLabel(fila.estado).toLowerCase()} ya no se edita.`);
+	}
 }
 
 export async function firmarEvidencia(input: {
@@ -1988,6 +2011,12 @@ export async function borrarEvidencia(input: { actor: Actor; id: string; evidenc
 	const nota = await getNota(input.id);
 	const evidencia = await prisma.nota_evidencia.findUnique({ where: { id: input.evidenciaId } });
 	if (!evidencia || evidencia.notaId !== nota.id) throw new ClienteError(404, "Evidencia no encontrada");
+	// Scope, not just presence: a mechanic reaching this note through `alcanceDeTaller` may delete
+	// what THEY uploaded, not evidence somebody else on the job left behind. Staff with `nota:read`
+	// legitimately manage any evidence, so this only ever applies to the scoped path.
+	if (!can(input.actor.role, "nota:read") && evidencia.subidaPorId !== input.actor.id) {
+		throw new ClienteError(403, "Solo puedes borrar evidencia que tú subiste.");
+	}
 
 	await prisma.$transaction(async (tx) => {
 		await tx.nota_evidencia.delete({ where: { id: evidencia.id } });

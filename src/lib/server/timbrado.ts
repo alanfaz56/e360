@@ -35,6 +35,10 @@ import { ClienteError, trim } from "./clientes";
 import { proveedorActivo, type ConfigPac, type ProveedorTimbrado } from "./pac";
 import type { Actor } from "./guard";
 
+/** How long a `timbrandoAt` claim is honored before it's treated as an abandoned attempt (crash,
+ *  timeout) rather than one still in flight. Generous margin over the PAC's own 30s timeout. */
+const CLAIM_STALE_MS = 2 * 60_000;
+
 /**
  * Everything a CFDI needs that we hold, gathered and checked before a single byte goes out.
  *
@@ -56,6 +60,9 @@ async function prepararTimbrado(facturaId: string) {
 
 	if (factura.estado === "cancelada") throw new ClienteError(409, "Una factura cancelada ya no se timbra.");
 	if (factura.uuid) throw new ClienteError(409, `Esa factura ya está timbrada (UUID ${factura.uuid}).`);
+	if (factura.timbrandoAt && Date.now() - factura.timbrandoAt.getTime() < CLAIM_STALE_MS) {
+		throw new ClienteError(409, "Esa factura ya se está timbrando en este momento. Espera un momento y revisa.");
+	}
 
 	const c = factura.cliente;
 	const faltantes = [
@@ -258,6 +265,23 @@ export async function timbrarFactura(input: { actor: Actor; id: string }) {
 		// not about the SAT's UUID, and nothing else on the CFDI carries it.
 		observaciones: `Factura #${factura.folio} · Estación 360`,
 	};
+
+	// Claim the row right before the network call, atomically: `uuid: null` and no fresh claim
+	// already held is the same condition `prepararTimbrado` just checked, but re-asserted as a
+	// single conditional write instead of a separate read — so two requests that both passed that
+	// read a moment apart can't both win this. The loser gets the same "ya se está timbrando"
+	// message a moment sooner than it would from the PAC's own eventual response.
+	const claimado = await prisma.factura.updateMany({
+		where: {
+			id: factura.id,
+			uuid: null,
+			OR: [{ timbrandoAt: null }, { timbrandoAt: { lt: new Date(Date.now() - CLAIM_STALE_MS) } }],
+		},
+		data: { timbrandoAt: new Date() },
+	});
+	if (claimado.count === 0) {
+		throw new ClienteError(409, "Esa factura ya se está timbrando en este momento. Espera un momento y revisa.");
+	}
 
 	const resultado = await proveedor.timbrar(cfg, solicitud);
 

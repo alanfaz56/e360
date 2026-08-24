@@ -129,6 +129,8 @@ export const AUDIT_ACTIONS = {
 	"canal.vinculacion_generada": "Código de vinculación de canal generado",
 	"canal.vinculado": "Cuenta vinculada a WhatsApp/Telegram",
 	"canal.desvinculado": "Cuenta desvinculada de un canal",
+	"canal.conversacion_tomada": "Conversación de canal tomada por un humano",
+	"canal.conversacion_regresada": "Conversación de canal regresada al bot",
 } as const satisfies Record<string, string>;
 
 export type AuditAction = keyof typeof AUDIT_ACTIONS;

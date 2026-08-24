@@ -21,6 +21,7 @@
 	import ShieldCheck from "@lucide/svelte/icons/shield-check";
 	import Sparkles from "@lucide/svelte/icons/sparkles";
 	import Truck from "@lucide/svelte/icons/truck";
+	import MessageCircle from "@lucide/svelte/icons/message-circle";
 	import type { NavItem } from "$lib/nav";
 
 	const ICONS = {
@@ -42,6 +43,7 @@
 		"shield-check": ShieldCheck,
 		sparkles: Sparkles,
 		truck: Truck,
+		"message-circle": MessageCircle,
 	};
 
 	let { name, ...rest }: { name: NavItem["icon"]; [key: string]: unknown } = $props();

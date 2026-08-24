@@ -251,6 +251,12 @@ export const PERMISOS_DEFAULT = {
 	// inventario, cobranza, mecánicos...) into a single coherent view for whoever runs the
 	// business, not a bag of resource-scoped widgets somebody assembles permission by permission.
 	"dashboard:ver": ["admin", "gerente"],
+
+	// --- Canales (WhatsApp/Telegram) ----------------------------------------------------------
+	// Reading and answering a customer's chat is front-desk work, same split as `cliente:read` —
+	// `taller` never sees this: a mechanic's channel access is the Telegram staff commands
+	// (comment, evidence), gated by `nota:*`, never a customer-facing conversation.
+	"canal:chat": ["admin", "gerente", "operador"],
 } as const satisfies Record<string, readonly Role[]>;
 
 export type Permission = keyof typeof PERMISOS_DEFAULT;

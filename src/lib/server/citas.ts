@@ -530,33 +530,37 @@ async function crearCitaPublica(body: Record<string, unknown>, origen: string) {
 	const franja = body.franja;
 	if (!isFranja(franja)) throw new ClienteError(400, "Elige si prefieres mañana o tarde");
 
-	const cita = await prisma.cita.create({
-		data: {
-			id: randomUUID(),
-			...contacto,
-			tipo,
-			direccionRecoleccion,
-			fecha: enZona(fecha),
-			franja,
-			origen,
-			estado: "solicitada",
-			inicio: null,
-			fin: null,
-			notas: null,
-			clienteId: null,
-			unidadId: null,
-			asignadoId: null,
-		},
-		include: INCLUDE,
-	});
+	const cita = await prisma.$transaction(async (tx) => {
+		const creada = await tx.cita.create({
+			data: {
+				id: randomUUID(),
+				...contacto,
+				tipo,
+				direccionRecoleccion,
+				fecha: enZona(fecha),
+				franja,
+				origen,
+				estado: "solicitada",
+				inicio: null,
+				fin: null,
+				notas: null,
+				clienteId: null,
+				unidadId: null,
+				asignadoId: null,
+			},
+			include: INCLUDE,
+		});
 
-	await recordAudit(prisma, {
-		action: "cita.solicitud",
-		actor: ACTOR_PUBLICO,
-		entityId: cita.id,
-		entityLabel: citaLabel(cita),
-		summary: `Cita solicitada por ${cita.nombre} para el ${fecha} (${FRANJAS[franja].label}) vía ${origen}`,
-		after: { fecha, franja, tipo, telefono: cita.telefono, origen },
+		await recordAudit(tx, {
+			action: "cita.solicitud",
+			actor: ACTOR_PUBLICO,
+			entityId: creada.id,
+			entityLabel: citaLabel(creada),
+			summary: `Cita solicitada por ${creada.nombre} para el ${fecha} (${FRANJAS[franja].label}) vía ${origen}`,
+			after: { fecha, franja, tipo, telefono: creada.telefono, origen },
+		});
+
+		return creada;
 	});
 
 	// A request nobody sees is a lost sale — this is the same failure `citas vencidas` reports
@@ -639,34 +643,38 @@ export async function crearCita(input: { actor: Actor; body: Record<string, unkn
 
 	const asignadoId = await resolverAsignado(input.actor, input.body.asignadoId, { alCrear: true });
 
-	const cita = await prisma.cita.create({
-		data: {
-			id: randomUUID(),
-			...contacto,
-			tipo,
-			direccionRecoleccion,
-			origen: "panel",
-			estado: "confirmada",
-			fecha: enZona(fechaEnZona(inicio)),
-			franja: null,
-			inicio,
-			fin,
-			notas: trim(input.body.notas),
-			clienteId,
-			unidadId,
-			entregadorId,
-			asignadoId,
-		},
-		include: INCLUDE,
-	});
+	const cita = await prisma.$transaction(async (tx) => {
+		const creada = await tx.cita.create({
+			data: {
+				id: randomUUID(),
+				...contacto,
+				tipo,
+				direccionRecoleccion,
+				origen: "panel",
+				estado: "confirmada",
+				fecha: enZona(fechaEnZona(inicio)),
+				franja: null,
+				inicio,
+				fin,
+				notas: trim(input.body.notas),
+				clienteId,
+				unidadId,
+				entregadorId,
+				asignadoId,
+			},
+			include: INCLUDE,
+		});
 
-	await recordAudit(prisma, {
-		action: "cita.create",
-		actor: input.actor,
-		entityId: cita.id,
-		entityLabel: citaLabel(cita),
-		summary: `Cita creada para ${cita.cliente?.nombreCompleto ?? cita.nombre} el ${cita.fecha.toISOString().slice(0, 10)}`,
-		after: { inicio: inicio.toISOString(), fin: fin.toISOString(), tipo, clienteId, unidadId, asignadoId },
+		await recordAudit(tx, {
+			action: "cita.create",
+			actor: input.actor,
+			entityId: creada.id,
+			entityLabel: citaLabel(creada),
+			summary: `Cita creada para ${creada.cliente?.nombreCompleto ?? creada.nombre} el ${creada.fecha.toISOString().slice(0, 10)}`,
+			after: { inicio: inicio.toISOString(), fin: fin.toISOString(), tipo, clienteId, unidadId, asignadoId },
+		});
+
+		return creada;
 	});
 
 	await avisarAsignado(cita, input.actor.id);
@@ -771,43 +779,45 @@ export async function actualizarCita(input: { actor: Actor; id: string; body: Re
 			? enZona(leerFecha(input.body.fecha))
 			: current.fecha;
 
-	const cita = await prisma.cita.update({
-		where: { id: current.id },
-		data: {
-			...contacto,
-			tipo,
-			direccionRecoleccion,
-			fecha,
-			inicio,
-			fin,
-			clienteId,
-			unidadId,
-			notas: input.body.notas !== undefined ? trim(input.body.notas) : current.notas,
-		},
-		include: INCLUDE,
-	});
+	return await prisma.$transaction(async (tx) => {
+		const cita = await tx.cita.update({
+			where: { id: current.id },
+			data: {
+				...contacto,
+				tipo,
+				direccionRecoleccion,
+				fecha,
+				inicio,
+				fin,
+				clienteId,
+				unidadId,
+				notas: input.body.notas !== undefined ? trim(input.body.notas) : current.notas,
+			},
+			include: INCLUDE,
+		});
 
-	await recordAudit(prisma, {
-		action: "cita.update",
-		actor: input.actor,
-		entityId: cita.id,
-		entityLabel: citaLabel(cita),
-		summary: `Cita #${cita.folio} actualizada`,
-		before: {
-			inicio: current.inicio?.toISOString() ?? null,
-			tipo: current.tipo,
-			telefono: current.telefono,
-			clienteId: current.clienteId,
-		},
-		after: {
-			inicio: cita.inicio?.toISOString() ?? null,
-			tipo: cita.tipo,
-			telefono: cita.telefono,
-			clienteId: cita.clienteId,
-		},
-	});
+		await recordAudit(tx, {
+			action: "cita.update",
+			actor: input.actor,
+			entityId: cita.id,
+			entityLabel: citaLabel(cita),
+			summary: `Cita #${cita.folio} actualizada`,
+			before: {
+				inicio: current.inicio?.toISOString() ?? null,
+				tipo: current.tipo,
+				telefono: current.telefono,
+				clienteId: current.clienteId,
+			},
+			after: {
+				inicio: cita.inicio?.toISOString() ?? null,
+				tipo: cita.tipo,
+				telefono: cita.telefono,
+				clienteId: cita.clienteId,
+			},
+		});
 
-	return cita;
+		return cita;
+	});
 }
 
 /** The current row as a body, so a PATCH can carry only the fields it changes. */
@@ -854,20 +864,24 @@ export async function vincularCita(input: { actor: Actor; id: string; body: Reco
 		placas: current.placas,
 	});
 
-	const cita = await prisma.cita.update({
-		where: { id: current.id },
-		data: { clienteId, unidadId, entregadorId },
-		include: INCLUDE,
-	});
+	const cita = await prisma.$transaction(async (tx) => {
+		const actualizada = await tx.cita.update({
+			where: { id: current.id },
+			data: { clienteId, unidadId, entregadorId },
+			include: INCLUDE,
+		});
 
-	await recordAudit(prisma, {
-		action: "cita.link",
-		actor: input.actor,
-		entityId: cita.id,
-		entityLabel: citaLabel(cita),
-		summary: `Cita #${cita.folio} vinculada a ${cliente.nombreCompleto}`,
-		before: { clienteId: current.clienteId, unidadId: current.unidadId, entregadorId: current.entregadorId },
-		after: { clienteId, unidadId, entregadorId },
+		await recordAudit(tx, {
+			action: "cita.link",
+			actor: input.actor,
+			entityId: actualizada.id,
+			entityLabel: citaLabel(actualizada),
+			summary: `Cita #${actualizada.folio} vinculada a ${cliente.nombreCompleto}`,
+			before: { clienteId: current.clienteId, unidadId: current.unidadId, entregadorId: current.entregadorId },
+			after: { clienteId, unidadId, entregadorId },
+		});
+
+		return actualizada;
 	});
 
 	// The trio is complete when the hour was already set — `asignarHoraCita` on a still-unlinked
@@ -1023,27 +1037,31 @@ async function confirmarInterno(
 	fin: Date,
 	asignadoId: string | null,
 ) {
-	const cita = await prisma.cita.update({
-		where: { id: current.id },
-		data: {
-			estado: "confirmada",
-			inicio,
-			fin,
-			asignadoId,
-			fecha: enZona(fechaEnZona(inicio)),
-		},
-		include: INCLUDE,
-	});
+	const cita = await prisma.$transaction(async (tx) => {
+		const actualizada = await tx.cita.update({
+			where: { id: current.id },
+			data: {
+				estado: "confirmada",
+				inicio,
+				fin,
+				asignadoId,
+				fecha: enZona(fechaEnZona(inicio)),
+			},
+			include: INCLUDE,
+		});
 
-	await recordAudit(prisma, {
-		action: "cita.confirm",
-		actor,
-		entityId: cita.id,
-		entityLabel: citaLabel(cita),
-		// The franja is what the customer asked for; the hour is what they got. Keep both.
-		summary: `Cita #${cita.folio} confirmada (pidió ${current.franja ? FRANJAS[current.franja as keyof typeof FRANJAS].label.toLowerCase() : "sin franja"})`,
-		before: { estado: current.estado, franja: current.franja, inicio: null },
-		after: { estado: "confirmada", inicio: inicio.toISOString(), fin: fin.toISOString() },
+		await recordAudit(tx, {
+			action: "cita.confirm",
+			actor,
+			entityId: actualizada.id,
+			entityLabel: citaLabel(actualizada),
+			// The franja is what the customer asked for; the hour is what they got. Keep both.
+			summary: `Cita #${actualizada.folio} confirmada (pidió ${current.franja ? FRANJAS[current.franja as keyof typeof FRANJAS].label.toLowerCase() : "sin franja"})`,
+			before: { estado: current.estado, franja: current.franja, inicio: null },
+			after: { estado: "confirmada", inicio: inicio.toISOString(), fin: fin.toISOString() },
+		});
+
+		return actualizada;
 	});
 
 	// A cita has no tracking token — those belong to service notes — so this lands in the customer's
@@ -1063,6 +1081,21 @@ async function confirmarInterno(
 	await avisarAsignado(cita, actor.id);
 
 	return cita;
+}
+
+/**
+ * Auto-confirm a still-`solicitada` cita at the exact moment its vehicle is received — called
+ * from `crearNota` (notas.ts) instead of that function jumping the cita straight to `completada`
+ * on its own. `solicitada → completada` is not a legal single hop (see `TRANSICIONES`); this
+ * makes the real sequence solicitada → confirmada → completada, through the same
+ * `confirmarInterno` an explicit "Confirmar" click uses, so a walk-in whose appointment was never
+ * formally confirmed still gets the `cliente_cita_confirmada` notification and the audit row —
+ * a beat before the completion that follows, not skipped entirely. A no-op past `solicitada`.
+ */
+export async function confirmarAlRecibir(actor: Actor, citaId: string, momento: Date) {
+	const current = await getCita(citaId);
+	if (current.estado !== "solicitada") return current;
+	return confirmarInterno(actor, current, momento, finPorDefecto(momento), current.asignadoId);
 }
 
 export async function confirmarCita(input: { actor: Actor; id: string; body: Record<string, unknown> }) {
@@ -1117,20 +1150,24 @@ export async function asignarHoraCita(input: { actor: Actor; id: string; body: R
 		return confirmarInterno(input.actor, current, inicio, fin, asignadoId);
 	}
 
-	const cita = await prisma.cita.update({
-		where: { id: current.id },
-		data: { inicio, fin, asignadoId },
-		include: INCLUDE,
-	});
+	const cita = await prisma.$transaction(async (tx) => {
+		const actualizada = await tx.cita.update({
+			where: { id: current.id },
+			data: { inicio, fin, asignadoId },
+			include: INCLUDE,
+		});
 
-	await recordAudit(prisma, {
-		action: "cita.hora",
-		actor: input.actor,
-		entityId: cita.id,
-		entityLabel: citaLabel(cita),
-		summary: `Cita #${cita.folio}: hora asignada (${horaEnZona(inicio)}), falta vincular cliente y unidad para confirmarse`,
-		before: { inicio: null },
-		after: { inicio: inicio.toISOString(), fin: fin.toISOString() },
+		await recordAudit(tx, {
+			action: "cita.hora",
+			actor: input.actor,
+			entityId: actualizada.id,
+			entityLabel: citaLabel(actualizada),
+			summary: `Cita #${actualizada.folio}: hora asignada (${horaEnZona(inicio)}), falta vincular cliente y unidad para confirmarse`,
+			before: { inicio: null },
+			after: { inicio: inicio.toISOString(), fin: fin.toISOString() },
+		});
+
+		return actualizada;
 	});
 
 	return cita;
@@ -1143,22 +1180,26 @@ export async function asignarCita(input: { actor: Actor; id: string; asignadoId:
 	const asignadoId = await resolverAsignado(input.actor, input.asignadoId);
 	if (asignadoId === current.asignadoId) throw new ClienteError(409, "La cita ya está así asignada.");
 
-	const cita = await prisma.cita.update({
-		where: { id: current.id },
-		data: { asignadoId },
-		include: INCLUDE,
-	});
+	const cita = await prisma.$transaction(async (tx) => {
+		const actualizada = await tx.cita.update({
+			where: { id: current.id },
+			data: { asignadoId },
+			include: INCLUDE,
+		});
 
-	await recordAudit(prisma, {
-		action: "cita.assign",
-		actor: input.actor,
-		entityId: cita.id,
-		entityLabel: citaLabel(cita),
-		summary: asignadoId
-			? `Cita #${cita.folio} asignada a ${cita.asignado?.name ?? asignadoId}`
-			: `Cita #${cita.folio} sin asignar`,
-		before: { asignadoId: current.asignadoId, asignado: current.asignado?.email ?? null },
-		after: { asignadoId, asignado: cita.asignado?.email ?? null },
+		await recordAudit(tx, {
+			action: "cita.assign",
+			actor: input.actor,
+			entityId: actualizada.id,
+			entityLabel: citaLabel(actualizada),
+			summary: asignadoId
+				? `Cita #${actualizada.folio} asignada a ${actualizada.asignado?.name ?? asignadoId}`
+				: `Cita #${actualizada.folio} sin asignar`,
+			before: { asignadoId: current.asignadoId, asignado: current.asignado?.email ?? null },
+			after: { asignadoId, asignado: actualizada.asignado?.email ?? null },
+		});
+
+		return actualizada;
 	});
 
 	await avisarAsignado(cita, input.actor.id);
@@ -1215,25 +1256,27 @@ export async function avanzarCita(input: { actor: Actor; id: string; estado: unk
 		}
 	}
 
-	const cita = await prisma.cita.update({
-		where: { id: current.id },
-		data: { estado: destino as CitaEstado, ...(completadoSinNotaMotivo ? { completadoSinNotaMotivo } : {}) },
-		include: INCLUDE,
-	});
+	return await prisma.$transaction(async (tx) => {
+		const cita = await tx.cita.update({
+			where: { id: current.id },
+			data: { estado: destino as CitaEstado, ...(completadoSinNotaMotivo ? { completadoSinNotaMotivo } : {}) },
+			include: INCLUDE,
+		});
 
-	await recordAudit(prisma, {
-		action: "cita.advance",
-		actor: input.actor,
-		entityId: cita.id,
-		entityLabel: citaLabel(cita),
-		summary:
-			`Cita #${cita.folio}: ${citaEstadoLabel(current.estado)} → ${citaEstadoLabel(destino)}` +
-			(completadoSinNotaMotivo ? ` (sin recibir unidad: ${completadoSinNotaMotivo})` : ""),
-		before: { estado: current.estado },
-		after: { estado: destino, ...(completadoSinNotaMotivo ? { completadoSinNotaMotivo } : {}) },
-	});
+		await recordAudit(tx, {
+			action: "cita.advance",
+			actor: input.actor,
+			entityId: cita.id,
+			entityLabel: citaLabel(cita),
+			summary:
+				`Cita #${cita.folio}: ${citaEstadoLabel(current.estado)} → ${citaEstadoLabel(destino)}` +
+				(completadoSinNotaMotivo ? ` (sin recibir unidad: ${completadoSinNotaMotivo})` : ""),
+			before: { estado: current.estado },
+			after: { estado: destino, ...(completadoSinNotaMotivo ? { completadoSinNotaMotivo } : {}) },
+		});
 
-	return cita;
+		return cita;
+	});
 }
 
 /** Cancelling always says why — the reason is read back to the customer on the phone. */
@@ -1248,20 +1291,24 @@ export async function cancelarCita(input: { actor: Actor; id: string; motivo: un
 		throw new ClienteError(409, `Una cita ${citaEstadoLabel(current.estado).toLowerCase()} ya no se cancela.`);
 	}
 
-	const cita = await prisma.cita.update({
-		where: { id: current.id },
-		data: { estado: "cancelada", canceladoMotivo: motivo },
-		include: INCLUDE,
-	});
+	const cita = await prisma.$transaction(async (tx) => {
+		const actualizada = await tx.cita.update({
+			where: { id: current.id },
+			data: { estado: "cancelada", canceladoMotivo: motivo },
+			include: INCLUDE,
+		});
 
-	await recordAudit(prisma, {
-		action: "cita.cancel",
-		actor: input.actor,
-		entityId: cita.id,
-		entityLabel: citaLabel(cita),
-		summary: `Cita #${cita.folio} cancelada: ${motivo}`,
-		before: { estado: current.estado },
-		after: { estado: "cancelada", motivo },
+		await recordAudit(tx, {
+			action: "cita.cancel",
+			actor: input.actor,
+			entityId: actualizada.id,
+			entityLabel: citaLabel(actualizada),
+			summary: `Cita #${actualizada.folio} cancelada: ${motivo}`,
+			before: { estado: current.estado },
+			after: { estado: "cancelada", motivo },
+		});
+
+		return actualizada;
 	});
 
 	return cita;

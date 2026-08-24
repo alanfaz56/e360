@@ -29,7 +29,8 @@ export type NavItem = {
 		| "landmark"
 		| "shield-check"
 		| "sparkles"
-		| "truck";
+		| "truck"
+		| "message-circle";
 	permission: Permission;
 	/**
 	 * Hide the entry from anybody who ALSO holds this permission.
@@ -58,6 +59,7 @@ export const NAV: readonly NavItem[] = [
 	{ href: "/panel/dashboard", label: "Dashboard gerencial", icon: "chart-column", permission: "dashboard:ver" },
 	{ href: "/panel/agenda", label: "Agenda", icon: "calendar-days", permission: "cita:read" },
 	{ href: "/panel/citas", label: "Citas", icon: "list", permission: "cita:read" },
+	{ href: "/panel/chat", label: "Chat", icon: "message-circle", permission: "canal:chat" },
 	// The mechanic's whole app. First for them because it is the ONLY entry they hold — everyone
 	// else already has the full floor above it, so its position changes nothing.
 	{

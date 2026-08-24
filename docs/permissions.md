@@ -891,6 +891,24 @@ it does not override somebody's choice about being buzzed on their phone at 9pm.
 **Customer notifications have no fallback.** There is nobody else it could correctly go to, and
 misdirecting it would be worse than dropping it.
 
+### Canales: chat con clientes y el switch bot/humano
+
+`canal:chat` (`admin`, `gerente`, `operador` — never `taller`) gates `/panel/chat`, where staff
+read and answer a customer's WhatsApp/Telegram conversation. This is a different question from
+the Telegram staff commands (`/comentar`, `/notas`, `/reporte`): those run as the linked
+employee's own `Actor` through `can()` exactly like the panel does, gated by `nota:*`/
+`dashboard:ver`. `canal:chat` is the other direction — a customer's conversation, which has no
+`Actor` of its own and never did.
+
+Each `canal_conversacion` has a `modo`: `bot` (the automated booking flow answers, same as
+today) or `humano` (a person is answering, and the bot goes quiet on that thread). Taking over —
+`?/tomarControl` — and handing back — `?/regresarBot` — are both gated by `canal:chat`, and
+sending a reply while still in `bot` mode auto-switches to `humano`: a staff member typing an
+answer is already taking over, whether or not they clicked the button first. The webhook route
+checks `modo` before running the booking flow — a `humano` conversation only ever gets its
+inbound messages recorded, never an automated reply, so the bot and a person can never talk over
+each other on the same thread.
+
 ### Catálogo de productos y claves SAT
 
 `producto` is what the shop sells: parts, labour, consumables, sublet work. Same vocabulary as

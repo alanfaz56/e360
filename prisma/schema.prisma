@@ -56,6 +56,8 @@ model user {
   talleresRevisados   taller[]                   @relation("tallerRevisadoPor")
   canalesVinculados   canal_identidad[]          @relation("canalIdentidadUsuario")
   canalVinculaciones  canal_vinculacion[]        @relation("canalVinculacionUsuario")
+  conversacionesTomadas canal_conversacion[]     @relation("conversacionTomadaPor")
+  mensajesEnviados      canal_mensaje[]          @relation("mensajeAutor")
   usosIA              ia_uso[]                   @relation("iaUsoActor")
   reportesIAGenerados nota_reporte_ia[]          @relation("notaReporteIaGeneradoPor")
 
@@ -243,6 +245,7 @@ model cliente {
   notificaciones    notificacion[]     @relation("notificacionCliente")
   suscripcionesPush push_suscripcion[] @relation("pushSuscripcionCliente")
   canalesVinculados canal_identidad[]
+  conversaciones    canal_conversacion[]
 
   @@index([nombreCompleto])
   @@index([rfc])
@@ -1028,6 +1031,12 @@ model factura {
   /// Which environment stamped it. A sandbox document must never be mistaken for a fiscal one.
   pacEntorno           String?   @db.VarChar(16)
   timbradaAt           DateTime?
+  /// Claimed right before the PAC call, cleared implicitly once `uuid` is set. A concurrent second
+  /// `timbrarFactura` sees a fresh claim here and refuses instead of also calling the PAC — the
+  /// atomic guard a plain `if (factura.uuid)` read can't provide across two racing requests. A
+  /// claim older than the PAC's own timeout is treated as abandoned (a crashed/failed attempt),
+  /// so a legitimate retry is never permanently blocked by one.
+  timbrandoAt          DateTime?
   emitidaAt            DateTime?
   canceladaAt          DateTime?
   canceladoMotivo      String?   @db.VarChar(255)
@@ -1441,6 +1450,62 @@ model canal_vinculacion {
   creadoAt   DateTime  @default(now())
 
   @@map("canal_vinculacion")
+}
+
+/// A WhatsApp/Telegram conversation thread — the customer-facing counterpart to
+/// `canal_vinculacion`'s staff linking. One row per (canal, idExterno), living for as long as the
+/// conversation does — unlike `conversacion_estado`'s 30-minute booking-flow TTL, this is meant to
+/// persist. `modo` is the human-takeover switch: a person answering directly stops the bot from
+/// also replying to the same incoming message.
+model canal_conversacion {
+  id        String @id
+  canal     String @db.VarChar(16)
+  idExterno String @db.VarChar(64)
+  /// Display name from the provider (WhatsApp profile name, Telegram @username) — never the
+  /// lookup key, same rule `canal_identidad.nombreCanal` follows.
+  nombreCanal String? @db.VarChar(64)
+
+  clienteId String?
+  cliente   cliente? @relation(fields: [clienteId], references: [id], onDelete: SetNull)
+
+  /// bot | humano
+  modo        String    @default("bot") @db.VarChar(16)
+  tomadaPorId String?
+  tomadaPor   user?     @relation("conversacionTomadaPor", fields: [tomadaPorId], references: [id], onDelete: SetNull)
+  tomadaAt    DateTime?
+
+  /// Denormalized for the conversation list, so it never has to aggregate `canal_mensaje` to sort
+  /// or preview — the same reason `nota_servicio` keeps its own `_count` cache elsewhere.
+  ultimoMensajeAt    DateTime @default(now())
+  ultimoMensajeTexto String?  @db.VarChar(280)
+
+  createdAt DateTime @default(now())
+
+  mensajes canal_mensaje[]
+
+  @@unique([canal, idExterno])
+  @@map("canal_conversacion")
+}
+
+/// One message in a `canal_conversacion` — entrante (from the customer) or saliente (bot or
+/// staff). `autorId` null on a saliente message means the bot sent it; a real id means a person
+/// did, which is what the chat UI uses to tell "Ana replied" from "the bot replied".
+model canal_mensaje {
+  id             String             @id
+  conversacionId String
+  conversacion   canal_conversacion @relation(fields: [conversacionId], references: [id], onDelete: Cascade)
+
+  /// entrante | saliente
+  direccion String @db.VarChar(10)
+  texto     String
+
+  autorId String?
+  autor   user?   @relation("mensajeAutor", fields: [autorId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([conversacionId, createdAt])
+  @@map("canal_mensaje")
 }
 
 // ============================================================================================

@@ -468,9 +468,16 @@ export async function consumirFifo(
 		ultimoCosto = costoUnitario;
 		const costo = toma * costoUnitario;
 
+		// Atomic decrement, not the absolute `disponible - toma` this read computed — the same
+		// reason `producto.existencia` below uses `decrement` instead of a computed value. Two
+		// concurrent consumptions reading this same layer before either commits would otherwise
+		// silently overwrite one another's decrement (a lost update); with `decrement`, the DB does
+		// the subtraction itself, and if that ever pushes `restante` past what the `>= 0` CHECK
+		// constraint allows, the write fails loudly and the whole transaction rolls back — instead
+		// of quietly leaving the layer ledger disagreeing with `existencia`.
 		await tx.inventario_capa.update({
 			where: { id: capa.id },
-			data: { restante: dec(disponible - toma) },
+			data: { restante: { decrement: dec(toma) } },
 		});
 
 		await tx.inventario_movimiento.create({
@@ -809,6 +816,22 @@ export async function resolverSolicitud(input: { actor: Actor; id: string; estad
 	}
 
 	const solicitud = await prisma.$transaction(async (tx) => {
+		// Claim atomically before doing anything else in this transaction — `actual.estado` above
+		// was read outside it, so a concurrent duplicate call (double-click, two tabs) could pass
+		// that same read before either commits. `updateMany` accepts a non-unique filter where
+		// `update` doesn't; a `count` of 0 means somebody else's call already claimed this solicitud
+		// a moment ago, and this one backs off instead of also consuming inventory for it.
+		const claimada = await tx.solicitud_refaccion.updateMany({
+			where: { id: actual.id, estado: "pendiente" },
+			data: {
+				estado: input.estado,
+				resolucionMotivo: motivo,
+				resueltaPorId: input.actor.id,
+				resueltaAt: new Date(),
+			},
+		});
+		if (claimada.count === 0) throw new ClienteError(409, "Esa solicitud ya se resolvió.");
+
 		if (input.estado === "surtida") {
 			await consumirFifo(tx, {
 				actor: input.actor,
@@ -819,14 +842,8 @@ export async function resolverSolicitud(input: { actor: Actor; id: string; estad
 			});
 		}
 
-		const guardada = await tx.solicitud_refaccion.update({
+		const guardada = await tx.solicitud_refaccion.findUniqueOrThrow({
 			where: { id: actual.id },
-			data: {
-				estado: input.estado,
-				resolucionMotivo: motivo,
-				resueltaPorId: input.actor.id,
-				resueltaAt: new Date(),
-			},
 			include: SOLICITUD_INCLUDE,
 		});
 

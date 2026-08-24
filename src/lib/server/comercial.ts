@@ -1978,6 +1978,18 @@ export async function surtirCotizacion(input: { actor: Actor; id: string }) {
 	const resultado = await prisma.$transaction(async (tx) => {
 		let costo = 0;
 		for (const { concepto, falta } of pendientes) {
+			// Claim this line atomically before consuming anything for it — `pendientes` above was
+			// computed from a read taken before this transaction opened, so a concurrent duplicate
+			// call (double-click, two tabs) could have already surtido this exact line a moment ago.
+			// `updateMany`'s `where` can carry the non-unique `surtido` condition `update` can't; a
+			// `count` of 0 means somebody else's call already claimed it, and this one skips the
+			// line instead of also drawing inventory for it.
+			const claimado = await tx.cotizacion_concepto.updateMany({
+				where: { id: concepto.id, surtido: concepto.surtido },
+				data: { surtido: new Prisma.Decimal(Number(concepto.cantidad).toFixed(3)) },
+			});
+			if (claimado.count === 0) continue;
+
 			const receta = await tx.producto_receta.findMany({ where: { paqueteId: concepto.productoId! } });
 			if (receta.length > 0) {
 				const nombre = porId.get(concepto.productoId!)?.nombre ?? "";
@@ -2004,10 +2016,6 @@ export async function surtirCotizacion(input: { actor: Actor; id: string }) {
 				costo += costoTotal;
 			}
 
-			await tx.cotizacion_concepto.update({
-				where: { id: concepto.id },
-				data: { surtido: new Prisma.Decimal(Number(concepto.cantidad).toFixed(3)) },
-			});
 		}
 
 		await recordAudit(tx, {
