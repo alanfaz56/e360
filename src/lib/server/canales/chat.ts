@@ -72,6 +72,20 @@ export async function registrarMensajeBot(conversacionId: string, texto: string)
 	]);
 }
 
+/**
+ * Same as `registrarMensajeBot`, keyed by channel + external id instead of the conversation's own
+ * id — for call sites (Telegram's many command handlers) that only ever have the chat id on hand.
+ */
+export async function registrarMensajeBotPorExterno(
+	canal: "whatsapp" | "telegram",
+	idExterno: string,
+	texto: string,
+): Promise<void> {
+	const conversacion = await prisma.canal_conversacion.findUnique({ where: { canal_idExterno: { canal, idExterno } } });
+	if (!conversacion) return; // no inbound recorded for this chat yet — nothing to attach the reply to
+	await registrarMensajeBot(conversacion.id, texto);
+}
+
 /** List conversations for the inbox, most recently active first. */
 export async function listConversaciones(actor: Actor) {
 	requireChat(actor);

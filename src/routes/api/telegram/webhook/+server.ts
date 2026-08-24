@@ -5,12 +5,13 @@ import { RANGO_OPCIONES } from "$lib/dashboard-constantes";
 import { esMimePermitido, limiteDeTipo, megas, tipoDeMime } from "$lib/notas";
 import prisma from "$lib/prisma";
 import { can } from "$lib/roles";
+import * as chat from "$lib/server/canales/chat";
 import * as booking from "$lib/server/canales/conversacion";
 import { actorPorCanal, redimirVinculacion } from "$lib/server/canales/identidad";
 import * as notasFlujo from "$lib/server/canales/notas-flujo";
 import {
 	descargarArchivo,
-	enviarMensaje,
+	enviarMensaje as enviarMensajeApi,
 	esSecretoValido,
 	responderCallback,
 	telegramConfigurado,
@@ -28,6 +29,20 @@ import type { Actor } from "$lib/server/guard";
 const CANAL = "telegram" as const;
 
 const MENU_INICIAL = [{ texto: "📅 Agendar una cita", callback: "menu:cita" }];
+
+/**
+ * Sends the bot's reply and records it in the shared chat log (`/panel/chat`), mirroring the
+ * WhatsApp webhook. Shadows the raw API call so every existing `enviarMensaje(...)` call site
+ * below logs for free — none of them need to know about `canal_conversacion`.
+ */
+async function enviarMensaje(
+	chatId: string,
+	texto: string,
+	opciones?: Parameters<typeof enviarMensajeApi>[2],
+): Promise<void> {
+	await enviarMensajeApi(chatId, texto, opciones);
+	await chat.registrarMensajeBotPorExterno(CANAL, chatId, texto);
+}
 
 /**
  * POST /api/telegram/webhook — Telegram calls this on every message/button tap. ANONYMOUS by
@@ -95,6 +110,14 @@ async function manejarCallback(cb: NonNullable<TelegramUpdate["callback_query"]>
 	const chatId = String(cb.message?.chat.id ?? cb.from.id);
 	await responderCallback(cb.id);
 
+	const { modo } = await chat.registrarMensajeEntrante({
+		canal: CANAL,
+		idExterno: chatId,
+		texto: cb.data ? `(botón) ${cb.data}` : "(botón)",
+		nombreCanal: cb.from.username,
+	});
+	if (modo !== "bot") return; // human already has this thread — stay quiet, just recorded above
+
 	if (cb.data === "menu:cita") {
 		await booking.iniciarBooking(CANAL, chatId);
 		await enviarMensaje(chatId, "¿Cuál es tu nombre?");
@@ -120,6 +143,14 @@ async function manejarMensaje(msg: TelegramMessage) {
 		// works with or without this button. Reserved for the customer-linking follow-up.
 		return;
 	}
+
+	const { modo } = await chat.registrarMensajeEntrante({
+		canal: CANAL,
+		idExterno: chatId,
+		texto: texto || "(mensaje no compatible: usa texto)",
+		nombreCanal: msg.from?.username,
+	});
+	if (modo !== "bot") return; // human already has this thread — stay quiet, just recorded above
 
 	if (texto === "/start") {
 		const actor = await actorPorCanal(CANAL, chatId);
