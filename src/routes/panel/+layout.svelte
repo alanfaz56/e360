@@ -2,6 +2,7 @@
 	import Menu from "@lucide/svelte/icons/menu";
 	import X from "@lucide/svelte/icons/x";
 	import LogOut from "@lucide/svelte/icons/log-out";
+	import ChevronDown from "@lucide/svelte/icons/chevron-down";
 	import Icon from "$lib/components/Icon.svelte";
 	import NotificationBell from "$lib/components/NotificationBell.svelte";
 	import NotificationDrawer from "$lib/components/NotificationDrawer.svelte";
@@ -19,6 +20,19 @@
 	// entry has to match exactly or it would light up on every screen.
 	const isActive = (href: string) =>
 		href === "/panel" ? page.url.pathname === "/panel" : page.url.pathname.startsWith(href);
+
+	// Consecutive same-`grupo` entries fold into one accordion (nav.ts's own order is the
+	// grouping — see the comment there). An item with no `grupo` stays a flat, one-click row:
+	// only the lower-frequency clusters cost a fold, never the daily-driver screens.
+	const secciones = $derived.by(() => {
+		const out: { grupo: string | null; items: typeof data.nav }[] = [];
+		for (const item of data.nav) {
+			const actual = out.at(-1);
+			if (item.grupo && actual?.grupo === item.grupo) actual.items.push(item);
+			else out.push({ grupo: item.grupo ?? null, items: [item] });
+		}
+		return out;
+	});
 </script>
 
 <div class="min-h-svh bg-sand-50">
@@ -97,20 +111,66 @@
 			class="flex-1 space-y-1 p-3"
 			aria-label="Secciones"
 		>
-			{#each data.nav as item (item.href)}
-				<a
-					href={item.href}
-					aria-current={isActive(item.href) ? "page" : undefined}
-					class="flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors
-						{isActive(item.href) ? 'bg-brand-50 text-brand-700' : 'text-sand-700 hover:bg-sand-100 hover:text-sand-950'}"
-				>
-					<Icon
-						name={item.icon}
-						size={18}
-						aria-hidden="true"
-					/>
-					{item.label}
-				</a>
+			{#each secciones as seccion (seccion.grupo ?? seccion.items[0].href)}
+				{#if seccion.grupo === null}
+					{@const item = seccion.items[0]}
+					<a
+						href={item.href}
+						aria-current={isActive(item.href) ? "page" : undefined}
+						class="flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors
+							{isActive(item.href) ? 'bg-brand-50 text-brand-700' : 'text-sand-700 hover:bg-sand-100 hover:text-sand-950'}"
+					>
+						<Icon
+							name={item.icon}
+							size={18}
+							aria-hidden="true"
+						/>
+						{item.label}
+					</a>
+				{:else}
+					<!-- Native disclosure: no script to open/close it, and the right group starts open
+					     on its own — `open` is just derived from the current route, same as `isActive`
+					     for a flat link. -->
+					<details
+						open={seccion.items.some((i) => isActive(i.href))}
+						class="group"
+					>
+						<summary
+							class="flex cursor-pointer list-none items-center justify-between gap-2 rounded-md px-3 py-2 text-sm font-medium text-sand-700 transition-colors hover:bg-sand-100 hover:text-sand-950 [&::-webkit-details-marker]:hidden"
+						>
+							<span class="flex items-center gap-3">
+								<Icon
+									name={seccion.items[0].icon}
+									size={18}
+									aria-hidden="true"
+								/>
+								{seccion.grupo}
+							</span>
+							<ChevronDown
+								size={16}
+								class="shrink-0 text-sand-400 transition-transform group-open:rotate-180"
+								aria-hidden="true"
+							/>
+						</summary>
+						<div class="mt-1 ml-3 space-y-1 border-l border-sand-200 pl-3">
+							{#each seccion.items as item (item.href)}
+								<a
+									href={item.href}
+									aria-current={isActive(item.href) ? "page" : undefined}
+									class="flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors
+										{isActive(item.href) ? 'bg-brand-50 text-brand-700' : 'text-sand-700 hover:bg-sand-100 hover:text-sand-950'}"
+								>
+									<Icon
+										name={item.icon}
+										size={16}
+										aria-hidden="true"
+									/>
+									{item.label}
+								</a>
+							{/each}
+						</div>
+					</details>
+				{/if}
 			{/each}
 		</nav>
 

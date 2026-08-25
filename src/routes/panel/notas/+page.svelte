@@ -28,7 +28,15 @@
 	const INPUT =
 		"mt-1 w-full rounded-md border border-sand-300 bg-white px-3 py-2 text-sm focus:border-brand-600 focus:outline-none";
 
-	const hayFiltros = $derived(Boolean(data.filtros.q || data.filtros.estado || data.filtros.abiertas));
+	// "Solo abiertas" is the default now, so it isn't a filter worth a "Limpiar" link — showing
+	// everything (abiertas explicitly off) is the deviation.
+	const hayFiltros = $derived(Boolean(data.filtros.q || data.filtros.estado || !data.filtros.abiertas));
+
+	// Entregada/cancelada are history, not work in progress — hidden columns while "Solo abiertas"
+	// is on instead of rendered empty, same information "abiertas" already filtered out of the rows.
+	const columnasTablero = $derived(
+		data.filtros.abiertas ? data.estados.filter((e) => e.value !== "entregada" && e.value !== "cancelada") : data.estados,
+	);
 	const from = $derived(data.total === 0 ? 0 : (data.page - 1) * data.perPage + 1);
 	const to = $derived(Math.min(data.page * data.perPage, data.total));
 
@@ -41,7 +49,7 @@
 	// without it — the card is always a link to the note.
 
 	const puedeSoltar = (nota: Nota, destino: string) => puedeMoverNota(nota, destino, data.puede);
-	const esMovible = (nota: Nota) => data.estados.some((e) => puedeSoltar(nota, e.value));
+	const esMovible = (nota: Nota) => columnasTablero.some((e) => puedeSoltar(nota, e.value));
 
 	let arrastrandoId = $state<string | null>(null);
 	let columnaActiva = $state<string | null>(null);
@@ -118,7 +126,7 @@
 			</Button>
 		</span>
 		<Button
-			href={searchHref(page.url, { abiertas: data.filtros.abiertas ? null : "1", page: null })}
+			href={searchHref(page.url, { abiertas: data.filtros.abiertas ? "0" : null, page: null })}
 			variant={data.filtros.abiertas ? "primary" : "outline"}
 		>
 			Solo abiertas
@@ -159,10 +167,10 @@
 			</select>
 		{/snippet}
 	</Field>
-	{#if data.filtros.abiertas}<input
+	{#if !data.filtros.abiertas}<input
 			type="hidden"
 			name="abiertas"
-			value="1"
+			value="0"
 		/>{/if}
 
 	<div class="flex flex-wrap items-end gap-2 sm:col-span-2 lg:col-span-4">
@@ -214,7 +222,7 @@
 	-->
 	<div class="overflow-x-auto pb-2">
 		<div class="flex min-w-max gap-3">
-			{#each data.estados as col (col.value)}
+			{#each columnasTablero as col (col.value)}
 				{@const enCol = data.notas.filter((n) => n.estado === col.value)}
 				{@const admite = arrastrada !== null && puedeSoltar(arrastrada, col.value)}
 				<section

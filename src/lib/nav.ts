@@ -33,6 +33,14 @@ export type NavItem = {
 		| "message-circle";
 	permission: Permission;
 	/**
+	 * Collapses this entry into an accordion with every other item sharing the same label —
+	 * consecutive entries only (the array's own order IS the grouping, see NAV below). An item
+	 * with no `grupo` renders flat, same as before: the daily-driver screens stay one click away
+	 * instead of behind a fold, and only the lower-frequency clusters collapse to save the
+	 * vertical space an 18-row rail was costing on a phone.
+	 */
+	grupo?: string;
+	/**
 	 * Hide the entry from anybody who ALSO holds this permission.
 	 *
 	 * For the one case where a narrow screen and a wide one overlap: "Mi trabajo" lists the notes
@@ -70,26 +78,46 @@ export const NAV: readonly NavItem[] = [
 		ocultarSi: "nota:read",
 	},
 	{ href: "/panel/notas", label: "Notas de servicio", icon: "clipboard-list", permission: "nota:read" },
+
+	// Everything below is a lower-frequency screen, grouped into an accordion per cluster.
+	// Consecutive `grupo` entries collapse together in the sidebar — order here is the grouping.
+
 	// Named for what it answers, not for one of the two things it lists: quotes, invoices, what was
 	// collected and what is still owed, over a period.
-	{ href: "/panel/cotizaciones", label: "Dinero", icon: "receipt-text", permission: "cotizacion:read" },
-	{ href: "/panel/inventario", label: "Inventario", icon: "package", permission: "producto:read" },
-	{ href: "/panel/clientes", label: "Clientes", icon: "contact", permission: "cliente:read" },
-	{ href: "/panel/unidades", label: "Unidades", icon: "car", permission: "unidad:read" },
-	{ href: "/panel/talleres", label: "Talleres aliados", icon: "wrench", permission: "taller:read" },
-	{ href: "/panel/proveedores", label: "Proveedores", icon: "truck", permission: "proveedor:read" },
-	{ href: "/panel/recordatorios", label: "Recordatorios", icon: "bell", permission: "recordatorio:manage" },
-	{ href: "/panel/usuarios", label: "Usuarios", icon: "users", permission: "user:list" },
-	{ href: "/panel/auditoria", label: "Auditoría", icon: "scroll-text", permission: "audit:read" },
-	{ href: "/panel/ia-uso", label: "Uso de IA", icon: "sparkles", permission: "ia:uso_read" },
-	{ href: "/panel/empresa", label: "Datos de la empresa", icon: "contact", permission: "empresa:manage" },
+	{ href: "/panel/cotizaciones", label: "Dinero", icon: "receipt-text", permission: "cotizacion:read", grupo: "Finanzas" },
 	{
 		href: "/panel/cuentas-bancarias",
 		label: "Cuentas bancarias",
 		icon: "landmark",
 		permission: "cuenta_bancaria:manage",
+		grupo: "Finanzas",
 	},
-	{ href: "/panel/permisos", label: "Permisos", icon: "shield-check", permission: "permisos:manage" },
+
+	{ href: "/panel/inventario", label: "Inventario", icon: "package", permission: "producto:read", grupo: "Suministros" },
+	{ href: "/panel/proveedores", label: "Proveedores", icon: "truck", permission: "proveedor:read", grupo: "Suministros" },
+	{ href: "/panel/talleres", label: "Talleres aliados", icon: "wrench", permission: "taller:read", grupo: "Suministros" },
+
+	{ href: "/panel/clientes", label: "Clientes", icon: "contact", permission: "cliente:read", grupo: "Clientes" },
+	{ href: "/panel/unidades", label: "Unidades", icon: "car", permission: "unidad:read", grupo: "Clientes" },
+	{
+		href: "/panel/recordatorios",
+		label: "Recordatorios",
+		icon: "bell",
+		permission: "recordatorio:manage",
+		grupo: "Clientes",
+	},
+
+	{ href: "/panel/usuarios", label: "Usuarios", icon: "users", permission: "user:list", grupo: "Administración" },
+	{ href: "/panel/auditoria", label: "Auditoría", icon: "scroll-text", permission: "audit:read", grupo: "Administración" },
+	{ href: "/panel/ia-uso", label: "Uso de IA", icon: "sparkles", permission: "ia:uso_read", grupo: "Administración" },
+	{
+		href: "/panel/empresa",
+		label: "Datos de la empresa",
+		icon: "contact",
+		permission: "empresa:manage",
+		grupo: "Administración",
+	},
+	{ href: "/panel/permisos", label: "Permisos", icon: "shield-check", permission: "permisos:manage", grupo: "Administración" },
 	// Last, and only for us: the PAC's credentials and what stamping costs. An Admin at the shop
 	// holds `ajustes:read` in the registry and still never sees this row — see `soloDueno`.
 	{
@@ -98,5 +126,6 @@ export const NAV: readonly NavItem[] = [
 		icon: "settings",
 		permission: "ajustes:read",
 		soloDueno: true,
+		grupo: "Administración",
 	},
 ];

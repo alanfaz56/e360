@@ -20,6 +20,11 @@ export const load: ServerLoad = async ({ locals, url }) => {
 	const actor = requirePermission(locals, "nota:read");
 	const query = parseNotaQuery(url.searchParams);
 
+	// Solo abiertas is the landing default — "where is every vehicle stuck" is the question this
+	// screen answers, not the full delivered/cancelled history. `abiertas=0` is the one explicit
+	// way out, so the toggle and "Limpiar filtros" both have a real URL to land on.
+	if (url.searchParams.get("abiertas") !== "0") query.abiertas = true;
+
 	// The board is the default, same as citas: "where is every vehicle stuck" is the question asked
 	// twenty times a day, and a table sorted by date cannot answer it. `?vista=tabla` opts out and
 	// is what the paginated, long-range searches want.
@@ -30,6 +35,25 @@ export const load: ServerLoad = async ({ locals, url }) => {
 	if (tablero) query.perPage = 200;
 
 	const listado = await listNotas(query);
+
+	// Closed history can be capped without losing anything real — it isn't still-open work. An
+	// open note never can be: past `perPage` total notas, sorting the whole board by recency alone
+	// starts quietly burying an old stuck-open job under a pile of newer closed ones (same failure
+	// the comment above already names for a paginated column — just triggered by volume instead of
+	// a page control). Scoped to the plain "show everything" board: a specific `estado` search is
+	// already a bounded, exact query with no truncation risk, and `abiertas` alone never hits this
+	// path either — its own result set is always small.
+	let notas = listado.notas;
+	if (tablero && !query.abiertas && !query.estado) {
+		const yaIncluidas = new Set(notas.map((n) => n.id));
+		// No real page cap here — how many vehicles can physically be open at once is bounded by
+		// the shop's own capacity, not by how much history has piled up.
+		const { notas: abiertas } = await listNotas({ ...query, abiertas: true, page: 1, perPage: 500 });
+		const faltantes = abiertas.filter((n) => !yaIncluidas.has(n.id));
+		if (faltantes.length > 0) {
+			notas = [...faltantes, ...notas].sort((a, b) => b.recibidaAt.localeCompare(a.recibidaAt));
+		}
+	}
 
 	const puede = {
 		crear: can(actor.role, "nota:create"),
@@ -59,6 +83,7 @@ export const load: ServerLoad = async ({ locals, url }) => {
 
 	return {
 		...listado,
+		notas,
 		tablero,
 		talleres,
 		entregadores,
