@@ -9,6 +9,7 @@ import {
 	conceptoTipoLabel,
 	cotizacionEstadoLabel,
 	cotizacionInternaEstadoLabel,
+	cotizacionVencida,
 	esCredito,
 	facturaEstadoLabel,
 	importeConcepto,
@@ -70,47 +71,61 @@ const COTIZACION_INCLUDE = {
 
 type CotizacionRow = Prisma.cotizacionGetPayload<{ include: typeof COTIZACION_INCLUDE }>;
 
-export const publicCotizacion = (c: CotizacionRow) => ({
-	id: c.id,
-	folio: c.folio,
-	notaId: c.notaId,
-	notaFolio: c.nota?.folio ?? null,
-	clienteNombre: c.nota?.cliente?.nombreCompleto ?? null,
-	estado: c.estado,
-	estadoLabel: cotizacionEstadoLabel(c.estado),
-	// The shop's own track, alongside the customer's. Two axes, two columns — see COTIZACION_INTERNOS.
-	estadoInterno: c.estadoInterno,
-	estadoInternoLabel: cotizacionInternoLabel(c.estadoInterno),
-	subtotal: monto(c.subtotal),
-	iva: monto(c.iva),
-	total: monto(c.total),
-	vigenciaHasta: c.vigenciaHasta?.toISOString() ?? null,
-	notas: c.notas,
-	enviadaAt: c.enviadaAt?.toISOString() ?? null,
-	autorizadaPorContactoId: c.autorizadaPorContactoId,
-	autorizadaPorNombre: c.autorizadaPorContacto?.nombre ?? null,
-	autorizadaMedio: c.autorizadaMedio,
-	autorizadaAt: c.autorizadaAt?.toISOString() ?? null,
-	rechazadaMotivo: c.rechazadaMotivo,
-	creadaPor: c.creadaPor?.name ?? null,
-	conceptos: c.conceptos.map((x) => ({
-		id: x.id,
-		tipo: x.tipo,
-		tipoLabel: conceptoTipoLabel(x.tipo),
-		descripcion: x.descripcion,
-		cantidad: x.cantidad.toFixed(2),
-		precioUnitario: monto(x.precioUnitario),
-		importe: monto(x.importe),
-		productoId: x.productoId,
-		claveProdServ: x.claveProdServ,
-		claveUnidad: x.claveUnidad,
-		surtido: x.surtido.toFixed(3),
-		// A line is fully issued when what left the shelf reaches what was quoted. Derived, never
-		// a flag somebody ticks — that is how stock and paperwork stop agreeing.
-		surtidoCompleto: Number(x.surtido) >= Number(x.cantidad),
-	})),
-	createdAt: c.createdAt.toISOString(),
-});
+/**
+ * `vencida` is never stored — it is `enviada` past its own `vigenciaHasta`, computed here the
+ * same way `publicFactura` computes `diasParaVencer`: nothing to write means nothing to drift
+ * from the clock, and no cron has to sweep it. The stored `estado` stays `enviada` underneath —
+ * `cambiarEstadoCotizacion` still authorizes it off the real state, this only changes what's shown.
+ */
+export const publicCotizacion = (c: CotizacionRow) => {
+	// `estado` stays the REAL stored value — `siguientesCliente`/`cambiarEstadoCotizacion` key off
+	// it, and a late customer response must still be recordable past the deadline. Only the LABEL
+	// (and tone, via `cotizacionEstadoTone` reading the same raw estado) shows "Vencida" — display
+	// only, same seam `publicFactura`'s `diasParaVencer` uses for the identical due-date problem.
+	const vencida = cotizacionVencida(c.estado, c.vigenciaHasta);
+
+	return {
+		id: c.id,
+		folio: c.folio,
+		notaId: c.notaId,
+		notaFolio: c.nota?.folio ?? null,
+		clienteNombre: c.nota?.cliente?.nombreCompleto ?? null,
+		estado: c.estado,
+		estadoLabel: vencida ? cotizacionEstadoLabel("vencida") : cotizacionEstadoLabel(c.estado),
+		// The shop's own track, alongside the customer's. Two axes, two columns — see COTIZACION_INTERNOS.
+		estadoInterno: c.estadoInterno,
+		estadoInternoLabel: cotizacionInternoLabel(c.estadoInterno),
+		subtotal: monto(c.subtotal),
+		iva: monto(c.iva),
+		total: monto(c.total),
+		vigenciaHasta: c.vigenciaHasta?.toISOString() ?? null,
+		notas: c.notas,
+		enviadaAt: c.enviadaAt?.toISOString() ?? null,
+		autorizadaPorContactoId: c.autorizadaPorContactoId,
+		autorizadaPorNombre: c.autorizadaPorContacto?.nombre ?? null,
+		autorizadaMedio: c.autorizadaMedio,
+		autorizadaAt: c.autorizadaAt?.toISOString() ?? null,
+		rechazadaMotivo: c.rechazadaMotivo,
+		creadaPor: c.creadaPor?.name ?? null,
+		conceptos: c.conceptos.map((x) => ({
+			id: x.id,
+			tipo: x.tipo,
+			tipoLabel: conceptoTipoLabel(x.tipo),
+			descripcion: x.descripcion,
+			cantidad: x.cantidad.toFixed(2),
+			precioUnitario: monto(x.precioUnitario),
+			importe: monto(x.importe),
+			productoId: x.productoId,
+			claveProdServ: x.claveProdServ,
+			claveUnidad: x.claveUnidad,
+			surtido: x.surtido.toFixed(3),
+			// A line is fully issued when what left the shelf reaches what was quoted. Derived, never
+			// a flag somebody ticks — that is how stock and paperwork stop agreeing.
+			surtidoCompleto: Number(x.surtido) >= Number(x.cantidad),
+		})),
+		createdAt: c.createdAt.toISOString(),
+	};
+};
 
 export async function getCotizacion(id: string) {
 	const cotizacion = await prisma.cotizacion.findUnique({ where: { id }, include: COTIZACION_INCLUDE });
@@ -937,7 +952,8 @@ export async function actualizarCotizacionInterna(input: { actor: Actor; id: str
 		throw new ClienteError(409, "Esta estimación ya se resolvió. Crea una nueva.");
 	}
 
-	const mecanicoId = "mecanicoId" in input.body ? await validarMecanico(trim(input.body.mecanicoId)) : current.mecanicoId;
+	const mecanicoId =
+		"mecanicoId" in input.body ? await validarMecanico(trim(input.body.mecanicoId)) : current.mecanicoId;
 	const conceptos = await resolverProductosCosto(leerConceptosCosto(input.body.conceptos));
 	const total = conceptos.reduce((s, c) => s + c.importe, 0n);
 
@@ -980,7 +996,10 @@ export async function actualizarCotizacionInterna(input: { actor: Actor; id: str
 }
 
 async function exigirCotizacionDeLaNota(cotizacionId: string, notaId: string) {
-	const cot = await prisma.cotizacion.findUnique({ where: { id: cotizacionId }, select: { notaId: true, folio: true } });
+	const cot = await prisma.cotizacion.findUnique({
+		where: { id: cotizacionId },
+		select: { notaId: true, folio: true },
+	});
 	if (!cot) throw new ClienteError(404, "Cotización no encontrada");
 	if (cot.notaId !== notaId) throw new ClienteError(400, "Esa cotización no es de esta nota.");
 }
@@ -1182,7 +1201,12 @@ export async function utilidadDeCotizacion(actor: Actor, cotizacionId: string): 
 	}, 0n);
 	const costo = costoInterno + costoPartes;
 	const utilidad = venta - costo;
-	return { venta: pesos(venta), costo: pesos(costo), utilidad: pesos(utilidad), margen: margenPorcentaje(venta, costo) };
+	return {
+		venta: pesos(venta),
+		costo: pesos(costo),
+		utilidad: pesos(utilidad),
+		margen: margenPorcentaje(venta, costo),
+	};
 }
 
 // --- Crédito ---------------------------------------------------------------------------------
@@ -1656,6 +1680,11 @@ export async function crearFactura(input: { actor: Actor; body: Record<string, u
 		return creada;
 	});
 
+	// A second invoice on a cotización that was already `cobrada` reopens a balance — recompute
+	// now, the same call `registrarPago` makes, or the board keeps reading "Cobrada" while this
+	// new invoice sits unpaid.
+	await sincronizarCobranza(factura.cotizacionId);
+
 	if (factura.notaId) {
 		await avisarClienteDeNota(factura.notaId, {
 			evento: "cliente_factura",
@@ -1710,6 +1739,11 @@ export async function cancelarFactura(input: { actor: Actor; id: string; motivo:
 		});
 		return actualizada;
 	});
+
+	// Cancelling an unpaid invoice can bring a cotización's remaining balance to zero — recompute
+	// now, or a job that's actually fully collected keeps reading "por cobrar" until an unrelated
+	// payment happens to pass through it.
+	await sincronizarCobranza(factura.cotizacionId);
 
 	return factura;
 }
@@ -2015,7 +2049,6 @@ export async function surtirCotizacion(input: { actor: Actor; id: string }) {
 				});
 				costo += costoTotal;
 			}
-
 		}
 
 		await recordAudit(tx, {

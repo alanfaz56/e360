@@ -222,6 +222,55 @@ export async function abrirCapa(
 }
 
 /**
+ * Refuse a CFDI (by UUID) that was already received — the mistake that quietly doubles inventory
+ * and halves apparent cost. Shared by `registrarEntrada` and `registrarCompra`: same rule either
+ * way a purchase enters the shop.
+ */
+async function exigirCfdiNoDuplicado(uuid: string | null | undefined): Promise<void> {
+	if (!uuid) return;
+	const repetido = await prisma.inventario_entrada.findUnique({ where: { cfdiUuid: uuid }, select: { folio: true } });
+	if (repetido)
+		throw new ClienteError(409, `Ese CFDI ya se recibió en la entrada #${repetido.folio}. No se duplica.`);
+}
+
+/** Every product a purchase names must exist, not be archived, and actually carry stock. */
+async function exigirProductosParaEntrada(productoIds: string[]): Promise<void> {
+	const ids = [...new Set(productoIds)];
+	if (ids.length === 0) return;
+	const productos = await prisma.producto.findMany({
+		where: { id: { in: ids } },
+		select: { id: true, nombre: true, controlaInventario: true, archivedAt: true },
+	});
+	const porId = new Map(productos.map((p) => [p.id, p]));
+	for (const id of ids) {
+		const p = porId.get(id);
+		if (!p) throw new ClienteError(404, "Uno de los productos no existe");
+		if (p.archivedAt) throw new ClienteError(409, `${p.nombre} está archivado.`);
+		if (!p.controlaInventario) throw new ClienteError(400, `${p.nombre} no maneja inventario.`);
+	}
+}
+
+/** Open one FIFO layer per line of a purchase, all against the same `inventario_entrada`. */
+async function abrirCapas(
+	tx: Prisma.TransactionClient,
+	input: {
+		lineas: { productoId: string; cantidad: number; costoUnitario: number }[];
+		entradaId: string;
+		actor: Actor;
+	},
+): Promise<void> {
+	for (const l of input.lineas) {
+		await abrirCapa(tx, {
+			productoId: l.productoId,
+			cantidad: l.cantidad,
+			costoUnitario: l.costoUnitario,
+			entradaId: input.entradaId,
+			actor: input.actor,
+		});
+	}
+}
+
+/**
  * Receive goods. Opens one FIFO layer per line and moves `producto.existencia` in the same
  * transaction.
  *
@@ -237,28 +286,8 @@ export async function registrarEntrada(input: { actor: Actor; body: Record<strin
 	const cfdi = xml ? leerCfdi(xml) : null;
 	if (xml && !cfdi) throw new ClienteError(400, "Ese archivo no parece un CFDI. Puedes registrar la entrada sin él.");
 
-	if (cfdi?.uuid) {
-		const repetido = await prisma.inventario_entrada.findUnique({
-			where: { cfdiUuid: cfdi.uuid },
-			select: { folio: true },
-		});
-		if (repetido) {
-			throw new ClienteError(409, `Ese CFDI ya se recibió en la entrada #${repetido.folio}. No se duplica.`);
-		}
-	}
-
-	// Every product must exist and must actually carry stock before anything is written.
-	const productos = await prisma.producto.findMany({
-		where: { id: { in: [...new Set(lineas.map((l) => l.productoId))] } },
-		select: { id: true, nombre: true, controlaInventario: true, archivedAt: true },
-	});
-	const porId = new Map(productos.map((p) => [p.id, p]));
-	for (const l of lineas) {
-		const p = porId.get(l.productoId);
-		if (!p) throw new ClienteError(404, "Uno de los productos no existe");
-		if (p.archivedAt) throw new ClienteError(409, `${p.nombre} está archivado.`);
-		if (!p.controlaInventario) throw new ClienteError(400, `${p.nombre} no maneja inventario.`);
-	}
+	await exigirCfdiNoDuplicado(cfdi?.uuid);
+	await exigirProductosParaEntrada(lineas.map((l) => l.productoId));
 
 	const entrada = await prisma.$transaction(async (tx) => {
 		const creada = await tx.inventario_entrada.create({
@@ -278,15 +307,7 @@ export async function registrarEntrada(input: { actor: Actor; body: Record<strin
 			},
 		});
 
-		for (const l of lineas) {
-			await abrirCapa(tx, {
-				productoId: l.productoId,
-				cantidad: l.cantidad,
-				costoUnitario: l.costoUnitario,
-				entradaId: creada.id,
-				actor: input.actor,
-			});
-		}
+		await abrirCapas(tx, { lineas, entradaId: creada.id, actor: input.actor });
 
 		await recordAudit(tx, {
 			action: "inventario.entrada",
@@ -328,27 +349,8 @@ export async function registrarCompra(input: {
 	if (!cfdi) throw new ClienteError(400, "Ese archivo no parece un CFDI.");
 	if (!cfdi.uuid) throw new ClienteError(400, "El CFDI no trae folio fiscal (UUID).");
 
-	const repetido = await prisma.inventario_entrada.findUnique({
-		where: { cfdiUuid: cfdi.uuid },
-		select: { folio: true },
-	});
-	if (repetido) {
-		throw new ClienteError(409, `Ese CFDI ya se recibió en la entrada #${repetido.folio}. No se duplica.`);
-	}
-
-	if (input.lineas.length > 0) {
-		const productos = await prisma.producto.findMany({
-			where: { id: { in: [...new Set(input.lineas.map((l) => l.productoId))] } },
-			select: { id: true, nombre: true, controlaInventario: true, archivedAt: true },
-		});
-		const porId = new Map(productos.map((p) => [p.id, p]));
-		for (const l of input.lineas) {
-			const p = porId.get(l.productoId);
-			if (!p) throw new ClienteError(404, "Uno de los productos no existe");
-			if (p.archivedAt) throw new ClienteError(409, `${p.nombre} está archivado.`);
-			if (!p.controlaInventario) throw new ClienteError(400, `${p.nombre} no maneja inventario.`);
-		}
-	}
+	await exigirCfdiNoDuplicado(cfdi.uuid);
+	await exigirProductosParaEntrada(input.lineas.map((l) => l.productoId));
 
 	const proveedorId = cfdi.emisorRfc
 		? await resolverProveedorPorCfdi(cfdi.emisorRfc, cfdi.emisorNombre ?? cfdi.emisorRfc)
@@ -370,15 +372,7 @@ export async function registrarCompra(input: {
 			},
 		});
 
-		for (const l of input.lineas) {
-			await abrirCapa(tx, {
-				productoId: l.productoId,
-				cantidad: l.cantidad,
-				costoUnitario: l.costoUnitario,
-				entradaId: creada.id,
-				actor: input.actor,
-			});
-		}
+		await abrirCapas(tx, { lineas: input.lineas, entradaId: creada.id, actor: input.actor });
 
 		await recordAudit(tx, {
 			action: "proveedor.compra",

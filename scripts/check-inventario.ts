@@ -113,7 +113,10 @@ check("el eje del cliente no ofrece salida de un estado final", () => {
 	// The buttons on the note are rendered from this. If `autorizada` grew a way out, the counter
 	// could quietly un-approve work the customer already agreed to pay for.
 	assert.deepEqual([...siguientesCliente("borrador")], ["enviada", "rechazada"]);
-	assert.deepEqual([...siguientesCliente("enviada")], ["autorizada", "rechazada", "vencida"]);
+	// `vencida` is never a manual destination — it's computed on read (see `publicCotizacion`), not
+	// reachable through `cambiarEstadoCotizacion`. A late customer response must stay recordable
+	// past the deadline, so `enviada` keeps only the two real human transitions.
+	assert.deepEqual([...siguientesCliente("enviada")], ["autorizada", "rechazada"]);
 	for (const final of ["autorizada", "rechazada", "vencida"]) {
 		assert.deepEqual([...siguientesCliente(final)], [], `${final} debe ser terminal`);
 	}

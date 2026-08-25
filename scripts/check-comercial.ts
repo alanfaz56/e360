@@ -15,6 +15,7 @@ import {
 	FACTURA_TRANSICIONES,
 	IVA,
 	centavos,
+	cotizacionVencida,
 	esCredito,
 	formatoPesos,
 	importeConcepto,
@@ -27,7 +28,6 @@ import {
 	puedeTransicionarCotizacionInterna,
 	puedeTransicionarFactura,
 	totales,
-	utilidadCotizacion,
 } from "../src/lib/comercial.js";
 
 // --- Parsing amounts ---------------------------------------------------------------------------
@@ -116,6 +116,19 @@ for (const desde of COTIZACION_ESTADO_KEYS) {
 }
 assert.equal(puedeTransicionarCotizacion("inventado", "enviada"), false);
 
+// `vencida` is display-only — never a real transition, never written. `enviada` past its own
+// `vigenciaHasta` reads as vencida; nothing else does, and a manual `puedeTransicionarCotizacion`
+// path to it must stay closed (see the terminal-states loop above, which already covers this).
+{
+	const ahora = new Date("2026-06-15T12:00:00-07:00");
+	assert.equal(cotizacionVencida("enviada", new Date("2026-06-01"), ahora), true);
+	assert.equal(cotizacionVencida("enviada", new Date("2026-06-30"), ahora), false, "todavía no vence");
+	assert.equal(cotizacionVencida("enviada", null, ahora), false, "sin vigencia, no vence");
+	assert.equal(cotizacionVencida("autorizada", new Date("2026-06-01"), ahora), false, "ya respondida, no aplica");
+	assert.equal(cotizacionVencida("borrador", new Date("2026-06-01"), ahora), false);
+	assert.equal(puedeTransicionarCotizacion("enviada", "vencida"), false, "vencida no es un destino manual");
+}
+
 // --- Cotización interna: pendiente -> aprobada/rechazada, terminal both ways -------------------
 assert.equal(puedeTransicionarCotizacionInterna("pendiente", "aprobada"), true);
 assert.equal(puedeTransicionarCotizacionInterna("pendiente", "rechazada"), true);
@@ -126,19 +139,6 @@ for (const terminal of ["aprobada", "rechazada"] as const) {
 	}
 }
 assert.equal(puedeTransicionarCotizacionInterna("inventado", "aprobada"), false);
-
-// Utilidad only counts APROBADA estimates — pendiente/rechazada must never move the figure, or
-// resolving one later would silently change a number somebody already looked at.
-{
-	const venta = centavos("1000.00")!;
-	const internas = [
-		{ estado: "aprobada", total: centavos("300.00")! },
-		{ estado: "pendiente", total: centavos("9999.00")! },
-		{ estado: "rechazada", total: centavos("9999.00")! },
-	];
-	assert.equal(pesos(utilidadCotizacion(venta, internas)), "700.00");
-}
-assert.equal(pesos(utilidadCotizacion(centavos("1000.00")!, [])), "1000.00", "sin costos aprobados, todo es utilidad");
 
 // --- Margen, no markup ---------------------------------------------------------------------------
 // venta 100, costo 50 -> margen 50% (NOT 100%, que sería el markup sobre el costo).

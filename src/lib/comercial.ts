@@ -17,6 +17,8 @@ export const COTIZACION_ESTADOS = {
 	enviada: { label: "Enviada", tone: "warn", descripcion: "El cliente ya la tiene, falta su respuesta" },
 	autorizada: { label: "Autorizada", tone: "ok", descripcion: "El cliente aprobó el trabajo" },
 	rechazada: { label: "Rechazada", tone: "danger", descripcion: "El cliente no la aprobó" },
+	// Never a stored `estado` — see `publicCotizacion`. Kept here only so its label/tone exist for
+	// display, the same way an `estado` value would need to.
 	vencida: { label: "Vencida", tone: "neutral", descripcion: "Pasó su vigencia sin respuesta" },
 } as const satisfies Record<string, { label: string; tone: Tone; descripcion: string }>;
 
@@ -35,7 +37,10 @@ export const cotizacionEstadoTone = (v: string): Tone =>
  */
 export const COTIZACION_TRANSICIONES = {
 	borrador: ["enviada", "rechazada"],
-	enviada: ["autorizada", "rechazada", "vencida"],
+	// `vencida` is NOT a destination here — it's computed on read (see `publicCotizacion`), not a
+	// manual transition. A late customer response is still recordable past the deadline: the real
+	// stored `estado` stays `enviada` the whole time, only the label reads "Vencida".
+	enviada: ["autorizada", "rechazada"],
 	autorizada: [],
 	rechazada: [],
 	vencida: [],
@@ -49,6 +54,15 @@ export function puedeTransicionarCotizacion(desde: string, hasta: string): boole
 /** Where a quote can go next on the CUSTOMER's axis, for rendering buttons from a plain string. */
 export const siguientesCliente = (desde: string): readonly CotizacionEstado[] =>
 	isCotizacionEstado(desde) ? COTIZACION_TRANSICIONES[desde] : [];
+
+/**
+ * `enviada` past its own `vigenciaHasta` — for DISPLAY only (`publicCotizacion`'s `estadoLabel`),
+ * never written. Same reasoning as `vencimientoLabel` for facturas: a status that's computed from
+ * the clock can't drift from it the way a stored one, or a cron that forgets to run, can.
+ */
+export function cotizacionVencida(estado: string, vigenciaHasta: Date | null, ahora: Date = new Date()): boolean {
+	return estado === "enviada" && vigenciaHasta !== null && vigenciaHasta < ahora;
+}
 
 /**
  * The SHOP's track, alongside the customer's.
@@ -151,17 +165,6 @@ export const COTIZACION_INTERNA_TRANSICIONES = {
 export function puedeTransicionarCotizacionInterna(desde: string, hasta: string): boolean {
 	if (!isCotizacionInternaEstado(desde) || !isCotizacionInternaEstado(hasta)) return false;
 	return (COTIZACION_INTERNA_TRANSICIONES[desde] as readonly string[]).includes(hasta);
-}
-
-/**
- * Utilidad = venta - costo. Only `aprobada` estimates count — a `pendiente` or `rechazada` one
- * must never move the figure, or resolving one later would silently change a number somebody
- * already looked at. Computed on read, never stored: unlike `cotizacion.total`, nothing external
- * (a CFDI) depends on this being frozen.
- */
-export function utilidadCotizacion(ventaTotal: bigint, internas: { estado: string; total: bigint }[]): bigint {
-	const costo = internas.filter((i) => i.estado === "aprobada").reduce((suma, i) => suma + i.total, 0n);
-	return ventaTotal - costo;
 }
 
 /**
