@@ -12,6 +12,8 @@
 		size = "md",
 		type = "submit",
 		full = false,
+		disabled = false,
+		loading = false,
 		children,
 		...rest
 	}: {
@@ -20,6 +22,10 @@
 		size?: "sm" | "md" | "lg";
 		type?: "submit" | "button";
 		full?: boolean;
+		disabled?: boolean;
+		/** For work a click starts outside a form submit (fetch, async onclick) — una-vez.ts
+		 *  only ever sees real POSTs, so anything else has to raise its own hand for the spinner. */
+		loading?: boolean;
 		children: Snippet;
 		[key: string]: unknown;
 	} = $props();
@@ -39,6 +45,7 @@
 	const classes = $derived(
 		[
 			"inline-flex items-center justify-center gap-2 rounded-md font-bold transition-colors",
+			"disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50",
 			VARIANTS[variant],
 			SIZES[size],
 			full ? "w-full" : "",
@@ -47,14 +54,39 @@
 </script>
 
 {#if href}
-	<a {href} class={classes} {...rest}>{@render children()}</a>
+	<!--
+		An <a> has no `disabled` attribute, and JS-off users must still be unable to follow it —
+		so "disabled" here means the href is never rendered, not a class toggle. aria-disabled
+		tells assistive tech the same thing an unclickable link communicates visually.
+	-->
+	<a
+		href={disabled ? undefined : href}
+		aria-disabled={disabled || undefined}
+		aria-busy={loading || undefined}
+		class="{classes} group relative"
+		{...rest}
+	>
+		<span class="contents group-aria-busy:invisible">{@render children()}</span>
+		<LoaderCircle
+			size={16}
+			aria-hidden="true"
+			class="absolute hidden animate-spin group-aria-busy:block"
+		/>
+	</a>
 {:else}
 	<!--
-		aria-busy is set by una-vez.ts the moment a form submits — this just gives that state a
-		spinner. `contents` keeps the children in the button's own flex layout so the spinner can
-		center over them without a layout jump.
+		aria-busy is either set by una-vez.ts the moment a form submits, or by `loading` for
+		anything that isn't one — this just gives that state a spinner either way. `contents`
+		keeps the children in the button's own flex layout so the spinner can center over them
+		without a layout jump.
 	-->
-	<button {type} class="{classes} group relative" {...rest}>
+	<button
+		{type}
+		disabled={disabled || loading}
+		aria-busy={loading || undefined}
+		class="{classes} group relative"
+		{...rest}
+	>
 		<span class="contents group-aria-busy:invisible">{@render children()}</span>
 		<LoaderCircle
 			size={16}

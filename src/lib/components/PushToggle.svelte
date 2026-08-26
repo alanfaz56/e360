@@ -73,7 +73,7 @@
 			<Button
 				type="button"
 				onclick={encender}
-				disabled={trabajando}
+				loading={trabajando}
 				size={compacto ? "sm" : "md"}
 				full={!compacto}
 			>

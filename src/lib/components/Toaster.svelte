@@ -23,10 +23,38 @@
 	import { toasts, type Toast } from "$lib/toasts.svelte";
 
 	// Errors carry `vida: null` and stay until dismissed; a confirmation clears itself.
-	function autoCerrar(_nodo: HTMLElement, toast: Toast) {
+	// Hover/focus pauses the clock (WCAG 2.2.1) — a toast must not vanish out from under
+	// someone reading it or about to hit its close button.
+	function autoCerrar(nodo: HTMLElement, toast: Toast) {
 		if (toast.vida === null) return;
-		const t = setTimeout(() => toasts.quitar(toast.id), toast.vida);
-		return { destroy: () => clearTimeout(t) };
+		let restante = toast.vida;
+		let inicio = Date.now();
+		let t: ReturnType<typeof setTimeout>;
+
+		function arrancar() {
+			inicio = Date.now();
+			t = setTimeout(() => toasts.quitar(toast.id), restante);
+		}
+		function pausar() {
+			clearTimeout(t);
+			restante -= Date.now() - inicio;
+		}
+
+		arrancar();
+		nodo.addEventListener("pointerenter", pausar);
+		nodo.addEventListener("pointerleave", arrancar);
+		nodo.addEventListener("focusin", pausar);
+		nodo.addEventListener("focusout", arrancar);
+
+		return {
+			destroy: () => {
+				clearTimeout(t);
+				nodo.removeEventListener("pointerenter", pausar);
+				nodo.removeEventListener("pointerleave", arrancar);
+				nodo.removeEventListener("focusin", pausar);
+				nodo.removeEventListener("focusout", arrancar);
+			},
+		};
 	}
 </script>
 

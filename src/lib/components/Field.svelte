@@ -17,6 +17,7 @@
 		name,
 		type = "text",
 		hint,
+		error,
 		value = "",
 		required = false,
 		children,
@@ -26,11 +27,19 @@
 		name: string;
 		type?: string;
 		hint?: string;
+		error?: string;
 		value?: string;
 		required?: boolean;
 		children?: Snippet<[string]>;
 		[key: string]: unknown;
 	} = $props();
+
+	const hintId = $derived(`${name}-hint`);
+	const errorId = $derived(`${name}-error`);
+	// Both, either, or neither may be present — only wire up the ones that render.
+	const describedBy = $derived(
+		[hint ? hintId : "", error ? errorId : ""].filter(Boolean).join(" ") || undefined,
+	);
 
 	const isPassword = $derived(type === "password");
 	const isTel = $derived(type === "tel");
@@ -94,9 +103,11 @@
 				type={isPassword && revealed ? "text" : type}
 				{value}
 				{required}
-				class="mt-1 w-full rounded-md border border-sand-300 px-3 py-2 focus:border-brand-600 focus:outline-none {isPassword
-					? 'pr-11'
-					: ''}"
+				aria-invalid={error ? "true" : undefined}
+				aria-describedby={describedBy}
+				class="mt-1 w-full rounded-md border px-3 py-2 focus:outline-none {error
+					? 'border-danger focus:border-danger'
+					: 'border-sand-300 focus:border-brand-600'} {isPassword ? 'pr-11' : ''}"
 			/>
 			{#if isPassword && hydrated}
 				<button
@@ -117,6 +128,9 @@
 		</div>
 	{/if}
 	{#if hint}
-		<p class="mt-1 text-xs text-sand-500">{hint}</p>
+		<p id={hintId} class="mt-1 text-xs text-sand-500">{hint}</p>
+	{/if}
+	{#if error}
+		<p id={errorId} role="alert" class="mt-1 text-xs text-danger">{error}</p>
 	{/if}
 </div>

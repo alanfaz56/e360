@@ -20,7 +20,7 @@
 		<thead class="border-b border-sand-200 text-xs uppercase tracking-wide text-sand-500">
 			<tr>
 				{#each columns as column, i (i)}
-					<th class="px-4 py-2.5 font-medium">
+					<th scope="col" class="px-4 py-2.5 font-medium">
 						{#if column}{column}{:else}<span class="sr-only">Acciones</span>{/if}
 					</th>
 				{/each}
