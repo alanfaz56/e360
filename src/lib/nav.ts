@@ -30,7 +30,8 @@ export type NavItem = {
 		| "shield-check"
 		| "sparkles"
 		| "truck"
-		| "message-circle";
+		| "message-circle"
+		| "circle-help";
 	permission: Permission;
 	/**
 	 * Collapses this entry into an accordion with every other item sharing the same label —
@@ -128,4 +129,10 @@ export const NAV: readonly NavItem[] = [
 		soloDueno: true,
 		grupo: "Administración",
 	},
+
+	// Flat, not grouped: help should stay one click away, not buried behind an accordion. Gated
+	// on `nota:asignadas` — the one permission all four roles already hold (same key "Mi trabajo"
+	// uses), so every role sees it without inventing an "everyone" permission that doesn't exist
+	// in the registry.
+	{ href: "/panel/manual", label: "Manual de uso", icon: "circle-help", permission: "nota:asignadas" },
 ];

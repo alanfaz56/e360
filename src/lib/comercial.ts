@@ -182,6 +182,44 @@ export function margenPorcentaje(ventaTotal: bigint, costoTotal: bigint): number
 	return Math.round(margen * 10) / 10;
 }
 
+// --- Nota de venta -----------------------------------------------------------------------------
+//
+// A cash sale with NO IVA — the customer didn't ask for a CFDI. Its own object, not a `factura`
+// left unstamped: a `factura.iva` always represents a real tax figure in progress, never zero by
+// convention, so a document that will never carry tax needs a home that doesn't say otherwise.
+// `facturarNotaVenta` promotes one into a real `factura` if the customer changes their mind.
+
+export const NOTA_VENTA_ESTADOS = {
+	activa: { label: "Activa", tone: "brand", descripcion: "Vigente, puede cobrarse o facturarse" },
+	cancelada: { label: "Cancelada", tone: "danger", descripcion: "Anulada" },
+	// Not reachable by a stored transition — see `puedeTransicionarNotaVenta`. Set only by
+	// `facturarNotaVenta`, the same way `cobrada` is reached by arithmetic, not a button.
+	facturada: { label: "Facturada", tone: "ok", descripcion: "Ya se convirtió en factura con IVA" },
+} as const satisfies Record<string, { label: string; tone: Tone; descripcion: string }>;
+
+export type NotaVentaEstado = keyof typeof NOTA_VENTA_ESTADOS;
+export const NOTA_VENTA_ESTADO_KEYS = Object.keys(NOTA_VENTA_ESTADOS) as NotaVentaEstado[];
+export const isNotaVentaEstado = (v: unknown): v is NotaVentaEstado =>
+	typeof v === "string" && Object.hasOwn(NOTA_VENTA_ESTADOS, v);
+export const notaVentaEstadoLabel = (v: string) => (isNotaVentaEstado(v) ? NOTA_VENTA_ESTADOS[v].label : v);
+export const notaVentaEstadoTone = (v: string): Tone => (isNotaVentaEstado(v) ? NOTA_VENTA_ESTADOS[v].tone : "neutral");
+
+/**
+ * `activa → cancelada` only. `facturada` is deliberately not a listed destination — reached by
+ * `facturarNotaVenta`'s own logic, never by a generic "change estado" button, the same reasoning
+ * as `factura.pagada`.
+ */
+export const NOTA_VENTA_TRANSICIONES = {
+	activa: ["cancelada"],
+	cancelada: [],
+	facturada: [],
+} as const satisfies Record<NotaVentaEstado, readonly NotaVentaEstado[]>;
+
+export function puedeTransicionarNotaVenta(desde: string, hasta: string): boolean {
+	if (!isNotaVentaEstado(desde) || !isNotaVentaEstado(hasta)) return false;
+	return (NOTA_VENTA_TRANSICIONES[desde] as readonly string[]).includes(hasta);
+}
+
 // --- Factura ---------------------------------------------------------------------------------
 
 export const FACTURA_ESTADOS = {

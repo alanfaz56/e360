@@ -59,6 +59,8 @@ export const FLASH: Record<string, string> = {
 	"factura.timbrar": "Factura timbrada. Ya tiene folio fiscal.",
 	"factura.cancelarSat": "Cancelación enviada al SAT.",
 	"pago.registrar": "Pago registrado.",
+	"nota_venta.crear": "Nota de venta creada.",
+	"nota_venta.cancelar": "Nota de venta cancelada.",
 
 	// --- Ajustes del sistema ---------------------------------------------------------------------
 	"ajuste.guardar": "Ajustes guardados.",

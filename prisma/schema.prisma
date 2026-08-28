@@ -44,6 +44,7 @@ model user {
   lecturasKm        unidad_kilometraje[] @relation("kilometrajeRegistradoPor")
   cotizaciones      cotizacion[]         @relation("cotizacionCreadaPor")
   facturas          factura[]            @relation("facturaCreadaPor")
+  notasVenta        nota_venta[]         @relation("notaVentaCreadaPor")
   pagos             pago[]               @relation("pagoRegistradoPor")
   ajustes           ajuste[]             @relation("ajusteActualizadoPor")
   empresaCambios    empresa_config[]     @relation("empresaActualizadoPor")
@@ -240,6 +241,7 @@ model cliente {
   /// Not `notas` — that name is already the free-text field above.
   notasServicio nota_servicio[]
   facturas      factura[]
+  notasVenta    nota_venta[]
   recordatorios recordatorio[]
 
   notificaciones    notificacion[]     @relation("notificacionCliente")
@@ -648,6 +650,7 @@ model nota_servicio {
   transferencias nota_transferencia[]
   cotizaciones   cotizacion[]
   facturas       factura[]
+  notasVenta     nota_venta[]
   lecturas       unidad_kilometraje[]
   recordatorios  recordatorio[]
 
@@ -940,6 +943,7 @@ model cotizacion {
 
   conceptos            cotizacion_concepto[]
   facturas             factura[]
+  notasVenta           nota_venta[]
   cotizacionesInternas cotizacion_interna[]
 
   @@index([notaId])
@@ -1056,6 +1060,9 @@ model factura {
 
   pagos     pago[]
   conceptos factura_concepto[]
+  /// Set only if this factura started life as a nota_venta the customer later asked to have
+  /// stamped — see `nota_venta.facturaId`.
+  notaVenta nota_venta?
 
   @@index([clienteId])
   @@index([estado])
@@ -1101,10 +1108,16 @@ model factura_concepto {
 
 /// A payment against an invoice. Partial by design: the invoice is `pagada` when the payments
 /// cover it, never by somebody flipping a status by hand.
+/// A payment against EITHER a factura or a nota_venta — never both, never neither. Kept as one
+/// table (rather than splitting nota_venta's payments off) so payment history, saldo arithmetic
+/// and reporting have exactly one place to look; `pago_exactamente_un_destino_check` enforces the
+/// exclusivity the two nullable FKs can't express by themselves.
 model pago {
-  id        String  @id
-  facturaId String
-  factura   factura @relation(fields: [facturaId], references: [id], onDelete: Restrict)
+  id           String      @id
+  facturaId    String?
+  factura      factura?    @relation(fields: [facturaId], references: [id], onDelete: Restrict)
+  notaVentaId  String?
+  notaVenta    nota_venta? @relation(fields: [notaVentaId], references: [id], onDelete: Restrict)
 
   monto      Decimal @db.Decimal(12, 2)
   /// efectivo | tarjeta | transferencia | cheque | otro
@@ -1119,8 +1132,83 @@ model pago {
   createdAt       DateTime @default(now())
 
   @@index([facturaId])
+  @@index([notaVentaId])
   @@index([pagadoAt])
   @@map("pago")
+}
+
+/// A cash sale with NO IVA — the customer walked out without asking for a CFDI. Deliberately its
+/// own model rather than an unstamped `factura`: a `factura` row always represents a real fiscal
+/// document in the making (its `iva` is never zero-by-convention, only zero-until-computed), so
+/// reusing it here would mean teaching every factura reader "well, except when it's actually a
+/// nota de venta". If the customer later asks for a factura, `facturarNotaVenta` promotes this into
+/// a real `factura` (IVA computed on top, own folio/UUID lifecycle) and every `pago` already
+/// registered here is re-pointed at the new factura — nothing is re-collected.
+model nota_venta {
+  id     String        @id
+  folio  Int           @unique @default(autoincrement())
+  notaId String?
+  nota   nota_servicio? @relation(fields: [notaId], references: [id], onDelete: SetNull)
+  clienteId    String
+  cliente      cliente     @relation(fields: [clienteId], references: [id], onDelete: Restrict)
+  cotizacionId String?
+  cotizacion   cotizacion? @relation(fields: [cotizacionId], references: [id], onDelete: SetNull)
+
+  /// activa | cancelada | facturada. `pagada` is NOT a stored value — same reasoning as
+  /// `factura.pagada`, it falls out of the arithmetic over `pagos`, never set by hand.
+  estado String @default("activa") @db.VarChar(16)
+
+  /// No `iva` column on purpose: this document never carries tax. `total` IS the subtotal.
+  total Decimal @default(0) @db.Decimal(12, 2)
+
+  notas String?
+
+  /// Set only once promoted to a real CFDI. SetNull: cancelling/deleting the resulting factura
+  /// must not silently resurrect a nota_venta that was already superseded.
+  facturaId String?  @unique
+  factura   factura? @relation(fields: [facturaId], references: [id], onDelete: SetNull)
+
+  canceladaAt     DateTime?
+  canceladoMotivo String?   @db.VarChar(255)
+
+  creadaPorId String?
+  creadaPor   user?    @relation("notaVentaCreadaPor", fields: [creadaPorId], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  conceptos nota_venta_concepto[]
+  pagos     pago[]
+
+  @@index([notaId])
+  @@index([clienteId])
+  @@index([cotizacionId])
+  @@index([estado])
+  @@map("nota_venta")
+}
+
+/// What the nota de venta actually sells — its own lines, same vocabulary as factura_concepto.
+model nota_venta_concepto {
+  id           String     @id
+  notaVentaId  String
+  notaVenta    nota_venta @relation(fields: [notaVentaId], references: [id], onDelete: Cascade)
+
+  /// refaccion | mano_obra | insumo | externo
+  tipo           String  @db.VarChar(16)
+  descripcion    String  @db.VarChar(500)
+  cantidad       Decimal @db.Decimal(10, 2)
+  precioUnitario Decimal @db.Decimal(12, 2)
+  importe        Decimal @db.Decimal(12, 2)
+  orden          Int     @default(0)
+
+  productoId String?
+  producto   producto? @relation(fields: [productoId], references: [id], onDelete: SetNull)
+
+  claveProdServ String? @db.VarChar(8)
+  claveUnidad   String? @db.VarChar(3)
+
+  @@index([notaVentaId])
+  @@index([productoId])
+  @@map("nota_venta_concepto")
 }
 
 model configurations {
@@ -1601,6 +1689,7 @@ model producto {
   movimientos                inventario_movimiento[]
   conceptos                  cotizacion_concepto[]
   conceptosFactura           factura_concepto[]
+  conceptosNotaVenta         nota_venta_concepto[]
   solicitudes                solicitud_refaccion[]
   conceptosCotizacionInterna cotizacion_interna_concepto[]
   componentes                producto_receta[]             @relation("paqueteReceta")

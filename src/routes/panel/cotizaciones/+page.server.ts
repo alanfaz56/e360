@@ -88,6 +88,7 @@ export const load: ServerLoad = async ({ locals, url }) => {
 				timbrar: can(actor.role, "factura:timbrar"),
 				enviarCotizacion: can(actor.role, "cotizacion:send"),
 				verUtilidad: can(actor.role, "cotizacion:costo"),
+				verOrigenCfdi: can(actor.role, "inventario:entrada"),
 			},
 		};
 	} catch (err) {

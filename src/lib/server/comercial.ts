@@ -27,6 +27,9 @@ import {
 	cotizacionInternoLabel,
 	totales,
 	margenPorcentaje,
+	isNotaVentaEstado,
+	notaVentaEstadoLabel,
+	puedeTransicionarNotaVenta,
 	type CotizacionEstado,
 } from "$lib/comercial";
 import { diasEntre, enZona, fechaEnZona, hoy, parseFecha, sumarDias } from "$lib/agenda";
@@ -63,7 +66,15 @@ export const monto = (d: Prisma.Decimal) => d.toFixed(2);
 // --- Cotizaciones ----------------------------------------------------------------------------
 
 const COTIZACION_INCLUDE = {
-	conceptos: { orderBy: { orden: "asc" } },
+	conceptos: {
+		orderBy: { orden: "asc" },
+		include: {
+			// Which purchase a line came from, when it was imported from a supplier's CFDI —
+			// gated in the UI behind `inventario:entrada` (see `puede.verOrigenCfdi`), the same
+			// permission that already controls seeing/registering that compra.
+			entrada: { select: { folio: true, proveedor: true, cfdiUuid: true, cfdiEmisorNombre: true } },
+		},
+	},
 	nota: { select: { folio: true, clienteId: true, cliente: { select: { nombreCompleto: true, tipo: true } } } },
 	autorizadaPorContacto: { select: { nombre: true } },
 	creadaPor: { select: { name: true } },
@@ -122,6 +133,13 @@ export const publicCotizacion = (c: CotizacionRow) => {
 			// A line is fully issued when what left the shelf reaches what was quoted. Derived, never
 			// a flag somebody ticks — that is how stock and paperwork stop agreeing.
 			surtidoCompleto: Number(x.surtido) >= Number(x.cantidad),
+			// Traceability back to the purchase this line was imported from, when it came from a
+			// CFDI. Not money-sensitive by itself (no cost, no margin) so always present here —
+			// `puede.verOrigenCfdi` (gated by `inventario:entrada`) decides whether it's RENDERED.
+			entradaId: x.entradaId,
+			entradaFolio: x.entrada?.folio ?? null,
+			entradaProveedor: x.entrada?.proveedor ?? x.entrada?.cfdiEmisorNombre ?? null,
+			entradaCfdiUuid: x.entrada?.cfdiUuid ?? null,
 		})),
 		createdAt: c.createdAt.toISOString(),
 	};
@@ -194,11 +212,17 @@ export function rangoCreado(desde: string | null | undefined, hasta: string | nu
 export async function resumenDinero(desde: string | null, hasta: string | null) {
 	const rango = rangoCreado(desde, hasta);
 
-	const [cotizaciones, facturas, pagos] = await Promise.all([
+	const [cotizaciones, facturas, notasVenta, pagos] = await Promise.all([
 		prisma.cotizacion.findMany({ where: rango, select: { estado: true, total: true } }),
 		prisma.factura.findMany({
 			where: { ...rango, estado: { not: "cancelada" } },
 			select: { total: true, vence: true, estado: true, uuid: true, pagos: { select: { monto: true } } },
+		}),
+		// `activa` only: a `facturada` nota_venta's money already counts through the factura above
+		// (same `pago` rows, re-pointed by `facturarNotaVenta`) — counting both would double it.
+		prisma.nota_venta.findMany({
+			where: { ...rango, estado: "activa" },
+			select: { total: true, pagos: { select: { monto: true } } },
 		}),
 		// Payments are counted by when the MONEY arrived, not by when the invoice was issued: "how
 		// much came in this month" is not "how much of what we billed this month came in".
@@ -220,16 +244,23 @@ export async function resumenDinero(desde: string | null, hasta: string | null) 
 		porCobrar += saldo;
 		if (f.vence && f.vence < ahora) vencido += saldo;
 	}
+	// A nota de venta carries no due date — it's a cash sale, never credit — so its balance is
+	// "por cobrar" but never "vencido".
+	for (const nv of notasVenta) {
+		const saldo = aCentavos(nv.total) - sumar(nv.pagos, "monto");
+		if (saldo > 0n) porCobrar += saldo;
+	}
 
 	const autorizadas = cotizaciones.filter((c) => c.estado === "autorizada");
+	const facturadoTotal = sumar(facturas, "total") + sumar(notasVenta, "total");
 
 	return {
 		cotizado: pesos(sumar(cotizaciones, "total")),
 		cotizadas: cotizaciones.length,
 		autorizado: pesos(sumar(autorizadas, "total")),
 		autorizadas: autorizadas.length,
-		facturado: pesos(sumar(facturas, "total")),
-		facturas: facturas.length,
+		facturado: pesos(facturadoTotal),
+		facturas: facturas.length + notasVenta.length,
 		timbradas: facturas.filter((f) => f.uuid !== null).length,
 		cobrado: pesos(sumar(pagos, "monto")),
 		pagos: pagos.length,
@@ -1290,7 +1321,10 @@ export async function resumenClienteFinanciero(clienteId: string) {
 		totalFacturasAbiertas: abiertas.total,
 		ultimosPagos: ultimosPagos.map((p) => ({
 			id: p.id,
-			facturaFolio: p.factura.folio,
+			// The `where: { factura: { clienteId } }` relation filter above only ever matches rows
+			// with a non-null factura — a nota_venta payment can't satisfy `clienteId` through a
+			// relation it doesn't have. TS can't see that from the filter shape, the query can.
+			facturaFolio: p.factura!.folio,
 			monto: monto(p.monto),
 			metodoLabel: metodoPagoLabel(p.metodo),
 			pagadoAt: p.pagadoAt.toISOString(),
@@ -1841,6 +1875,427 @@ export async function registrarPago(input: { actor: Actor; facturaId: string; bo
 	return pago;
 }
 
+// --- Nota de venta -----------------------------------------------------------------------------
+
+const NOTA_VENTA_INCLUDE = {
+	conceptos: { orderBy: { orden: "asc" } },
+	cliente: { select: { nombreCompleto: true, rfc: true } },
+	nota: { select: { folio: true } },
+	cotizacion: { select: { folio: true } },
+	pagos: { orderBy: { pagadoAt: "asc" }, include: { registradoPor: { select: { name: true } } } },
+} satisfies Prisma.nota_ventaInclude;
+
+type NotaVentaRow = Prisma.nota_ventaGetPayload<{ include: typeof NOTA_VENTA_INCLUDE }>;
+
+export const publicNotaVenta = (n: NotaVentaRow) => {
+	const pagado = n.pagos.reduce((s, p) => s + aCentavos(p.monto), 0n);
+	const total = aCentavos(n.total);
+	return {
+		id: n.id,
+		folio: n.folio,
+		notaId: n.notaId,
+		notaFolio: n.nota?.folio ?? null,
+		clienteId: n.clienteId,
+		clienteNombre: n.cliente?.nombreCompleto ?? null,
+		cotizacionId: n.cotizacionId,
+		cotizacionFolio: n.cotizacion?.folio ?? null,
+		estado: n.estado,
+		estadoLabel: notaVentaEstadoLabel(n.estado),
+		total: pesos(total),
+		pagado: pesos(pagado),
+		saldo: pesos(total - pagado),
+		liquidada: pagado >= total,
+		facturaId: n.facturaId,
+		notas: n.notas,
+		canceladoMotivo: n.canceladoMotivo,
+		conceptos: n.conceptos.map((c) => ({
+			id: c.id,
+			tipo: c.tipo,
+			tipoLabel: conceptoTipoLabel(c.tipo),
+			descripcion: c.descripcion,
+			cantidad: c.cantidad.toString(),
+			precioUnitario: pesos(aCentavos(c.precioUnitario)),
+			importe: pesos(aCentavos(c.importe)),
+			productoId: c.productoId,
+		})),
+		pagos: n.pagos.map((p) => ({
+			id: p.id,
+			monto: pesos(aCentavos(p.monto)),
+			metodo: p.metodo,
+			metodoLabel: metodoPagoLabel(p.metodo),
+			referencia: p.referencia,
+			pagadoAt: p.pagadoAt.toISOString(),
+			registradoPor: p.registradoPor?.name ?? null,
+		})),
+		createdAt: n.createdAt.toISOString(),
+	};
+};
+
+export async function getNotaVenta(id: string) {
+	const notaVenta = await prisma.nota_venta.findUnique({ where: { id }, include: NOTA_VENTA_INCLUDE });
+	if (!notaVenta) throw new ClienteError(404, "Nota de venta no encontrada");
+	return notaVenta;
+}
+
+export async function listNotasVenta(
+	query: { clienteId?: string | null; notaId?: string | null; estado?: string | null } & Partial<PageParams>,
+) {
+	const paging = { page: query.page ?? 1, perPage: query.perPage ?? 25 };
+	const where: Prisma.nota_ventaWhereInput = {
+		...(query.clienteId ? { clienteId: query.clienteId } : {}),
+		...(query.notaId ? { notaId: query.notaId } : {}),
+		...(query.estado ? { estado: query.estado } : {}),
+	};
+	const [total, rows] = await Promise.all([
+		prisma.nota_venta.count({ where }),
+		prisma.nota_venta.findMany({
+			where,
+			orderBy: { createdAt: "desc" },
+			skip: skipFor(paging),
+			take: paging.perPage,
+			include: NOTA_VENTA_INCLUDE,
+		}),
+	]);
+	return { notasVenta: rows.map(publicNotaVenta), ...pageMeta(total, paging) };
+}
+
+/**
+ * Cash sale, no IVA. From an authorized quote (like `crearFactura`'s quote path) or from explicit
+ * line items — same two entry points, same "lines are copied, never read back through the quote"
+ * reasoning. No credit check here: a nota de venta doesn't carry terms, it's paid as it's paid.
+ */
+export async function crearNotaVenta(input: { actor: Actor; body: Record<string, unknown> }) {
+	if (!can(input.actor.role, "nota_venta:create")) throw new ClienteError(403, "Sin permiso: nota_venta:create");
+
+	const cotizacionId = trim(input.body.cotizacionId);
+	let notaId = trim(input.body.notaId);
+	let clienteId = trim(input.body.clienteId);
+	let total = 0n;
+
+	let lineas: {
+		tipo: string;
+		descripcion: string;
+		cantidad: number;
+		precioUnitario: bigint;
+		importe: bigint;
+		orden: number;
+		productoId: string | null;
+		claveProdServ: string | null;
+		claveUnidad: string | null;
+	}[] = [];
+
+	if (cotizacionId) {
+		const cotizacion = await getCotizacion(cotizacionId);
+		if (cotizacion.estado !== "autorizada") {
+			throw new ClienteError(409, "Solo se cobra una cotización autorizada por el cliente.");
+		}
+		const yaCobrada = await prisma.factura.count({ where: { cotizacionId, estado: { not: "cancelada" } } });
+		if (yaCobrada > 0) throw new ClienteError(409, "Esa cotización ya está facturada.");
+		const yaNotaVenta = await prisma.nota_venta.count({ where: { cotizacionId, estado: { not: "cancelada" } } });
+		if (yaNotaVenta > 0) throw new ClienteError(409, "Esa cotización ya tiene una nota de venta.");
+
+		notaId ??= cotizacion.notaId;
+		clienteId ??= cotizacion.nota.clienteId;
+		// No IVA on a nota de venta: the customer pays the quote's SUBTOTAL, tax is added only if
+		// this later gets promoted to a real factura.
+		total = aCentavos(cotizacion.subtotal);
+		lineas = cotizacion.conceptos.map((c, i) => ({
+			tipo: c.tipo,
+			descripcion: c.descripcion,
+			cantidad: Number(c.cantidad.toString()),
+			precioUnitario: aCentavos(c.precioUnitario),
+			importe: aCentavos(c.importe),
+			orden: c.orden ?? i,
+			productoId: c.productoId,
+			claveProdServ: c.claveProdServ,
+			claveUnidad: c.claveUnidad,
+		}));
+	} else {
+		lineas = await resolverProductos(leerConceptos(input.body.conceptos));
+		total = lineas.reduce((s, l) => s + l.importe, 0n);
+		if (notaId && !clienteId) {
+			const nota = await prisma.nota_servicio.findUnique({ where: { id: notaId }, select: { clienteId: true } });
+			if (!nota) throw new ClienteError(404, "Nota de servicio no encontrada");
+			clienteId = nota.clienteId;
+		}
+	}
+
+	if (!clienteId) throw new ClienteError(400, "Falta el cliente");
+
+	const notaVenta = await prisma.$transaction(async (tx) => {
+		const creada = await tx.nota_venta.create({
+			data: {
+				id: randomUUID(),
+				notaId,
+				clienteId: clienteId!,
+				cotizacionId,
+				estado: "activa",
+				total: dec(total),
+				notas: trim(input.body.notas),
+				creadaPorId: input.actor.id,
+				conceptos: {
+					create: lineas.map((l) => ({
+						id: randomUUID(),
+						tipo: l.tipo,
+						descripcion: l.descripcion,
+						cantidad: new Prisma.Decimal(l.cantidad),
+						precioUnitario: dec(l.precioUnitario),
+						importe: dec(l.importe),
+						orden: l.orden,
+						productoId: l.productoId,
+						claveProdServ: l.claveProdServ,
+						claveUnidad: l.claveUnidad,
+					})),
+				},
+			},
+			include: NOTA_VENTA_INCLUDE,
+		});
+
+		await recordAudit(tx, {
+			action: "nota_venta.create",
+			actor: input.actor,
+			entityId: creada.id,
+			entityLabel: `Nota de venta #${creada.folio} · ${creada.cliente?.nombreCompleto}`,
+			summary: `Nota de venta #${creada.folio} por $${creada.total} (sin IVA)`,
+			after: { total: pesos(total), cotizacionId },
+		});
+
+		return creada;
+	});
+
+	if (notaVenta.notaId) {
+		await avisarClienteDeNota(notaVenta.notaId, {
+			evento: "cliente_factura",
+			titulo: "Tu nota de venta está lista",
+			cuerpo: `Nota de venta #${notaVenta.folio} por $${monto(notaVenta.total)}.`,
+		});
+	}
+
+	return notaVenta;
+}
+
+export async function cancelarNotaVenta(input: { actor: Actor; id: string; motivo: unknown }) {
+	if (!can(input.actor.role, "nota_venta:cancel")) throw new ClienteError(403, "Sin permiso: nota_venta:cancel");
+
+	const motivo = trim(input.motivo, 255, "El motivo");
+	if (!motivo) throw new ClienteError(400, "El motivo de la cancelación es obligatorio");
+
+	const current = await getNotaVenta(input.id);
+	if (!puedeTransicionarNotaVenta(current.estado, "cancelada")) {
+		throw new ClienteError(409, `Una nota de venta ${notaVentaEstadoLabel(current.estado).toLowerCase()} ya no se cancela.`);
+	}
+	if (current.pagos.length > 0) {
+		throw new ClienteError(409, `No se cancela una nota de venta con ${current.pagos.length} pago(s) registrado(s).`);
+	}
+
+	const notaVenta = await prisma.$transaction(async (tx) => {
+		const actualizada = await tx.nota_venta.update({
+			where: { id: current.id },
+			data: { estado: "cancelada", canceladaAt: new Date(), canceladoMotivo: motivo },
+			include: NOTA_VENTA_INCLUDE,
+		});
+		await recordAudit(tx, {
+			action: "nota_venta.cancel",
+			actor: input.actor,
+			entityId: actualizada.id,
+			entityLabel: `Nota de venta #${actualizada.folio}`,
+			summary: `Nota de venta #${actualizada.folio} cancelada: ${motivo}`,
+			before: { estado: current.estado },
+			after: { estado: "cancelada", motivo },
+		});
+		return actualizada;
+	});
+
+	// Cancelling the only billing document for a quote can take its "por cobrar"/"cobrada" read
+	// back to nothing collected — recompute now, same as cancelling a factura.
+	await sincronizarCobranza(notaVenta.cotizacionId);
+
+	return notaVenta;
+}
+
+/** Register a payment against a nota de venta. Same shape as `registrarPago`, different table. */
+export async function registrarPagoNotaVenta(input: { actor: Actor; notaVentaId: string; body: Record<string, unknown> }) {
+	if (!can(input.actor.role, "pago:register")) throw new ClienteError(403, "Sin permiso: pago:register");
+
+	const monto_ = centavos(input.body.monto);
+	if (monto_ === null || monto_ === 0n) throw new ClienteError(400, "Monto inválido (usa 1234.50)");
+	if (!isMetodoPago(input.body.metodo)) throw new ClienteError(400, "Método de pago inválido");
+
+	const notaVenta = await getNotaVenta(input.notaVentaId);
+	if (notaVenta.estado === "cancelada") throw new ClienteError(409, "Esa nota de venta está cancelada.");
+	if (notaVenta.estado === "facturada") {
+		throw new ClienteError(409, "Esa nota de venta ya se facturó: registra el pago en la factura.");
+	}
+
+	const total = aCentavos(notaVenta.total);
+	const pagado = notaVenta.pagos.reduce((s, p) => s + aCentavos(p.monto), 0n);
+	const saldo = total - pagado;
+	if (saldo <= 0n) throw new ClienteError(409, "Esa nota de venta ya está saldada.");
+	if (monto_ > saldo) throw new ClienteError(400, `El pago pasa del saldo pendiente ($${pesos(saldo)}).`);
+
+	const pago = await prisma.$transaction(async (tx) => {
+		const creado = await tx.pago.create({
+			data: {
+				id: randomUUID(),
+				notaVentaId: notaVenta.id,
+				monto: dec(monto_),
+				metodo: input.body.metodo as string,
+				referencia: trim(input.body.referencia, 120, "La referencia"),
+				notas: trim(input.body.notas, 500, "Las notas"),
+				pagadoAt: leerFechaOpcional(input.body.pagadoAt) ?? new Date(),
+				registradoPorId: input.actor.id,
+			},
+		});
+
+		await recordAudit(tx, {
+			action: "pago.register",
+			actor: input.actor,
+			entityId: notaVenta.id,
+			entityLabel: `Nota de venta #${notaVenta.folio} · ${notaVenta.cliente?.nombreCompleto}`,
+			summary: `Pago de $${pesos(monto_)} (${metodoPagoLabel(String(input.body.metodo))}) en la nota de venta #${notaVenta.folio}`,
+			before: { pagado: pesos(pagado), saldo: pesos(saldo) },
+			after: { pagado: pesos(pagado + monto_), saldo: pesos(saldo - monto_) },
+		});
+
+		return creado;
+	});
+
+	const liquidada = pagado + monto_ >= total;
+
+	// `cobrada` is arithmetic over BOTH factura and nota_venta payments — recompute here too.
+	await sincronizarCobranza(notaVenta.cotizacionId);
+
+	if (notaVenta.notaId) {
+		await avisarClienteDeNota(notaVenta.notaId, {
+			evento: "cliente_pago",
+			titulo: "Recibimos tu pago",
+			cuerpo: liquidada
+				? `$${pesos(monto_)}. La nota de venta #${notaVenta.folio} queda saldada. ¡Gracias!`
+				: `$${pesos(monto_)} en la nota de venta #${notaVenta.folio}. Saldo pendiente: $${pesos(saldo - monto_)}.`,
+		});
+	}
+
+	return pago;
+}
+
+/**
+ * Promote a nota de venta into a real, IVA-carrying factura — the customer changed their mind and
+ * wants a CFDI after all.
+ *
+ * Every `pago` already registered on the nota de venta is RE-POINTED at the new factura (same
+ * rows, same amounts) rather than left behind or re-collected: the shop already has that cash,
+ * only the paperwork changes. IVA is computed fresh on the nota de venta's subtotal, so a nota de
+ * venta paid in full still leaves the invoice's IVA portion outstanding — nothing is invented and
+ * nothing is double-counted.
+ */
+export async function facturarNotaVenta(input: { actor: Actor; id: string; body: Record<string, unknown> }) {
+	if (!can(input.actor.role, "nota_venta:facturar")) throw new ClienteError(403, "Sin permiso: nota_venta:facturar");
+
+	const current = await getNotaVenta(input.id);
+	if (current.estado === "cancelada") throw new ClienteError(409, "Esa nota de venta está cancelada.");
+	if (current.estado === "facturada") throw new ClienteError(409, "Esa nota de venta ya se facturó.");
+
+	const subtotal = aCentavos(current.total);
+	const iva = BigInt(Math.round(Number(subtotal) * IVA));
+	const total = subtotal + iva;
+
+	const condicionPago = isCondicionPago(input.body.condicionPago) ? input.body.condicionPago : "contado";
+	const forzar = input.body.forzarCredito === "1" || input.body.forzarCredito === true;
+	const motivoCredito = trim(input.body.motivoCredito, 255, "El motivo");
+
+	const factura = await prisma.$transaction(async (tx) => {
+		let diasCredito: number | null = null;
+		let vence: Date | null = null;
+
+		if (esCredito(condicionPago)) {
+			await asegurarCredito(tx, {
+				actor: input.actor,
+				clienteId: current.clienteId,
+				montoCents: total,
+				forzar,
+				motivo: motivoCredito,
+			});
+			const cliente = await tx.cliente.findUnique({ where: { id: current.clienteId }, select: { diasCredito: true } });
+			diasCredito = cliente?.diasCredito ?? 0;
+			vence = new Date(Date.now() + diasCredito * 86_400_000);
+		}
+
+		const creada = await tx.factura.create({
+			data: {
+				id: randomUUID(),
+				notaId: current.notaId,
+				clienteId: current.clienteId,
+				cotizacionId: current.cotizacionId,
+				estado: "emitida",
+				condicionPago,
+				diasCredito,
+				vence,
+				subtotal: dec(subtotal),
+				iva: dec(iva),
+				total: dec(total),
+				serie: trim(input.body.serie, 25, "La serie"),
+				emitidaAt: new Date(),
+				notas: trim(input.body.notas),
+				creadaPorId: input.actor.id,
+				conceptos: {
+					create: current.conceptos.map((c) => ({
+						id: randomUUID(),
+						tipo: c.tipo,
+						descripcion: c.descripcion,
+						cantidad: c.cantidad,
+						precioUnitario: c.precioUnitario,
+						importe: c.importe,
+						orden: c.orden,
+						productoId: c.productoId,
+						claveProdServ: c.claveProdServ,
+						claveUnidad: c.claveUnidad,
+					})),
+				},
+			},
+			include: FACTURA_INCLUDE,
+		});
+
+		// Money already collected stays collected — moved onto the new factura, never re-asked for.
+		if (current.pagos.length > 0) {
+			await tx.pago.updateMany({
+				where: { notaVentaId: current.id },
+				data: { notaVentaId: null, facturaId: creada.id },
+			});
+		}
+
+		await tx.nota_venta.update({
+			where: { id: current.id },
+			data: { estado: "facturada", facturaId: creada.id },
+		});
+
+		await recordAudit(tx, {
+			action: "nota_venta.facturar",
+			actor: input.actor,
+			entityId: current.id,
+			entityLabel: `Nota de venta #${current.folio}`,
+			summary: `Nota de venta #${current.folio} facturada como factura #${creada.folio} por $${creada.total}`,
+			before: { total: pesos(subtotal) },
+			after: { facturaId: creada.id, total: pesos(total), iva: pesos(iva) },
+		});
+
+		return creada;
+	});
+
+	await sincronizarCobranza(factura.cotizacionId);
+
+	if (factura.notaId) {
+		await avisarClienteDeNota(factura.notaId, {
+			evento: "cliente_factura",
+			titulo: "Tu factura está lista",
+			cuerpo: `Factura #${factura.folio} por $${monto(factura.total)}${
+				factura.vence ? `, con vencimiento ${factura.vence.toISOString().slice(0, 10)}` : ""
+			}.`,
+		});
+	}
+
+	return factura;
+}
+
 // --- La pista interna: trabajo y cobro ---------------------------------------------------------
 
 /**
@@ -1849,15 +2304,30 @@ export async function registrarPago(input: { actor: Actor; facturaId: string; bo
  * Reads the payments on its linked invoices — the same numbers `factura.pagada` turns on, so the
  * two can never disagree. This is what makes `cobrada` arithmetic instead of a button.
  */
+/**
+ * What's billed and collected against a quote, across BOTH factura and nota_venta.
+ *
+ * A `facturada` nota_venta is excluded here on purpose: `facturarNotaVenta` re-points its `pago`
+ * rows onto the new factura and the factura itself already counts them — including both would
+ * double the payment. An `activa` (or `cancelada`, filtered out) nota_venta has no factura yet, so
+ * its own total/pagos are the only record of what was billed for it.
+ */
 async function cobranzaDe(cotizacionId: string) {
-	const facturas = await prisma.factura.findMany({
-		where: { cotizacionId, estado: { not: "cancelada" } },
-		select: { total: true, pagos: { select: { monto: true } } },
-	});
+	const [facturas, notasVenta] = await Promise.all([
+		prisma.factura.findMany({
+			where: { cotizacionId, estado: { not: "cancelada" } },
+			select: { total: true, pagos: { select: { monto: true } } },
+		}),
+		prisma.nota_venta.findMany({
+			where: { cotizacionId, estado: "activa" },
+			select: { total: true, pagos: { select: { monto: true } } },
+		}),
+	]);
 
-	const facturado = facturas.reduce((s, f) => s + aCentavos(f.total), 0n);
-	const pagado = facturas.reduce((s, f) => s + f.pagos.reduce((t, p) => t + aCentavos(p.monto), 0n), 0n);
-	return { facturas: facturas.length, facturado, pagado, saldo: facturado - pagado };
+	const documentos = [...facturas, ...notasVenta];
+	const facturado = documentos.reduce((s, f) => s + aCentavos(f.total), 0n);
+	const pagado = documentos.reduce((s, f) => s + f.pagos.reduce((t, p) => t + aCentavos(p.monto), 0n), 0n);
+	return { facturas: documentos.length, facturado, pagado, saldo: facturado - pagado };
 }
 
 /**

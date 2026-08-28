@@ -15,6 +15,7 @@
 	import FilePlus from "@lucide/svelte/icons/file-plus";
 	import FileText from "@lucide/svelte/icons/file-text";
 	import Banknote from "@lucide/svelte/icons/banknote";
+	import Receipt from "@lucide/svelte/icons/receipt";
 	import Stamp from "@lucide/svelte/icons/stamp";
 	import Send from "@lucide/svelte/icons/send";
 	import ThumbsUp from "@lucide/svelte/icons/thumbs-up";
@@ -70,6 +71,7 @@
 		cotizacionInternoTone,
 		cotizacionInternaEstadoLabel,
 		cotizacionInternaEstadoTone,
+		notaVentaEstadoTone,
 		facturaEstadoTone,
 		formatoPesos,
 	} from "$lib/comercial";
@@ -164,10 +166,15 @@
 	/** The quote a drawer is acting on, taken from the URL so the drawer survives a reload. */
 	const cotizacionEnFoco = $derived(data.cotizaciones.find((c) => c.id === page.url.searchParams.get("cot")));
 	const facturaEnFoco = $derived(data.facturas.find((f) => f.id === page.url.searchParams.get("fac")));
+	const notaVentaEnFoco = $derived(data.notasVenta.find((nv) => nv.id === page.url.searchParams.get("nv")));
 
 	/** A live invoice for this quote. Cancelled ones do not count — you can re-issue after one. */
 	const facturaDe = (cotizacionId: string) =>
 		data.facturas.find((f) => f.cotizacionId === cotizacionId && f.estado !== "cancelada");
+
+	/** A live nota de venta for this quote — same "cancelled doesn't count" rule as `facturaDe`. */
+	const notaVentaDe = (cotizacionId: string) =>
+		data.notasVenta.find((nv) => nv.cotizacionId === cotizacionId && nv.estado !== "cancelada");
 
 	/**
 	 * Prefilled WhatsApp message for one quote. Null when there is nothing to send it to — no
@@ -780,7 +787,7 @@
 				</p>
 			{/if}
 
-			{#if data.cotizaciones.length === 0 && data.facturas.length === 0 && data.cotizacionesInternas.length === 0}
+			{#if data.cotizaciones.length === 0 && data.facturas.length === 0 && data.notasVenta.length === 0 && data.cotizacionesInternas.length === 0}
 				<p class="mt-2 text-sm text-sand-500">Nada cotizado ni facturado todavía.</p>
 			{:else}
 				<ul class="mt-3 space-y-2 text-sm">
@@ -833,6 +840,14 @@
 												{:else}
 													<span class="text-accent-700">· falta surtir</span>
 												{/if}
+											{/if}
+											{#if data.puede.verOrigenCfdi && x.entradaId}
+												<span
+													class="text-sand-400"
+													title={x.entradaCfdiUuid ? `UUID ${x.entradaCfdiUuid}` : undefined}
+												>
+													· vía compra #{x.entradaFolio}{x.entradaProveedor ? ` (${x.entradaProveedor})` : ""}
+												</span>
 											{/if}
 											<span class="ml-auto">{formatoPesos(Number(x.importe))}</span>
 										</li>
@@ -990,26 +1005,29 @@
 									</form>
 								{/if}
 								<!--
-									Invoicing is what makes "por cobrar" reachable at all — `avanzarInterno`
+									Billing is what makes "por cobrar" reachable at all — `avanzarInterno`
 									refuses it while there is nothing to collect. Offered only once the
-									customer authorised and nothing has been billed for this quote yet.
+									customer authorised and nothing has been billed for this quote yet —
+									one button, "Cobrar", opens a drawer to pick nota de venta (no IVA) or
+									factura directly, instead of two separate buttons the person has to
+									already know the difference between.
 								-->
-								{#if data.puede.facturar && c.estado === "autorizada" && !facturaDe(c.id)}
+								{#if data.puede.facturar && c.estado === "autorizada" && !facturaDe(c.id) && !notaVentaDe(c.id)}
 									<Button
-										href={searchHref(page.url, { drawer: "facturar", cot: c.id })}
+										href={searchHref(page.url, { drawer: "cobrar", cot: c.id })}
 										size="sm"
 										variant="outline"
 									>
-										<FileText
+										<Banknote
 											size={14}
 											aria-hidden="true"
 										/>
-										Facturar
+										Cobrar
 									</Button>
 								{/if}
 								{#if data.puede.interno && c.estado === "autorizada"}
 									{#each siguientesInternos(c.estadoInterno) as destino (destino)}
-										{@const faltaFactura = destino === "por_cobrar" && !facturaDe(c.id)}
+										{@const faltaFactura = destino === "por_cobrar" && !facturaDe(c.id) && !notaVentaDe(c.id)}
 										<form
 											method="POST"
 											action="?/interno"
@@ -1033,7 +1051,7 @@
 												size="sm"
 												variant="ghost"
 												disabled={faltaFactura}
-												title={faltaFactura ? "Emite la factura primero" : undefined}
+												title={faltaFactura ? "Cobra la cotización primero (nota de venta o factura)" : undefined}
 											>
 												Marcar {cotizacionInternoLabel(destino).toLowerCase()}
 											</Button>
@@ -1280,6 +1298,86 @@
 									</Button>
 								{/if}
 							</div>
+						</li>
+					{/each}
+					{#each data.notasVenta as nv (nv.id)}
+						<li class="rounded border border-sand-200 p-3">
+							<div class="flex flex-wrap items-center gap-2">
+								<span class="font-medium text-sand-950">Nota de venta #{nv.folio}</span>
+								<Badge tone={notaVentaEstadoTone(nv.estado)}>{nv.estadoLabel}</Badge>
+								<Badge tone="neutral">Sin IVA</Badge>
+								<span class="ml-auto font-medium text-sand-900">{formatoPesos(Number(nv.total))}</span>
+							</div>
+
+							{#if nv.estado === "activa"}
+								<p class="mt-1 text-xs text-sand-500">
+									Pagado {formatoPesos(Number(nv.pagado))}
+									{#if !nv.liquidada}
+										· <strong class="text-accent-700">saldo {formatoPesos(Number(nv.saldo))}</strong>
+									{/if}
+								</p>
+							{:else if nv.estado === "cancelada" && nv.canceladoMotivo}
+								<p class="mt-1 text-xs text-danger">Cancelada: {nv.canceladoMotivo}</p>
+							{:else if nv.estado === "facturada"}
+								<p class="mt-1 text-xs text-sand-500">
+									Convertida en <a
+										class="underline"
+										href="/panel/facturas/{nv.facturaId}">factura</a
+									>.
+								</p>
+							{/if}
+
+							{#if nv.pagos.length > 0}
+								<ul class="mt-2 space-y-0.5 text-xs text-sand-600">
+									{#each nv.pagos as p (p.id)}
+										<li class="flex flex-wrap gap-1.5">
+											<span>{p.pagadoAt.slice(0, 10)} · {p.metodoLabel}</span>
+											{#if p.referencia}<span class="text-sand-500">ref. {p.referencia}</span
+												>{/if}
+											<span class="ml-auto">{formatoPesos(Number(p.monto))}</span>
+										</li>
+									{/each}
+								</ul>
+							{/if}
+
+							{#if nv.estado === "activa"}
+								<div class="mt-2 flex flex-wrap gap-1.5">
+									{#if data.puede.cobrar && !nv.liquidada}
+										<Button
+											href={searchHref(page.url, { drawer: "pagarNotaVenta", nv: nv.id })}
+											size="sm"
+										>
+											<Banknote
+												size={14}
+												aria-hidden="true"
+											/>
+											Registrar pago
+										</Button>
+									{/if}
+									{#if data.puede.facturarNotaVenta}
+										<Button
+											href={searchHref(page.url, { drawer: "facturarNotaVenta", nv: nv.id })}
+											size="sm"
+											variant="outline"
+										>
+											<FileText
+												size={14}
+												aria-hidden="true"
+											/>
+											Convertir en factura
+										</Button>
+									{/if}
+									{#if data.puede.cancelarNotaVenta && nv.pagos.length === 0}
+										<Button
+											href={searchHref(page.url, { drawer: "cancelarNotaVenta", nv: nv.id })}
+											size="sm"
+											variant="ghost"
+										>
+											Cancelar
+										</Button>
+									{/if}
+								</div>
+							{/if}
 						</li>
 					{/each}
 				</ul>
@@ -2474,7 +2572,76 @@
 	</Drawer>
 {/if}
 
-{#if drawer === "facturar" && data.puede.facturar && cotizacionEnFoco}
+{#if drawer === "cobrar" && data.puede.facturar && cotizacionEnFoco}
+	<Drawer
+		title="Cobrar cotización"
+		description="Cotización #{cotizacionEnFoco.folio} · autorizada por {formatoPesos(Number(cotizacionEnFoco.total))}"
+		closeHref={closeDrawer}
+	>
+		<div class="space-y-3">
+			<a
+				href={searchHref(page.url, { drawer: "notaVenta", cot: cotizacionEnFoco.id })}
+				class="block rounded-lg border border-sand-200 p-4 hover:border-brand-400 hover:bg-brand-50/40"
+			>
+				<div class="flex items-center gap-2 font-medium text-sand-950">
+					<Receipt
+						size={16}
+						aria-hidden="true"
+					/>
+					Nota de venta
+				</div>
+				<p class="mt-1 text-xs text-sand-600">
+					Sin IVA, por {formatoPesos(Number(cotizacionEnFoco.total))}. Si el cliente pide factura después, se
+					puede convertir sin volver a cobrar.
+				</p>
+			</a>
+			<a
+				href={searchHref(page.url, { drawer: "facturarDirecto", cot: cotizacionEnFoco.id })}
+				class="block rounded-lg border border-sand-200 p-4 hover:border-brand-400 hover:bg-brand-50/40"
+			>
+				<div class="flex items-center gap-2 font-medium text-sand-950">
+					<FileText
+						size={16}
+						aria-hidden="true"
+					/>
+					Factura
+				</div>
+				<p class="mt-1 text-xs text-sand-600">Con IVA, CFDI para el cliente. Se puede timbrar después.</p>
+			</a>
+		</div>
+	</Drawer>
+{/if}
+
+{#if drawer === "notaVenta" && data.puede.notaVenta && cotizacionEnFoco}
+	<Drawer
+		title="Nota de venta"
+		description="Cotización #{cotizacionEnFoco.folio} · sin IVA · {formatoPesos(Number(cotizacionEnFoco.total))}"
+		closeHref={closeDrawer}
+	>
+		<form
+			method="POST"
+			action="?/notaVenta"
+			class="space-y-4"
+		>
+			<input
+				type="hidden"
+				name="cotizacionId"
+				value={cotizacionEnFoco.id}
+			/>
+			<p class="rounded border border-sand-200 bg-sand-50 px-3 py-2 text-xs text-sand-600">
+				El cliente paga el <strong>subtotal</strong> de la cotización, sin IVA. No es un documento fiscal —
+				si luego pide factura, esta nota de venta se puede convertir sin recobrar lo ya pagado.
+			</p>
+			<Field
+				label="Notas"
+				name="notas"
+			/>
+			<Button full>Crear nota de venta</Button>
+		</form>
+	</Drawer>
+{/if}
+
+{#if drawer === "facturarDirecto" && data.puede.facturar && cotizacionEnFoco}
 	<Drawer
 		title="Emitir factura"
 		description="Cotización #{cotizacionEnFoco.folio} · {formatoPesos(Number(cotizacionEnFoco.total))}"
@@ -2648,6 +2815,161 @@
 				hint="Máximo 255 caracteres. Una factura con pagos ya no se cancela: eso es una nota de crédito."
 			/>
 			<Button full>Cancelar la factura</Button>
+		</form>
+	</Drawer>
+{/if}
+
+{#if drawer === "pagarNotaVenta" && data.puede.cobrar && notaVentaEnFoco}
+	<Drawer
+		title="Registrar pago"
+		description="Nota de venta #{notaVentaEnFoco.folio} · saldo {formatoPesos(Number(notaVentaEnFoco.saldo))}"
+		closeHref={closeDrawer}
+	>
+		<form
+			method="POST"
+			action="?/pagarNotaVenta"
+			class="space-y-4"
+		>
+			<input
+				type="hidden"
+				name="notaVentaId"
+				value={notaVentaEnFoco.id}
+			/>
+			<Field
+				label="Monto"
+				name="monto"
+				required
+				value={notaVentaEnFoco.saldo}
+				hint="Máximo {formatoPesos(Number(notaVentaEnFoco.saldo))}. Pagos parciales sí se aceptan."
+			/>
+			<Field
+				label="Método"
+				name="metodo"
+			>
+				{#snippet children(id)}
+					<select
+						{id}
+						name="metodo"
+						class={INPUT}
+						required
+					>
+						{#each METODO_PAGO_KEYS as k (k)}
+							<option value={k}>{METODOS_PAGO[k].label}</option>
+						{/each}
+					</select>
+				{/snippet}
+			</Field>
+			<Field
+				label="Referencia"
+				name="referencia"
+			/>
+			<Field
+				label="Fecha del pago"
+				name="pagadoAt"
+				type="date"
+				value={data.hoy}
+			/>
+			<Field
+				label="Notas"
+				name="notas"
+			/>
+			<Button full>Registrar pago</Button>
+		</form>
+	</Drawer>
+{/if}
+
+{#if drawer === "cancelarNotaVenta" && data.puede.cancelarNotaVenta && notaVentaEnFoco}
+	<Drawer
+		title="Cancelar nota de venta"
+		description="Nota de venta #{notaVentaEnFoco.folio} · {formatoPesos(Number(notaVentaEnFoco.total))}"
+		closeHref={closeDrawer}
+	>
+		<form
+			method="POST"
+			action="?/cancelarNotaVenta"
+			class="space-y-4"
+		>
+			<input
+				type="hidden"
+				name="notaVentaId"
+				value={notaVentaEnFoco.id}
+			/>
+			<Field
+				label="Motivo"
+				name="motivo"
+				required
+				hint="Máximo 255 caracteres. Una nota de venta con pagos ya no se cancela."
+			/>
+			<Button full>Cancelar la nota de venta</Button>
+		</form>
+	</Drawer>
+{/if}
+
+{#if drawer === "facturarNotaVenta" && data.puede.facturarNotaVenta && notaVentaEnFoco}
+	<Drawer
+		title="Convertir en factura"
+		description="Nota de venta #{notaVentaEnFoco.folio} · {formatoPesos(Number(notaVentaEnFoco.total))} + IVA"
+		closeHref={closeDrawer}
+	>
+		<form
+			method="POST"
+			action="?/facturarNotaVenta"
+			class="space-y-4"
+		>
+			<input
+				type="hidden"
+				name="notaVentaId"
+				value={notaVentaEnFoco.id}
+			/>
+			<p class="rounded border border-sand-200 bg-sand-50 px-3 py-2 text-xs text-sand-600">
+				Se calcula el IVA sobre {formatoPesos(Number(notaVentaEnFoco.total))}.
+				{#if Number(notaVentaEnFoco.pagado) > 0}
+					Lo ya pagado (<strong>{formatoPesos(Number(notaVentaEnFoco.pagado))}</strong>) se pasa tal cual a la
+					factura — no se vuelve a cobrar, solo queda pendiente el IVA.
+				{/if}
+			</p>
+			<Field
+				label="Condición de pago"
+				name="condicionPago"
+			>
+				{#snippet children(id)}
+					<select
+						{id}
+						name="condicionPago"
+						class={INPUT}
+					>
+						{#each CONDICION_PAGO_KEYS as k (k)}
+							<option value={k}>{CONDICIONES_PAGO[k].label}</option>
+						{/each}
+					</select>
+				{/snippet}
+			</Field>
+			{#if data.puede.credito}
+				<Field
+					label="Motivo si excede el crédito"
+					name="motivoCredito"
+					hint="Solo se usa al forzar una venta a crédito por encima del límite."
+				/>
+				<label class="flex cursor-pointer items-center gap-2 text-sm text-sand-700">
+					<input
+						type="checkbox"
+						name="forzarCredito"
+						value="1"
+						class="size-4 accent-brand-600"
+					/>
+					Autorizar por encima del límite
+				</label>
+			{/if}
+			<Field
+				label="Serie"
+				name="serie"
+				hint="Opcional."
+			/>
+			<Field
+				label="Notas"
+				name="notas"
+			/>
+			<Button full>Convertir en factura</Button>
 		</form>
 	</Drawer>
 {/if}

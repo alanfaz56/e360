@@ -212,6 +212,15 @@ export const PERMISOS_DEFAULT = {
 	// undoing it is a cancellation the SAT has to accept. Same two roles today, on purpose — the
 	// line that matters is that the counter never reaches it.
 	"factura:timbrar": ["admin", "gerente"],
+
+	// A cash sale with no IVA — same crew as `cotizacion:create`, the counter closes these.
+	"nota_venta:read": ["admin", "gerente", "operador"],
+	"nota_venta:create": ["admin", "gerente", "operador"],
+	// Promoting one into a real CFDI. Same two roles as `factura:create` — it ends in a fiscal
+	// document, so it needs the same authority a from-scratch invoice does.
+	"nota_venta:facturar": ["admin", "gerente"],
+	"nota_venta:cancel": ["admin", "gerente"],
+
 	"pago:read": ["admin", "gerente", "operador"],
 	"pago:register": ["admin", "gerente", "operador"],
 	// Credit terms and the limit itself. Also what lets somebody override an over-limit sale,

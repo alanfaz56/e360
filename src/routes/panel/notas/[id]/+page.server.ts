@@ -34,13 +34,18 @@ import {
 	avanzarInterno,
 	cambiarEstadoCotizacion,
 	cancelarFactura,
+	cancelarNotaVenta,
 	crearCotizacion,
 	crearCotizacionInterna,
 	crearFactura,
+	crearNotaVenta,
+	facturarNotaVenta,
 	listCotizaciones,
 	listCotizacionesInternas,
 	listFacturas,
+	listNotasVenta,
 	registrarPago,
+	registrarPagoNotaVenta,
 	reenviarCotizacionCorreo,
 	resolverCotizacionInterna,
 	saldoCliente,
@@ -88,8 +93,19 @@ export const load: ServerLoad = async ({ locals, params, url }) => {
 		}
 	}
 
-	const [talleres, contactos, faltantes, cotizaciones, facturas, credito, solicitudes, catalogo, cotizacionesInternas, mecanicos] =
-		await Promise.all([
+	const [
+		talleres,
+		contactos,
+		faltantes,
+		cotizaciones,
+		facturas,
+		notasVenta,
+		credito,
+		solicitudes,
+		catalogo,
+		cotizacionesInternas,
+		mecanicos,
+	] = await Promise.all([
 			can(actor.role, "taller:read")
 				? (await listTalleres({ perPage: 100 })).talleres.filter((t) => !t.archivado)
 				: [],
@@ -97,6 +113,7 @@ export const load: ServerLoad = async ({ locals, params, url }) => {
 			faltantesInventario(nota.id),
 			can(actor.role, "cotizacion:read") ? listCotizaciones({ notaId: nota.id, perPage: 50 }) : null,
 			can(actor.role, "factura:read") ? listFacturas({ notaId: nota.id, perPage: 50 }) : null,
+			can(actor.role, "nota_venta:read") ? listNotasVenta({ notaId: nota.id, perPage: 50 }) : null,
 			can(actor.role, "factura:read") ? saldoCliente(nota.clienteId) : null,
 			can(actor.role, "inventario:solicitar") ? listSolicitudes({ notaId: nota.id }) : [],
 			// The quote builder's catalogue. Only fetched for somebody who can actually quote, and
@@ -149,6 +166,7 @@ export const load: ServerLoad = async ({ locals, params, url }) => {
 		mecanicos,
 		notaGarantia,
 		facturas: facturas?.facturas ?? [],
+		notasVenta: notasVenta?.notasVenta ?? [],
 		credito: creditoPublico,
 		solicitudes,
 		// Trimmed to what the picker draws: a price and a stock figure per row, nothing else.
@@ -196,6 +214,9 @@ export const load: ServerLoad = async ({ locals, params, url }) => {
 			enviarCotizacion: can(actor.role, "cotizacion:send"),
 			facturar: can(actor.role, "factura:create"),
 			cancelarFactura: can(actor.role, "factura:cancel"),
+			notaVenta: can(actor.role, "nota_venta:create"),
+			cancelarNotaVenta: can(actor.role, "nota_venta:cancel"),
+			facturarNotaVenta: can(actor.role, "nota_venta:facturar"),
 			// Stamping is its own key: it is irreversible and it spends a timbre.
 			timbrar: can(actor.role, "factura:timbrar"),
 			credito: can(actor.role, "cliente:credito"),
@@ -208,6 +229,7 @@ export const load: ServerLoad = async ({ locals, params, url }) => {
 			verUtilidad: can(actor.role, "cotizacion:costo"),
 			reporteIA: can(actor.role, "nota:reporte_ia"),
 			comprarCfdi: can(actor.role, "cotizacion:create") && can(actor.role, "inventario:entrada"),
+			verOrigenCfdi: can(actor.role, "inventario:entrada"),
 		},
 	};
 };
@@ -382,6 +404,81 @@ export const actions: Actions = {
 					serie: data.get("serie"),
 					notas: data.get("notas"),
 					// Over the limit is a 409 naming the overage; forcing it is its own audit entry.
+					forzarCredito: data.get("forzarCredito"),
+					motivoCredito: data.get("motivoCredito"),
+				},
+			});
+			redirect(303, conFlash(`/panel/notas/${params.id}`, "factura.crear"));
+		} catch (err) {
+			return fallo(err);
+		}
+	},
+
+	/** Cash sale, no IVA — the customer didn't ask for a CFDI. */
+	notaVenta: async ({ locals, params, request }) => {
+		const actor = requireUser(locals);
+		const data = await request.formData();
+		try {
+			await crearNotaVenta({
+				actor,
+				body: {
+					cotizacionId: data.get("cotizacionId"),
+					notaId: params.id!,
+					notas: data.get("notas"),
+				},
+			});
+			redirect(303, conFlash(`/panel/notas/${params.id}`, "nota_venta.crear"));
+		} catch (err) {
+			return fallo(err);
+		}
+	},
+
+	/** Take money against a nota de venta — same shape as `pagar`, different table. */
+	pagarNotaVenta: async ({ locals, params, request }) => {
+		const actor = requireUser(locals);
+		const data = await request.formData();
+		try {
+			await registrarPagoNotaVenta({
+				actor,
+				notaVentaId: String(data.get("notaVentaId")),
+				body: {
+					monto: data.get("monto"),
+					metodo: data.get("metodo"),
+					referencia: data.get("referencia"),
+					pagadoAt: data.get("pagadoAt"),
+					notas: data.get("notas"),
+				},
+			});
+			redirect(303, conFlash(`/panel/notas/${params.id}`, "pago.registrar"));
+		} catch (err) {
+			return fallo(err);
+		}
+	},
+
+	/** Refused once payments exist — cancel before collecting, not after. */
+	cancelarNotaVenta: async ({ locals, params, request }) => {
+		const actor = requireUser(locals);
+		const data = await request.formData();
+		try {
+			await cancelarNotaVenta({ actor, id: String(data.get("notaVentaId")), motivo: data.get("motivo") });
+			redirect(303, conFlash(`/panel/notas/${params.id}`, "nota_venta.cancelar"));
+		} catch (err) {
+			return fallo(err);
+		}
+	},
+
+	/** The customer changed their mind and wants a CFDI — promote the nota de venta into a factura. */
+	facturarNotaVenta: async ({ locals, params, request }) => {
+		const actor = requireUser(locals);
+		const data = await request.formData();
+		try {
+			await facturarNotaVenta({
+				actor,
+				id: String(data.get("notaVentaId")),
+				body: {
+					condicionPago: data.get("condicionPago"),
+					serie: data.get("serie"),
+					notas: data.get("notas"),
 					forzarCredito: data.get("forzarCredito"),
 					motivoCredito: data.get("motivoCredito"),
 				},
@@ -778,9 +875,10 @@ export const actions: Actions = {
 				});
 			}
 
+			const paqueteNombre = String(data.get("paqueteNombre") ?? "").trim();
+			const paquetePrecio = String(data.get("paquetePrecio") ?? "").trim();
+
 			if (filasEnPaquete > 0) {
-				const paqueteNombre = String(data.get("paqueteNombre") ?? "").trim();
-				const paquetePrecio = String(data.get("paquetePrecio") ?? "");
 				if (!paqueteNombre || !paquetePrecio) {
 					return fallo(
 						new ClienteError(400, "Agrupaste renglones en un paquete — dale nombre y precio al paquete."),
@@ -794,6 +892,18 @@ export const actions: Actions = {
 					precioUnitario: paquetePrecio,
 					costoUnitario: costoPaquete > 0 ? costoPaquete.toFixed(4) : undefined,
 				});
+			} else if (paqueteNombre || paquetePrecio) {
+				// Nombre/precio de paquete capturados pero NINGÚN renglón quedó marcado "agrupar en
+				// un paquete" — el checkbox por renglón es el que realmente arma el paquete, y sin
+				// él estos dos campos no hacen nada. Sin este error, la cotización se crea con cada
+				// renglón a su precio individual (el del catálogo si no se tocó) y nadie se entera
+				// de que el paquete que pidieron nunca se armó — exactamente el bug reportado.
+				return fallo(
+					new ClienteError(
+						400,
+						"Pusiste nombre/precio de paquete pero ningún renglón tiene marcado \"Agrupar en un paquete\". Márcalo en los renglones que quieras combinar, o borra el nombre y precio del paquete.",
+					),
+				);
 			}
 
 			if (conceptosCotizacion.length === 0) {

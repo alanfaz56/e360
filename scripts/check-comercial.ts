@@ -14,6 +14,8 @@ import {
 	FACTURA_ESTADO_KEYS,
 	FACTURA_TRANSICIONES,
 	IVA,
+	NOTA_VENTA_ESTADO_KEYS,
+	NOTA_VENTA_TRANSICIONES,
 	centavos,
 	cotizacionVencida,
 	esCredito,
@@ -27,6 +29,7 @@ import {
 	puedeTransicionarCotizacion,
 	puedeTransicionarCotizacionInterna,
 	puedeTransicionarFactura,
+	puedeTransicionarNotaVenta,
 	totales,
 } from "../src/lib/comercial.js";
 
@@ -167,6 +170,22 @@ for (const desde of FACTURA_ESTADO_KEYS) {
 }
 assert.deepEqual([...FACTURA_TRANSICIONES.cancelada], [], "cancelada es terminal");
 assert.equal(puedeTransicionarFactura("cancelada", "emitida"), false);
+
+// --- Nota de venta: 'facturada' es arithmetic-adjacent, nunca una transición genérica -----------
+assert.equal(puedeTransicionarNotaVenta("activa", "cancelada"), true);
+assert.equal(
+	puedeTransicionarNotaVenta("activa", "facturada"),
+	false,
+	"'facturada' se alcanza vía facturarNotaVenta, no como transición genérica",
+);
+for (const desde of NOTA_VENTA_ESTADO_KEYS) {
+	if (desde === "activa") continue;
+	assert.deepEqual(
+		[...NOTA_VENTA_TRANSICIONES[desde]],
+		[],
+		`${desde} debe ser terminal`,
+	);
+}
 
 // --- Vocabulary --------------------------------------------------------------------------------
 assert.equal(esCredito("credito"), true);

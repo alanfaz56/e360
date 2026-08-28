@@ -48,6 +48,9 @@ export async function ultimosMovimientos(limite = 15): Promise<Movimiento[]> {
 				factura: {
 					select: { id: true, folio: true, notaId: true, cliente: { select: { nombreCompleto: true } } },
 				},
+				notaVenta: {
+					select: { id: true, folio: true, notaId: true, cliente: { select: { nombreCompleto: true } } },
+				},
 			},
 		}),
 	]);
@@ -67,13 +70,30 @@ export async function ultimosMovimientos(limite = 15): Promise<Movimiento[]> {
 			href: `/panel/notas/${n.id}`,
 			fecha: n.updatedAt.toISOString(),
 		})),
-		...pagos.map((p) => ({
-			id: `pago-${p.id}`,
-			texto: `Pago de $${pesos(BigInt(Math.round(Number(p.monto) * 100)))} · ${p.factura.cliente.nombreCompleto}`,
-			detalle: `Factura #${p.factura.folio}`,
-			href: p.factura.notaId ? `/panel/notas/${p.factura.notaId}` : `/panel/facturas/${p.factura.id}`,
-			fecha: p.createdAt.toISOString(),
-		})),
+		// A pago belongs to exactly one of factura / notaVenta (`pago_exactamente_un_destino_check`
+		// enforces it in the database) — never both, never neither.
+		// A nota_venta has no detail page of its own — it only ever renders inline on its
+		// nota_servicio's page — so one with no notaId has nowhere to link to and is skipped here,
+		// the same way a payment with neither destination would be (the CHECK constraint just
+		// makes that case impossible).
+		...pagos.flatMap((p) => {
+			const destino = p.factura ?? p.notaVenta!;
+			const href = p.factura
+				? `/panel/facturas/${p.factura.id}`
+				: destino.notaId
+					? `/panel/notas/${destino.notaId}`
+					: null;
+			if (href === null) return [];
+			return [
+				{
+					id: `pago-${p.id}`,
+					texto: `Pago de $${pesos(BigInt(Math.round(Number(p.monto) * 100)))} · ${destino.cliente.nombreCompleto}`,
+					detalle: p.factura ? `Factura #${p.factura.folio}` : `Nota de venta #${p.notaVenta!.folio}`,
+					href,
+					fecha: p.createdAt.toISOString(),
+				},
+			];
+		}),
 	];
 
 	return movimientos.sort((a, b) => b.fecha.localeCompare(a.fecha)).slice(0, limite);

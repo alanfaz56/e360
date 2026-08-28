@@ -26,13 +26,25 @@ export type NotaRentable = {
 	margen: number | null;
 };
 
-/** Notas con al menos una factura en el período (por `entregadaAt` cuando existe, si no `recibidaAt`). */
+/**
+ * Notas con al menos una factura O nota de venta en el período (por `entregadaAt` cuando existe,
+ * si no `recibidaAt`). Una nota de venta ya `facturada` no cuenta aparte en el `OR` — la factura
+ * que resultó de ella ya la cubre — pero SÍ sigue contando como venta abajo a través de esa misma
+ * factura, nunca de las dos a la vez.
+ */
 export async function notasRentables(periodo: Periodo): Promise<NotaRentable[]> {
 	const rango = { gte: enZona(periodo.desde), lt: enZona(sumarDias(periodo.hasta, 1)) };
 	const notas = await prisma.nota_servicio.findMany({
 		where: {
-			OR: [{ entregadaAt: rango }, { entregadaAt: null, recibidaAt: rango }],
-			facturas: { some: { estado: { not: "cancelada" } } },
+			AND: [
+				{ OR: [{ entregadaAt: rango }, { entregadaAt: null, recibidaAt: rango }] },
+				{
+					OR: [
+						{ facturas: { some: { estado: { not: "cancelada" } } } },
+						{ notasVenta: { some: { estado: "activa" } } },
+					],
+				},
+			],
 		},
 		select: {
 			id: true,
@@ -48,13 +60,19 @@ export async function notasRentables(periodo: Periodo): Promise<NotaRentable[]> 
 	if (notas.length === 0) return [];
 
 	const ids = notas.map((n) => n.id);
-	const [ventas, refacciones, internas] = await Promise.all([
+	const [ventas, ventasNotaVenta, refacciones, internas] = await Promise.all([
 		prisma.factura.groupBy({ by: ["notaId"], where: { notaId: { in: ids }, estado: { not: "cancelada" } }, _sum: { total: true } }),
+		// `activa` only — a `facturada` nota_venta's total already counts through `ventas` above.
+		prisma.nota_venta.groupBy({ by: ["notaId"], where: { notaId: { in: ids }, estado: "activa" }, _sum: { total: true } }),
 		prisma.inventario_movimiento.groupBy({ by: ["notaId"], where: { notaId: { in: ids }, tipo: "salida" }, _sum: { costoTotal: true } }),
 		prisma.cotizacion_interna.groupBy({ by: ["notaId"], where: { notaId: { in: ids }, estado: "aprobada" }, _sum: { total: true } }),
 	]);
 
 	const ventaPorNota = new Map(ventas.map((v) => [v.notaId, aCentavos(v._sum.total)]));
+	for (const v of ventasNotaVenta) {
+		if (!v.notaId) continue;
+		ventaPorNota.set(v.notaId, (ventaPorNota.get(v.notaId) ?? 0n) + aCentavos(v._sum.total));
+	}
 	const costoPorNota = new Map<string, bigint>();
 	for (const r of refacciones) costoPorNota.set(r.notaId!, (costoPorNota.get(r.notaId!) ?? 0n) + aCentavos(r._sum.costoTotal));
 	for (const i of internas) costoPorNota.set(i.notaId, (costoPorNota.get(i.notaId) ?? 0n) + aCentavos(i._sum.total));

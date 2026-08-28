@@ -112,6 +112,9 @@ export const AUDIT_ACTIONS = {
 	"factura.cancel": "Factura cancelada",
 	"factura.timbrar": "Factura timbrada ante el SAT",
 	"factura.cancelar_sat": "Cancelación solicitada al SAT",
+	"nota_venta.create": "Nota de venta creada",
+	"nota_venta.cancel": "Nota de venta cancelada",
+	"nota_venta.facturar": "Nota de venta convertida en factura",
 	"cliente.pac_link": "Cliente vinculado con el proveedor de timbrado",
 
 	// Ajustes del sistema. The entry records WHICH settings moved and, for a secret, only whether

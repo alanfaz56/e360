@@ -148,6 +148,7 @@ assert.deepEqual(permissionsFor("operador"), [
 	"nota:liberacion",
 	"taller:read",
 	"producto:read",
+	"proveedor:read",
 	"inventario:read",
 	"inventario:salida",
 	"inventario:solicitar",
@@ -161,8 +162,12 @@ assert.deepEqual(permissionsFor("operador"), [
 	"cotizacion:send",
 	"cotizacion:authorize",
 	"factura:read",
+	"nota_venta:read",
+	"nota_venta:create",
 	"pago:read",
 	"pago:register",
+	"nota:reporte_ia",
+	"canal:chat",
 ]);
 assert.equal(can("taller", "user:list"), false);
 
@@ -215,6 +220,11 @@ assert.equal(can("operador", "pago:register"), true, "el operador cobra en el mo
 assert.equal(can("operador", "factura:create"), false);
 assert.equal(can("operador", "factura:cancel"), false);
 assert.equal(can("operador", "cliente:credito"), false);
+assert.equal(can("operador", "nota_venta:create"), true, "el mostrador también cierra ventas sin IVA");
+assert.equal(can("operador", "nota_venta:facturar"), false, "convertir a CFDI necesita la misma autoridad que facturar");
+assert.equal(can("operador", "nota_venta:cancel"), false);
+assert.equal(can("gerente", "nota_venta:facturar"), true);
+assert.equal(can("admin", "nota_venta:facturar"), true);
 assert.equal(can("gerente", "factura:create"), true);
 assert.equal(can("gerente", "cliente:credito"), true);
 

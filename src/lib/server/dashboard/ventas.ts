@@ -25,9 +25,14 @@ export async function getDashboardVentas(periodo: Periodo): Promise<PuntoVentas[
 	const desdeInstante = enZona(periodo.desde);
 	const hastaInstante = enZona(sumarDias(periodo.hasta, 1));
 
-	const [facturas, movimientos, internas] = await Promise.all([
+	const [facturas, notasVenta, movimientos, internas] = await Promise.all([
 		prisma.factura.findMany({
 			where: { estado: { not: "cancelada" }, createdAt: { gte: desdeInstante, lt: hastaInstante } },
+			select: { total: true, createdAt: true },
+		}),
+		// `activa` only — a `facturada` nota_venta's total already counts through its factura.
+		prisma.nota_venta.findMany({
+			where: { estado: "activa", createdAt: { gte: desdeInstante, lt: hastaInstante } },
 			select: { total: true, createdAt: true },
 		}),
 		prisma.inventario_movimiento.findMany({
@@ -43,7 +48,7 @@ export async function getDashboardVentas(periodo: Periodo): Promise<PuntoVentas[
 	const bucketKey = (fecha: string) => (porSemana ? lunesDe(fecha) : fecha);
 
 	const ventasPorBucket = new Map<string, bigint>();
-	for (const f of facturas) {
+	for (const f of [...facturas, ...notasVenta]) {
 		const k = bucketKey(fechaEnZona(f.createdAt));
 		ventasPorBucket.set(k, (ventasPorBucket.get(k) ?? 0n) + aCentavos(f.total));
 	}

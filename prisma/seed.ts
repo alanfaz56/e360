@@ -58,6 +58,43 @@ const ID = {
 	sucursalDos: "5eed0000-0000-4000-8000-000000000072",
 	sucursalSolicitada: "5eed0000-0000-4000-8000-000000000073",
 	lecturaAlta: "5eed0000-0000-4000-8000-000000000061",
+
+	// --- Más unidades de la misma flotilla, cada una con su propia nota de servicio ----------
+	// (`nota_servicio_unidad_abierta_key` permite solo una nota abierta por unidad).
+	unidadDos: "5eed0000-0000-4000-8000-0000000000d1",
+	propietarioDos: "5eed0000-0000-4000-8000-0000000000d2",
+	unidadTres: "5eed0000-0000-4000-8000-0000000000d3",
+	propietarioTres: "5eed0000-0000-4000-8000-0000000000d4",
+	unidadCuatro: "5eed0000-0000-4000-8000-0000000000d5",
+	propietarioCuatro: "5eed0000-0000-4000-8000-0000000000d6",
+
+	// --- Catálogo e inventario ---------------------------------------------------------------
+	productoFiltro: "5eed0000-0000-4000-8000-000000000081",
+	productoManoObra: "5eed0000-0000-4000-8000-000000000082",
+	productoAceite: "5eed0000-0000-4000-8000-000000000083",
+	entradaFiltro: "5eed0000-0000-4000-8000-000000000091",
+	capaFiltro: "5eed0000-0000-4000-8000-000000000092",
+	entradaAceite: "5eed0000-0000-4000-8000-000000000093",
+	capaAceite: "5eed0000-0000-4000-8000-000000000094",
+
+	// --- Nota de servicio 1: cotización normal + factura + estimación interna -----------------
+	nota1: "5eed0000-0000-4000-8000-0000000000a1",
+	cotizacion1: "5eed0000-0000-4000-8000-0000000000a2",
+	movimientoFiltroA1: "5eed0000-0000-4000-8000-0000000000a3",
+	cotizacionInterna1: "5eed0000-0000-4000-8000-0000000000a4",
+	factura1: "5eed0000-0000-4000-8000-0000000000a5",
+	pagoFactura1: "5eed0000-0000-4000-8000-0000000000a6",
+
+	// --- Nota de servicio 2: cotización vía CFDI + nota de venta → factura --------------------
+	nota2: "5eed0000-0000-4000-8000-0000000000b1",
+	entradaCfdi2: "5eed0000-0000-4000-8000-0000000000b2",
+	cotizacion2: "5eed0000-0000-4000-8000-0000000000b3",
+	notaVenta2: "5eed0000-0000-4000-8000-0000000000b4",
+	pagoNotaVenta2: "5eed0000-0000-4000-8000-0000000000b5",
+	factura2: "5eed0000-0000-4000-8000-0000000000b6",
+
+	// --- Nota de servicio 3: trabajo abierto, sin cotizar todavía -----------------------------
+	nota3: "5eed0000-0000-4000-8000-0000000000c1",
 };
 
 const prisma = createPrisma(process.env.DATABASE_URL);
@@ -516,6 +553,614 @@ async function seedCitaAsignada() {
 }
 
 /** Credit terms on the fleet customer, so the invoicing and limit rules have something to act on. */
+/** The two demo accounts most of the commercial flow is attributed to. */
+async function demoStaff() {
+	const [operador, mecanico] = await Promise.all([
+		prisma.user.findUnique({ where: { email: "operador@estacion360.test" }, select: { id: true } }),
+		prisma.user.findUnique({ where: { email: "taller@estacion360.test" }, select: { id: true } }),
+	]);
+	return { operadorId: operador?.id ?? null, mecanicoId: mecanico?.id ?? null };
+}
+
+/** Dos unidades más de la misma flotilla — cada nota de servicio de demostración necesita la suya. */
+async function seedUnidadesFlotilla() {
+	if (await prisma.unidad.findUnique({ where: { id: ID.unidadDos }, select: { id: true } })) {
+		console.log("  ya existen: las unidades adicionales de la flotilla");
+		return;
+	}
+
+	await prisma.$transaction(async (tx) => {
+		await tx.unidad.create({
+			data: {
+				id: ID.unidadDos,
+				clienteId: ID.cliente,
+				marca: "Freightliner",
+				modelo: "M2 106",
+				anio: 2019,
+				color: "Blanco",
+				placas: "SN-4471-B",
+				vin: "3ALACWDT9MDMK5678",
+				numeroEconomico: "ECO-115",
+				kilometraje: 148900,
+				notas: "Reparto local. Segunda unidad de la flotilla.",
+			},
+		});
+		await tx.unidad_propietario.create({
+			data: { id: ID.propietarioDos, unidadId: ID.unidadDos, clienteId: ID.cliente, motivo: "Alta inicial" },
+		});
+		await tx.unidad.create({
+			data: {
+				id: ID.unidadTres,
+				clienteId: ID.cliente,
+				marca: "Kenworth",
+				modelo: "T370",
+				anio: 2020,
+				color: "Blanco",
+				placas: "SN-4471-C",
+				vin: "1XKAD49X9LJ998877",
+				numeroEconomico: "ECO-116",
+				kilometraje: 149210,
+				notas: "Reparto foráneo. Tercera unidad de la flotilla.",
+			},
+		});
+		await tx.unidad_propietario.create({
+			data: { id: ID.propietarioTres, unidadId: ID.unidadTres, clienteId: ID.cliente, motivo: "Alta inicial" },
+		});
+		await tx.unidad.create({
+			data: {
+				id: ID.unidadCuatro,
+				clienteId: ID.cliente,
+				marca: "International",
+				modelo: "4300",
+				anio: 2018,
+				color: "Blanco",
+				placas: "SN-4471-D",
+				vin: "1HTMMAAL18H123456",
+				numeroEconomico: "ECO-117",
+				kilometraje: 149210,
+				notas: "Reparto local. Cuarta unidad de la flotilla.",
+			},
+		});
+		await tx.unidad_propietario.create({
+			data: { id: ID.propietarioCuatro, unidadId: ID.unidadCuatro, clienteId: ID.cliente, motivo: "Alta inicial" },
+		});
+	});
+
+	await audit("unidad.create", ID.unidadDos, "Freightliner M2 106 · SN-4471-B", "Unidad de demostración (ECO-115)");
+	await audit("unidad.create", ID.unidadTres, "Kenworth T370 · SN-4471-C", "Unidad de demostración (ECO-116)");
+	await audit("unidad.create", ID.unidadCuatro, "International 4300 · SN-4471-D", "Unidad de demostración (ECO-117)");
+	console.log("  creadas: ECO-115, ECO-116 y ECO-117");
+}
+
+/** Catálogo: una refacción con FIFO real, un servicio de mano de obra, un insumo. */
+async function seedProductos() {
+	if (await prisma.producto.findUnique({ where: { id: ID.productoFiltro }, select: { id: true } })) {
+		console.log("  ya existe: el catálogo de demostración");
+		return;
+	}
+
+	await prisma.producto.create({
+		data: {
+			id: ID.productoFiltro,
+			sku: "FIL-0114",
+			nombre: "Filtro de aceite Freightliner M2",
+			tipo: "refaccion",
+			claveProdServ: "25172504",
+			claveUnidad: "H87",
+			unidad: "Pieza",
+			precioVenta: "285.00",
+			controlaInventario: true,
+		},
+	});
+	await prisma.producto.create({
+		data: {
+			id: ID.productoManoObra,
+			sku: null,
+			nombre: "Mano de obra — servicio mayor",
+			tipo: "mano_obra",
+			claveProdServ: "78101803",
+			claveUnidad: "HUR",
+			unidad: "Hora",
+			precioVenta: "450.00",
+			controlaInventario: false,
+			costoReferencia: "180.0000",
+		},
+	});
+	await prisma.producto.create({
+		data: {
+			id: ID.productoAceite,
+			sku: "ACE-15W40",
+			nombre: "Aceite de motor 15W-40 (litro)",
+			tipo: "insumo",
+			claveProdServ: "15121517",
+			claveUnidad: "LTR",
+			unidad: "Litro",
+			precioVenta: "165.00",
+			controlaInventario: true,
+		},
+	});
+	await audit("producto.create", ID.productoFiltro, "Filtro de aceite Freightliner M2", "Catálogo de demostración creado");
+	console.log("  creados: filtro, mano de obra y aceite");
+}
+
+/**
+ * Dos compras registradas: una sin CFDI (abre capa FIFO normal), una CON CFDI (la que
+ * `seedNota2`/`seedCotizacion2` importan como referencia de costo sin pasar por inventario).
+ */
+async function seedInventario() {
+	const { operadorId } = await demoStaff();
+
+	if (await prisma.inventario_entrada.findUnique({ where: { id: ID.entradaFiltro }, select: { id: true } })) {
+		console.log("  ya existe: la entrada de filtros");
+	} else {
+		await prisma.$transaction(async (tx) => {
+			const entrada = await tx.inventario_entrada.create({
+				data: {
+					id: ID.entradaFiltro,
+					proveedor: "Refaccionaria Diésel del Noroeste",
+					referencia: "REM-88213",
+					notas: "Compra de demostración, sin CFDI.",
+					registradaPorId: operadorId,
+				},
+			});
+			const capa = await tx.inventario_capa.create({
+				data: {
+					id: ID.capaFiltro,
+					productoId: ID.productoFiltro,
+					entradaId: entrada.id,
+					cantidad: "20",
+					restante: "20",
+					costoUnitario: "150.0000",
+				},
+			});
+			await tx.inventario_movimiento.create({
+				data: {
+					id: randomUUID(),
+					productoId: ID.productoFiltro,
+					tipo: "entrada",
+					cantidad: "20",
+					costoUnitario: "150.0000",
+					costoTotal: "3000.00",
+					capaId: capa.id,
+					entradaId: entrada.id,
+					registradoPorId: operadorId,
+				},
+			});
+			await tx.producto.update({ where: { id: ID.productoFiltro }, data: { existencia: { increment: "20" } } });
+		});
+		await audit("inventario.entrada", ID.entradaFiltro, "Refaccionaria Diésel del Noroeste", "Compra de demostración: 20 filtros a $150.00");
+		console.log("  creada: entrada de 20 filtros ($150.00 c/u)");
+	}
+
+	if (await prisma.inventario_entrada.findUnique({ where: { id: ID.entradaAceite }, select: { id: true } })) {
+		console.log("  ya existe: la entrada de aceite");
+	} else {
+		await prisma.$transaction(async (tx) => {
+			const entrada = await tx.inventario_entrada.create({
+				data: {
+					id: ID.entradaAceite,
+					proveedor: "Lubricantes del Pacífico",
+					referencia: "REM-77410",
+					notas: "Compra de demostración, sin CFDI.",
+					registradaPorId: operadorId,
+				},
+			});
+			const capa = await tx.inventario_capa.create({
+				data: {
+					id: ID.capaAceite,
+					productoId: ID.productoAceite,
+					entradaId: entrada.id,
+					cantidad: "80",
+					restante: "80",
+					costoUnitario: "95.0000",
+				},
+			});
+			await tx.inventario_movimiento.create({
+				data: {
+					id: randomUUID(),
+					productoId: ID.productoAceite,
+					tipo: "entrada",
+					cantidad: "80",
+					costoUnitario: "95.0000",
+					costoTotal: "7600.00",
+					capaId: capa.id,
+					entradaId: entrada.id,
+					registradoPorId: operadorId,
+				},
+			});
+			await tx.producto.update({ where: { id: ID.productoAceite }, data: { existencia: { increment: "80" } } });
+		});
+		await audit("inventario.entrada", ID.entradaAceite, "Lubricantes del Pacífico", "Compra de demostración: 80 litros de aceite a $95.00");
+		console.log("  creada: entrada de 80 litros de aceite ($95.00 c/u)");
+	}
+}
+
+/**
+ * Nota #1: servicio mayor completo. Cotización con productos del catálogo (filtro surtido de
+ * FIFO real + mano de obra), una estimación interna del mecánico aprobada y ligada — para que
+ * `utilidadDeCotizacion` tenga AMBAS fuentes de costo a la vez — y una factura con un pago
+ * parcial. Se detiene en `lista`: entregarla exigiría el checklist de liberación de 15 puntos,
+ * que no aporta nada nuevo a esta demo.
+ */
+async function seedNota1() {
+	if (await prisma.nota_servicio.findUnique({ where: { id: ID.nota1 }, select: { id: true } })) {
+		console.log("  ya existe: la nota de servicio #1");
+		return;
+	}
+	const { operadorId, mecanicoId } = await demoStaff();
+
+	const nota = await prisma.nota_servicio.create({
+		data: {
+			id: ID.nota1,
+			clienteId: ID.cliente,
+			unidadId: ID.unidadDos,
+			estado: "lista",
+			motivo: "Servicio mayor: cambio de aceite y filtro, ruido en frenos delanteros",
+			diagnostico: "Balatas delanteras al límite, se cambian junto con el servicio.",
+			kilometraje: 148320,
+			combustibleOctavos: 6,
+			condicion: "Golpe leve en defensa trasera, ya existente.",
+			inspeccionAt: new Date(Date.now() - 5 * 86_400_000),
+			recibidaPorId: operadorId,
+			recibidaAt: new Date(Date.now() - 5 * 86_400_000),
+			mecanicoId,
+		},
+	});
+	await audit("nota.create", nota.id, `Nota #${nota.folio}`, "Nota de servicio de demostración: servicio mayor");
+
+	// Cotización: filtro del catálogo (surtido de FIFO, cuesta $150.00 real) + mano de obra.
+	const subtotal = 285 * 1 + 450 * 2; // 285 filtro + 900 mano de obra = 1185
+	const iva = Math.round(subtotal * 0.16);
+	const total = subtotal + iva;
+	const cotizacion = await prisma.cotizacion.create({
+		data: {
+			id: ID.cotizacion1,
+			notaId: nota.id,
+			estado: "autorizada",
+			estadoInterno: "por_cobrar",
+			subtotal: subtotal.toFixed(2),
+			iva: iva.toFixed(2),
+			total: total.toFixed(2),
+			enviadaAt: new Date(Date.now() - 4 * 86_400_000),
+			autorizadaPorContactoId: ID.contactoAutorizador,
+			autorizadaMedio: "en persona",
+			autorizadaAt: new Date(Date.now() - 4 * 86_400_000),
+			creadaPorId: operadorId,
+			conceptos: {
+				create: [
+					{
+						id: randomUUID(),
+						tipo: "refaccion",
+						descripcion: "Filtro de aceite Freightliner M2",
+						cantidad: "1",
+						precioUnitario: "285.00",
+						importe: "285.00",
+						orden: 0,
+						productoId: ID.productoFiltro,
+						claveProdServ: "25172504",
+						claveUnidad: "H87",
+						surtido: "1",
+					},
+					{
+						id: randomUUID(),
+						tipo: "mano_obra",
+						descripcion: "Mano de obra — servicio mayor",
+						cantidad: "2",
+						precioUnitario: "450.00",
+						importe: "900.00",
+						orden: 1,
+						productoId: ID.productoManoObra,
+						claveProdServ: "78101803",
+						claveUnidad: "HUR",
+					},
+				],
+			},
+		},
+		include: { conceptos: { orderBy: { orden: "asc" } } },
+	});
+	await audit("cotizacion.create", cotizacion.id, `Cotización #${cotizacion.folio}`, `Cotización de demostración autorizada por $${cotizacion.total}`);
+
+	// El filtro se surte de la capa FIFO real (costo $150.00) — esto es lo que hace que
+	// `utilidadDeCotizacion` calcule un margen real y no solo el de la estimación interna.
+	const conceptoFiltro = cotizacion.conceptos.find((c) => c.productoId === ID.productoFiltro)!;
+	await prisma.$transaction(async (tx) => {
+		await tx.inventario_movimiento.create({
+			data: {
+				id: ID.movimientoFiltroA1,
+				productoId: ID.productoFiltro,
+				tipo: "salida",
+				cantidad: "1",
+				costoUnitario: "150.0000",
+				costoTotal: "150.00",
+				capaId: ID.capaFiltro,
+				notaId: nota.id,
+				conceptoId: conceptoFiltro.id,
+				registradoPorId: operadorId,
+			},
+		});
+		await tx.inventario_capa.update({ where: { id: ID.capaFiltro }, data: { restante: { decrement: "1" } } });
+		await tx.producto.update({ where: { id: ID.productoFiltro }, data: { existencia: { decrement: "1" } } });
+	});
+
+	// Estimación interna del mecánico, aprobada y ligada a la misma cotización — labor que el
+	// taller ya sabía que iba a costar antes de que existiera la cotización del cliente.
+	const cotizacionInterna = await prisma.cotizacion_interna.create({
+		data: {
+			id: ID.cotizacionInterna1,
+			notaId: nota.id,
+			mecanicoId,
+			cotizacionId: cotizacion.id,
+			estado: "aprobada",
+			total: "360.00",
+			creadaPorId: mecanicoId,
+			resueltaPorId: operadorId,
+			resueltaAt: new Date(Date.now() - 4 * 86_400_000),
+			conceptos: {
+				create: [
+					{
+						id: randomUUID(),
+						descripcion: "Mano de obra real — 2 horas a $180.00",
+						cantidad: "2",
+						costoUnitario: "180.00",
+						importe: "360.00",
+						orden: 0,
+					},
+				],
+			},
+		},
+	});
+	await audit(
+		"cotizacion_interna.aprobada",
+		cotizacionInterna.id,
+		`Estimación #${cotizacionInterna.folio}`,
+		"Estimación interna de demostración, aprobada y ligada a la cotización",
+	);
+
+	// Factura emitida con un pago parcial — el saldo pendiente queda visible en el panel.
+	const factura = await prisma.factura.create({
+		data: {
+			id: ID.factura1,
+			notaId: nota.id,
+			clienteId: ID.cliente,
+			cotizacionId: cotizacion.id,
+			estado: "emitida",
+			condicionPago: "credito",
+			diasCredito: 30,
+			vence: new Date(Date.now() + 26 * 86_400_000),
+			subtotal: subtotal.toFixed(2),
+			iva: iva.toFixed(2),
+			total: total.toFixed(2),
+			emitidaAt: new Date(Date.now() - 3 * 86_400_000),
+			creadaPorId: operadorId,
+			conceptos: {
+				create: cotizacion.conceptos.map((c) => ({
+					id: randomUUID(),
+					tipo: c.tipo,
+					descripcion: c.descripcion,
+					cantidad: c.cantidad,
+					precioUnitario: c.precioUnitario,
+					importe: c.importe,
+					orden: c.orden,
+					productoId: c.productoId,
+					claveProdServ: c.claveProdServ,
+					claveUnidad: c.claveUnidad,
+				})),
+			},
+		},
+	});
+	await audit("factura.create", factura.id, `Factura #${factura.folio}`, `Factura de demostración por $${factura.total}, a crédito`);
+
+	await prisma.pago.create({
+		data: {
+			id: ID.pagoFactura1,
+			facturaId: factura.id,
+			monto: "700.00",
+			metodo: "transferencia",
+			referencia: "SPEI-004471",
+			pagadoAt: new Date(Date.now() - 2 * 86_400_000),
+			registradoPorId: operadorId,
+		},
+	});
+	await audit("pago.register", factura.id, `Factura #${factura.folio}`, "Pago parcial de demostración: $700.00 por transferencia");
+
+	console.log(`  creada: nota #${nota.folio}, cotización #${cotizacion.folio} facturada, saldo pendiente`);
+}
+
+/**
+ * Nota #2: una refacción cotizada a partir de un CFDI de compra importado como referencia — sin
+ * pasar por inventario — para mostrar la SEGUNDA fuente de costo de `utilidadDeCotizacion`
+ * (`costoUnitario` copiado del CFDI, no un movimiento FIFO). La cotización se cobra como nota de
+ * venta (sin IVA), se abona, y luego se convierte a factura: el flujo completo de la feature 3.
+ */
+async function seedNota2() {
+	if (await prisma.nota_servicio.findUnique({ where: { id: ID.nota2 }, select: { id: true } })) {
+		console.log("  ya existe: la nota de servicio #2");
+		return;
+	}
+	const { operadorId } = await demoStaff();
+
+	const nota = await prisma.nota_servicio.create({
+		data: {
+			id: ID.nota2,
+			clienteId: ID.cliente,
+			unidadId: ID.unidadTres,
+			estado: "lista",
+			motivo: "Cambio de balatas delanteras, pieza especial pedida a proveedor",
+			diagnostico: "Balata importada, se compró expresamente para esta unidad.",
+			kilometraje: 148900,
+			inspeccionAt: new Date(Date.now() - 6 * 86_400_000),
+			recibidaPorId: operadorId,
+			recibidaAt: new Date(Date.now() - 6 * 86_400_000),
+		},
+	});
+	await audit("nota.create", nota.id, `Nota #${nota.folio}`, "Nota de servicio de demostración: pieza especial vía CFDI");
+
+	// Compra puntual con CFDI, importada como REFERENCIA de costo — nunca entra a inventario, así
+	// que no hay capa ni movimiento: el único registro de lo que costó es `cfdiTotal` aquí y
+	// `costoUnitario` en la línea de la cotización que la usa.
+	const entradaCfdi = await prisma.inventario_entrada.create({
+		data: {
+			id: ID.entradaCfdi2,
+			proveedor: "Refacciones Especializadas del Yaqui SA de CV",
+			cfdiUuid: "5eed1111-2222-3333-4444-555566667777",
+			cfdiEmisorRfc: "RYA980512XY3",
+			cfdiEmisorNombre: "Refacciones Especializadas del Yaqui SA de CV",
+			cfdiTotal: "696.00",
+			cfdiFecha: new Date(Date.now() - 6 * 86_400_000),
+			notas: "Compra de demostración vía CFDI, solo como referencia de costo — no entra a inventario.",
+			registradaPorId: operadorId,
+		},
+	});
+	await audit("inventario.entrada", entradaCfdi.id, entradaCfdi.proveedor!, "Compra de demostración vía CFDI: 1 juego de balatas a $600.00 + IVA");
+
+	const subtotal = 950; // precio de venta de la balata especial
+	const cotizacion = await prisma.cotizacion.create({
+		data: {
+			id: ID.cotizacion2,
+			notaId: nota.id,
+			estado: "autorizada",
+			estadoInterno: "pendiente",
+			subtotal: subtotal.toFixed(2),
+			iva: "0.00",
+			total: subtotal.toFixed(2),
+			enviadaAt: new Date(Date.now() - 5 * 86_400_000),
+			autorizadaPorContactoId: ID.contactoAutorizador,
+			autorizadaMedio: "whatsapp",
+			autorizadaAt: new Date(Date.now() - 5 * 86_400_000),
+			creadaPorId: operadorId,
+			conceptos: {
+				create: [
+					{
+						id: randomUUID(),
+						tipo: "refaccion",
+						descripcion: "Juego de balatas delanteras (pieza especial)",
+						cantidad: "1",
+						precioUnitario: subtotal.toFixed(2),
+						importe: subtotal.toFixed(2),
+						orden: 0,
+						entradaId: entradaCfdi.id,
+						// Lo que costó según el CFDI del proveedor — la única fuente de costo posible
+						// para una línea que nunca pasó por inventario.
+						costoUnitario: "600.0000",
+					},
+				],
+			},
+		},
+	});
+	await audit("cotizacion.create", cotizacion.id, `Cotización #${cotizacion.folio}`, `Cotización de demostración autorizada por $${cotizacion.total} (sin IVA, costo vía CFDI)`);
+
+	// Nota de venta: el cliente paga de contado y no pide factura todavía.
+	const notaVenta = await prisma.nota_venta.create({
+		data: {
+			id: ID.notaVenta2,
+			notaId: nota.id,
+			clienteId: ID.cliente,
+			cotizacionId: cotizacion.id,
+			estado: "activa",
+			total: subtotal.toFixed(2),
+			notas: "Cliente pagó en efectivo, factura pendiente de definir.",
+			creadaPorId: operadorId,
+			conceptos: {
+				create: [
+					{
+						id: randomUUID(),
+						tipo: "refaccion",
+						descripcion: "Juego de balatas delanteras (pieza especial)",
+						cantidad: "1",
+						precioUnitario: subtotal.toFixed(2),
+						importe: subtotal.toFixed(2),
+						orden: 0,
+					},
+				],
+			},
+		},
+	});
+	await audit("nota_venta.create", notaVenta.id, `Nota de venta #${notaVenta.folio}`, `Nota de venta de demostración por $${notaVenta.total}, sin IVA`);
+
+	await prisma.pago.create({
+		data: {
+			id: ID.pagoNotaVenta2,
+			notaVentaId: notaVenta.id,
+			monto: "500.00",
+			metodo: "efectivo",
+			pagadoAt: new Date(Date.now() - 4 * 86_400_000),
+			registradoPorId: operadorId,
+		},
+	});
+	await audit("pago.register", notaVenta.id, `Nota de venta #${notaVenta.folio}`, "Pago parcial de demostración: $500.00 en efectivo");
+
+	// El cliente cambió de opinión y sí pidió factura: se convierte, el IVA se calcula sobre el
+	// subtotal y el pago ya hecho se re-apunta a la factura nueva — nada se vuelve a cobrar.
+	const ivaFactura = Math.round(subtotal * 0.16);
+	const totalFactura = subtotal + ivaFactura;
+	const factura = await prisma.$transaction(async (tx) => {
+		const creada = await tx.factura.create({
+			data: {
+				id: ID.factura2,
+				notaId: nota.id,
+				clienteId: ID.cliente,
+				cotizacionId: cotizacion.id,
+				estado: "emitida",
+				condicionPago: "contado",
+				subtotal: subtotal.toFixed(2),
+				iva: ivaFactura.toFixed(2),
+				total: totalFactura.toFixed(2),
+				emitidaAt: new Date(Date.now() - 3 * 86_400_000),
+				creadaPorId: operadorId,
+				conceptos: {
+					create: [
+						{
+							id: randomUUID(),
+							tipo: "refaccion",
+							descripcion: "Juego de balatas delanteras (pieza especial)",
+							cantidad: "1",
+							precioUnitario: subtotal.toFixed(2),
+							importe: subtotal.toFixed(2),
+							orden: 0,
+						},
+					],
+				},
+			},
+		});
+		await tx.pago.update({ where: { id: ID.pagoNotaVenta2 }, data: { notaVentaId: null, facturaId: creada.id } });
+		await tx.nota_venta.update({ where: { id: notaVenta.id }, data: { estado: "facturada", facturaId: creada.id } });
+		return creada;
+	});
+	await audit(
+		"nota_venta.facturar",
+		notaVenta.id,
+		`Nota de venta #${notaVenta.folio}`,
+		`Nota de venta de demostración convertida en factura #${factura.folio} por $${factura.total}`,
+	);
+
+	console.log(`  creada: nota #${nota.folio}, nota de venta #${notaVenta.folio} convertida en factura #${factura.folio}`);
+}
+
+/** Nota #3: trabajo abierto, recién recibido, sin cotizar todavía — un pendiente real en el tablero. */
+async function seedNota3() {
+	if (await prisma.nota_servicio.findUnique({ where: { id: ID.nota3 }, select: { id: true } })) {
+		console.log("  ya existe: la nota de servicio #3");
+		return;
+	}
+	const { operadorId } = await demoStaff();
+
+	const nota = await prisma.nota_servicio.create({
+		data: {
+			id: ID.nota3,
+			clienteId: ID.cliente,
+			unidadId: ID.unidadCuatro,
+			estado: "en_diagnostico",
+			motivo: "Testigo de motor encendido, pérdida de potencia en subida",
+			kilometraje: 149210,
+			inspeccionAt: new Date(),
+			recibidaPorId: operadorId,
+			recibidaAt: new Date(),
+		},
+	});
+	await audit("nota.create", nota.id, `Nota #${nota.folio}`, "Nota de servicio de demostración: trabajo abierto, sin cotizar");
+	console.log(`  creada: nota #${nota.folio}, en diagnóstico`);
+}
+
 async function seedCredito() {
 	const cliente = await prisma.cliente.findUnique({
 		where: { id: ID.cliente },
@@ -576,6 +1221,24 @@ async function main() {
 
 	console.log("\nCita lista para recibir:");
 	await seedCitaAsignada();
+
+	console.log("\nMás unidades de la flotilla:");
+	await seedUnidadesFlotilla();
+
+	console.log("\nCatálogo de productos:");
+	await seedProductos();
+
+	console.log("\nCompras e inventario:");
+	await seedInventario();
+
+	console.log("\nNota de servicio 1 (cotización normal + estimación interna + factura a crédito):");
+	await seedNota1();
+
+	console.log("\nNota de servicio 2 (costo vía CFDI + nota de venta convertida a factura):");
+	await seedNota2();
+
+	console.log("\nNota de servicio 3 (trabajo abierto, sin cotizar):");
+	await seedNota3();
 }
 
 main()
