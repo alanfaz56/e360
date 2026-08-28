@@ -48,6 +48,9 @@ export async function proveedorActivo(): Promise<{ proveedor: ProveedorCorreo; c
 /** Absolute site URL. `BETTER_AUTH_URL` is already the app's own canonical origin. */
 const absoluta = (ruta: string) => new URL(ruta, env.BETTER_AUTH_URL).toString();
 
+/** The mark, absolute — see `plantillas.ts`'s header comment for why it can't stay relative here. */
+const logoUrl = () => absoluta("/logo_simple_red.png");
+
 /**
  * The four `cliente_*` events marked `correoCliente` in NOTIFICACION_EVENTOS. Called from inside
  * `notificar()`, right after `enviarPush` — same input shape, same "never throws" contract.
@@ -84,6 +87,7 @@ export async function enviarCorreoCliente(
 			cuerpo: aviso.cuerpo,
 			url: aviso.url ? absoluta(aviso.url) : null,
 			extra: cuenta ? bloqueCuentaBancaria(cuenta) : null,
+			logoUrl: logoUrl(),
 		});
 
 		for (const { email } of clientes) {
@@ -113,7 +117,7 @@ export async function enviarInvitacion(input: {
 }): Promise<boolean> {
 	try {
 		const { proveedor, cfg } = await proveedorActivo();
-		const plantilla = invitacion(input);
+		const plantilla = invitacion({ ...input, logoUrl: logoUrl() });
 		await proveedor.enviar(cfg, { para: input.email, ...plantilla });
 		return true;
 	} catch (err) {
@@ -126,7 +130,7 @@ export async function enviarInvitacion(input: {
 export async function enviarRestablecerPassword(input: { email: string; nombre: string; url: string }): Promise<void> {
 	try {
 		const { proveedor, cfg } = await proveedorActivo();
-		const plantilla = restablecerPassword(input);
+		const plantilla = restablecerPassword({ ...input, logoUrl: logoUrl() });
 		await proveedor.enviar(cfg, { para: input.email, ...plantilla });
 	} catch (err) {
 		console.error(`[correo] restablecer contraseña a ${input.email} no se pudo mandar:`, err);

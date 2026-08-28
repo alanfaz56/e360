@@ -7,6 +7,7 @@
 	import Printer from "@lucide/svelte/icons/printer";
 	import ArrowLeft from "@lucide/svelte/icons/arrow-left";
 	import Button from "$lib/components/Button.svelte";
+	import Logo from "$lib/components/Logo.svelte";
 	import { page } from "$app/state";
 
 	let { data } = $props();
@@ -42,8 +43,11 @@
 	<article class="documento rounded-lg border border-sand-200 bg-white p-8 text-sand-900">
 		<header class="flex flex-wrap items-start justify-between gap-4 border-b border-sand-300 pb-4">
 			<div>
-				<p class="font-display text-2xl text-sand-950">Estación 360</p>
-				<p class="text-sm text-sand-600">Taller mecánico</p>
+				<Logo
+					variant="black"
+					class="h-10 w-auto"
+				/>
+				<p class="mt-1 text-sm text-sand-600">Taller mecánico</p>
 			</div>
 			<div class="text-right">
 				<p class="font-display text-xl text-sand-950">Reporte de servicio</p>

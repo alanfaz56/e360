@@ -7,12 +7,27 @@
  *
  * Plain, table-free HTML — this is a shop, not a marketing team, and Rule 7 already says no new
  * dependency for what a few lines of markup covers.
+ *
+ * No `$env` import here on purpose: this file stays plain enough for `scripts/check-correo.ts` to
+ * exercise directly under tsx, the same discipline `prisma/seed.ts` follows for `$lib`/`$env`.
+ * `index.ts` (which already has `env` and builds `absoluta()`) passes the logo's URL in instead.
  */
 
-const envoltura = (cuerpoHtml: string) => `<!doctype html>
+/**
+ * The mark, not the name — same rule `Logo.svelte` follows for the panel and the printables.
+ *
+ * `logoUrl` defaults to the relative path: fine for `scripts/check-correo.ts`, which only reads
+ * the HTML string and never actually opens it in a mail client. A real send needs the ABSOLUTE
+ * one instead — a mail client renders this from wherever it opens, never from this app's own
+ * origin — so `enviarCorreoCliente`/`enviarInvitacion`/`enviarRestablecerPassword` in `index.ts`
+ * pass `absoluta("/logo_simple_red.png")` through every exported function below.
+ */
+const LOGO_RELATIVA = "/logo_simple_red.png";
+
+const envoltura = (cuerpoHtml: string, logoUrl: string = LOGO_RELATIVA) => `<!doctype html>
 <html lang="es"><body style="margin:0;padding:24px;background:#f5f3ef;font-family:system-ui,sans-serif;color:#1c1917;">
 <div style="max-width:480px;margin:0 auto;background:#fff;border-radius:8px;padding:24px;">
-<p style="margin:0 0 16px;font-size:13px;font-weight:700;letter-spacing:.02em;color:#78716c;">ESTACIÓN 360</p>
+<img src="${logoUrl}" alt="Estación 360" height="28" style="display:block;height:28px;width:auto;margin:0 0 16px;">
 ${cuerpoHtml}
 </div>
 </body></html>`;
@@ -34,6 +49,7 @@ export function avisoCliente(input: {
 	cuerpo: string;
 	url: string | null;
 	extra?: { html: string; texto: string } | null;
+	logoUrl?: string;
 }) {
 	return {
 		asunto: input.titulo,
@@ -42,6 +58,7 @@ export function avisoCliente(input: {
 <p style="margin:0;font-size:14px;line-height:1.5;color:#44403c;">${input.cuerpo}</p>
 ${input.url ? boton("Ver seguimiento", input.url) : ""}
 ${input.extra?.html ?? ""}`,
+			input.logoUrl,
 		),
 		texto: `${input.titulo}\n\n${input.cuerpo}${input.url ? `\n\n${input.url}` : ""}${input.extra?.texto ? `\n\n${input.extra.texto}` : ""}`,
 	};
@@ -64,7 +81,7 @@ ${filas.map(([k, v]) => `<p style="margin:0;font-size:13px;color:#44403c;"><stro
 	};
 }
 
-export function invitacion(input: { invitadorNombre: string; rolLabel: string; url: string }) {
+export function invitacion(input: { invitadorNombre: string; rolLabel: string; url: string; logoUrl?: string }) {
 	const asunto = `${input.invitadorNombre} te invitó a Estación 360`;
 	return {
 		asunto,
@@ -73,12 +90,13 @@ export function invitacion(input: { invitadorNombre: string; rolLabel: string; u
 <p style="margin:0;font-size:14px;line-height:1.5;color:#44403c;">
 ${input.invitadorNombre} te invitó como <strong>${input.rolLabel}</strong>. El link vence en 72 horas.</p>
 ${boton("Aceptar invitación", input.url)}`,
+			input.logoUrl,
 		),
 		texto: `${input.invitadorNombre} te invitó a Estación 360 como ${input.rolLabel}.\n\nAceptar: ${input.url}\n\nEl link vence en 72 horas.`,
 	};
 }
 
-export function restablecerPassword(input: { nombre: string; url: string }) {
+export function restablecerPassword(input: { nombre: string; url: string; logoUrl?: string }) {
 	const asunto = "Restablecer tu contraseña — Estación 360";
 	return {
 		asunto,
@@ -87,6 +105,7 @@ export function restablecerPassword(input: { nombre: string; url: string }) {
 <p style="margin:0;font-size:14px;line-height:1.5;color:#44403c;">
 Hola ${input.nombre}. Pediste restablecer tu contraseña. Si no fuiste tú, ignora este correo.</p>
 ${boton("Restablecer contraseña", input.url)}`,
+			input.logoUrl,
 		),
 		texto: `Hola ${input.nombre}. Pediste restablecer tu contraseña.\n\n${input.url}\n\nSi no fuiste tú, ignora este correo.`,
 	};
