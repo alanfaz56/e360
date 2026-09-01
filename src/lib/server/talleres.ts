@@ -671,12 +671,29 @@ export async function tallerMencionado(texto: string): Promise<string | null> {
 		"hermosillo",
 	]);
 
+	// Word-boundary match only — plain `.includes` on a name/word also matches as a substring
+	// of an unrelated longer word (e.g. "humo" sits inside no taller name, but shorter/common
+	// fragments did false-positive this way), so both the full name and each distinctive word
+	// are matched with `\b` boundaries instead.
+	const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	const contieneComoPalabra = (texto: string, buscado: string) =>
+		new RegExp(`\\b${escapeRegExp(buscado)}\\b`, "u").test(texto);
+
+	// NOTE: length>=5-and-not-generic is a heuristic, not a full stopword list. A taller name
+	// built from common industry/location words (e.g. "Centro", "Norte", "Automotriz") can
+	// false-positive on an ordinary comment using that same word for unrelated reasons. If a
+	// real name collides this way, add its generic word to GENERICAS rather than reworking the
+	// algorithm — that keeps the guard's failure mode false-negative (a slip goes unflagged),
+	// which the docstring already accepts, instead of false-positive (blocking a clean comment).
 	for (const { nombre } of talleres) {
 		const completo = normalizar(nombre);
-		if (cuerpo.includes(completo)) return nombre;
+		if (contieneComoPalabra(cuerpo, completo)) return nombre;
 		// A distinctive word is enough: "El Sahuaro" is recognisable from "Sahuaro" alone.
-		for (const palabra of completo.split(/\s+/)) {
-			if (palabra.length >= 5 && !GENERICAS.has(palabra) && cuerpo.includes(palabra)) return nombre;
+		// Split on punctuation too, not just whitespace — "Ruiz-Hernández" must still yield
+		// "ruiz" and "hernandez" as separate distinctive words, not one hyphenated token that
+		// never matches unless the comment repeats the hyphen.
+		for (const palabra of completo.split(/[\s\-.,]+/)) {
+			if (palabra.length >= 5 && !GENERICAS.has(palabra) && contieneComoPalabra(cuerpo, palabra)) return nombre;
 		}
 	}
 	return null;

@@ -33,7 +33,7 @@ export const REGIMENES_FISCALES: readonly SatEntry[] = [
 		clave: "612",
 		label: "Personas Físicas con Actividades Empresariales y Profesionales",
 		fisica: true,
-		moral: false,
+		moral: false,       []
 	},
 	{ clave: "614", label: "Ingresos por intereses", fisica: true, moral: false },
 	{ clave: "615", label: "Régimen de los ingresos por obtención de premios", fisica: true, moral: false },
