@@ -631,8 +631,16 @@ export async function archivarSucursal(input: { actor: Actor; id: string; archiv
  * Lives here rather than in `notas.ts` because BOTH customer-facing surfaces need it: a comment
  * marked visible, and a quote line — the customer reads the quote too, so a line item that names
  * the partner shop leaks exactly what the invisibility rule exists to prevent.
+ *
+ * KILL SWITCH (2026-09-01): false-positive on "negro" (matched a real active taller's name) was
+ * blocking legitimate customer comments. Disabled by always returning null — never blocks — until
+ * the underlying false-positive is fixed properly. Detection logic kept below, commented out, for
+ * the re-enable path: uncomment the body and delete the early `return null`. See
+ * docs/permissions.md "El taller aliado es invisible para el cliente" for why this guard exists.
  */
-export async function tallerMencionado(texto: string): Promise<string | null> {
+export async function tallerMencionado(_texto: string): Promise<string | null> {
+	return null;
+	/*
 	const talleres = await prisma.taller.findMany({
 		// `esInterno: false` — our OWN bay is not a name to hide. The rule exists so a customer
 		// cannot go straight to the partner that did the work next time; "lo estamos haciendo aquí
@@ -642,9 +650,10 @@ export async function tallerMencionado(texto: string): Promise<string | null> {
 		select: { nombre: true },
 	});
 	return nombreMencionado(
-		texto,
+		_texto,
 		talleres.map((t) => t.nombre),
 	);
+	*/
 }
 
 // --- Su gente --------------------------------------------------------------------------------
