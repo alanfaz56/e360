@@ -24,6 +24,8 @@
 	import { CLAVES_PROD_SERV, CLAVES_UNIDAD } from "$lib/sat-catalogos";
 	import Adjuntos from "$lib/components/Adjuntos.svelte";
 	import AdjuntarArchivos from "$lib/components/AdjuntarArchivos.svelte";
+	import MejorarComentarioIA from "$lib/components/MejorarComentarioIA.svelte";
+	import DictarVoz from "$lib/components/DictarVoz.svelte";
 	import Badge from "$lib/components/Badge.svelte";
 	import Button from "$lib/components/Button.svelte";
 	import Drawer from "$lib/components/Drawer.svelte";
@@ -86,6 +88,8 @@
 	} from "$lib/facturacion";
 	import { searchHref } from "$lib/url";
 	import { page } from "$app/state";
+	import { enhance } from "$app/forms";
+	import { sinSaltoAlRedirigir } from "$lib/sin-salto";
 
 	let { data, form } = $props();
 
@@ -99,6 +103,15 @@
 
 	const INPUT =
 		"mt-1 w-full rounded-md border border-sand-300 bg-white px-3 py-2 text-sm focus:border-brand-600 focus:outline-none";
+
+	// The comment draft, bound so "Mejorar con IA" and "Dictar" can write into the same box the
+	// human is editing. Plain uncontrolled `<textarea name="texto">` still submits fine — this
+	// state exists only so those two buttons have something to write into.
+	let comentarioTexto = $state("");
+	// Clears the box only once the server actually accepted the comment — not on click, so a
+	// rejected/failed submit (nota:comment lost mid-edit, `tallerMencionado` refusing it, …)
+	// leaves what was typed right there to fix and resend instead of silently discarding it.
+	const enviarComentario = sinSaltoAlRedirigir(() => (comentarioTexto = ""));
 
 	// Where the unit ends up is only a question on a rejection, so the block stays out of the way
 	// until one is picked. `$effect` never runs during SSR, so without JavaScript `hydrated` stays
@@ -673,6 +686,7 @@
 								{#if s.productoId}
 									<form
 										method="POST"
+										use:enhance={sinSaltoAlRedirigir()}
 										action="?/resolverRefaccion"
 										class="flex-1"
 									>
@@ -694,6 +708,7 @@
 								{/if}
 								<form
 									method="POST"
+									use:enhance={sinSaltoAlRedirigir()}
 									action="?/resolverRefaccion"
 									class="flex-1 space-y-2"
 								>
@@ -873,6 +888,7 @@
 											{#if data.puede.enviarCotizacion}
 												<form
 													method="POST"
+													use:enhance={sinSaltoAlRedirigir()}
 													action="?/estadoCotizacion"
 												>
 													<input
@@ -962,6 +978,7 @@
 								{#if data.puede.enviarCotizacion && c.estado !== "borrador" && c.estado !== "rechazada"}
 									<form
 										method="POST"
+										use:enhance={sinSaltoAlRedirigir()}
 										action="?/reenviarCotizacionCorreo"
 									>
 										<input
@@ -985,6 +1002,7 @@
 								{#if data.puede.surtir && c.estado === "autorizada" && faltaSurtir}
 									<form
 										method="POST"
+										use:enhance={sinSaltoAlRedirigir()}
 										action="?/surtir"
 									>
 										<input
@@ -1030,6 +1048,7 @@
 										{@const faltaFactura = destino === "por_cobrar" && !facturaDe(c.id) && !notaVentaDe(c.id)}
 										<form
 											method="POST"
+											use:enhance={sinSaltoAlRedirigir()}
 											action="?/interno"
 										>
 											<input
@@ -1092,6 +1111,7 @@
 								{#if data.puede.aprobarInterna && ci.estado === "pendiente"}
 									<form
 										method="POST"
+										use:enhance={sinSaltoAlRedirigir()}
 										action="?/costoInternoEstado"
 									>
 										<input
@@ -1131,6 +1151,7 @@
 								{#if data.puede.cotizarInterna && ci.estado === "aprobada" && data.cotizaciones.length > 0}
 									<form
 										method="POST"
+										use:enhance={sinSaltoAlRedirigir()}
 										action="?/costoInternoVincular"
 										class="flex items-center gap-1.5"
 									>
@@ -1239,6 +1260,7 @@
 								{#if data.puede.timbrar && !f.timbrada && f.estado !== "cancelada"}
 									<form
 										method="POST"
+										use:enhance={sinSaltoAlRedirigir()}
 										action="?/timbrar"
 									>
 										<input
@@ -1420,6 +1442,7 @@
 		{#if data.puede.comentar}
 			<form
 				method="POST"
+				use:enhance={enviarComentario}
 				action="?/comentar"
 				class="mt-3 space-y-2"
 			>
@@ -1436,6 +1459,7 @@
 							name="texto"
 							rows="2"
 							class={INPUT}
+							bind:value={comentarioTexto}
 						></textarea>
 					{/snippet}
 				</Field>
@@ -1450,7 +1474,16 @@
 					/>
 					Interno (no se le muestra al cliente)
 				</label>
-				<Button size="sm">Comentar</Button>
+				<div class="flex flex-wrap items-center gap-2">
+					<Button size="sm">Comentar</Button>
+					{#if data.iaDisponible}
+						<MejorarComentarioIA
+							notaId={n.id}
+							bind:texto={comentarioTexto}
+						/>
+					{/if}
+					<DictarVoz bind:texto={comentarioTexto} />
+				</div>
 			</form>
 		{/if}
 	</section>
@@ -1497,6 +1530,7 @@
 			{:else}
 				<form
 					method="POST"
+					use:enhance={sinSaltoAlRedirigir()}
 					action="?/avanzar"
 				>
 					<input
@@ -1540,6 +1574,8 @@
 	{#if data.puede.reporteIA}
 		<Button
 			href={searchHref(page.url, { drawer: "reporteIA" })}
+			disabled={!data.iaDisponible}
+			title={data.iaDisponible ? undefined : "No hay proveedor de IA configurado. Ajústalo en Ajustes → Inteligencia artificial."}
 			variant="outline"
 			size="sm"
 		>
@@ -1579,6 +1615,7 @@
 	>
 		<form
 			method="POST"
+			use:enhance={sinSaltoAlRedirigir()}
 			action="?/inspeccionar"
 			class="space-y-4"
 		>
@@ -1677,6 +1714,7 @@
 	>
 		<form
 			method="POST"
+			use:enhance={sinSaltoAlRedirigir()}
 			action="?/transferir"
 			class="space-y-4"
 		>
@@ -1739,6 +1777,7 @@
 	>
 		<form
 			method="POST"
+			use:enhance={sinSaltoAlRedirigir()}
 			action="?/recibirTaller"
 			class="space-y-4"
 		>
@@ -1864,6 +1903,7 @@
 	>
 		<form
 			method="POST"
+			use:enhance={sinSaltoAlRedirigir()}
 			action="?/liberacion"
 			class="space-y-4"
 		>
@@ -1949,6 +1989,7 @@
 	>
 		<form
 			method="POST"
+			use:enhance={sinSaltoAlRedirigir()}
 			action="?/entregar"
 			class="space-y-4"
 		>
@@ -2005,6 +2046,7 @@
 	>
 		<form
 			method="POST"
+			use:enhance={sinSaltoAlRedirigir()}
 			action="?/cancelar"
 			class="space-y-4"
 		>
@@ -2027,6 +2069,7 @@
 	>
 		<form
 			method="POST"
+			use:enhance={sinSaltoAlRedirigir()}
 			action="?/reporteIA"
 			class="space-y-4"
 		>
@@ -2116,6 +2159,7 @@
 		{:else if form?.previewCfdi}
 			<form
 				method="POST"
+				use:enhance={sinSaltoAlRedirigir()}
 				action="?drawer=comprarCfdi&/confirmarCfdi"
 				class="space-y-4"
 			>
@@ -2296,6 +2340,7 @@
 		{:else}
 			<form
 				method="POST"
+				use:enhance={sinSaltoAlRedirigir()}
 				action="?drawer=comprarCfdi&/previsualizarCfdi"
 				enctype="multipart/form-data"
 				class="space-y-4"
@@ -2339,6 +2384,7 @@
 		-->
 		<form
 			method="POST"
+			use:enhance={sinSaltoAlRedirigir()}
 			action="?/cotizar"
 			class="space-y-4"
 		>
@@ -2405,6 +2451,7 @@
 	>
 		<form
 			method="POST"
+			use:enhance={sinSaltoAlRedirigir()}
 			action="?/costoInterno"
 			class="space-y-4"
 		>
@@ -2457,6 +2504,7 @@
 	>
 		<form
 			method="POST"
+			use:enhance={sinSaltoAlRedirigir()}
 			action="?/costoInternoEstado"
 			class="space-y-4"
 		>
@@ -2489,6 +2537,7 @@
 	>
 		<form
 			method="POST"
+			use:enhance={sinSaltoAlRedirigir()}
 			action="?/estadoCotizacion"
 			class="space-y-4"
 		>
@@ -2548,6 +2597,7 @@
 	>
 		<form
 			method="POST"
+			use:enhance={sinSaltoAlRedirigir()}
 			action="?/estadoCotizacion"
 			class="space-y-4"
 		>
@@ -2620,6 +2670,7 @@
 	>
 		<form
 			method="POST"
+			use:enhance={sinSaltoAlRedirigir()}
 			action="?/notaVenta"
 			class="space-y-4"
 		>
@@ -2649,6 +2700,7 @@
 	>
 		<form
 			method="POST"
+			use:enhance={sinSaltoAlRedirigir()}
 			action="?/facturar"
 			class="space-y-4"
 		>
@@ -2736,6 +2788,7 @@
 	>
 		<form
 			method="POST"
+			use:enhance={sinSaltoAlRedirigir()}
 			action="?/pagar"
 			class="space-y-4"
 		>
@@ -2800,6 +2853,7 @@
 	>
 		<form
 			method="POST"
+			use:enhance={sinSaltoAlRedirigir()}
 			action="?/cancelarFactura"
 			class="space-y-4"
 		>
@@ -2827,6 +2881,7 @@
 	>
 		<form
 			method="POST"
+			use:enhance={sinSaltoAlRedirigir()}
 			action="?/pagarNotaVenta"
 			class="space-y-4"
 		>
@@ -2886,6 +2941,7 @@
 	>
 		<form
 			method="POST"
+			use:enhance={sinSaltoAlRedirigir()}
 			action="?/cancelarNotaVenta"
 			class="space-y-4"
 		>
@@ -2913,6 +2969,7 @@
 	>
 		<form
 			method="POST"
+			use:enhance={sinSaltoAlRedirigir()}
 			action="?/facturarNotaVenta"
 			class="space-y-4"
 		>
@@ -2991,6 +3048,7 @@
 	>
 		<form
 			method="POST"
+			use:enhance={sinSaltoAlRedirigir()}
 			action="?/cancelarSat"
 			class="space-y-4"
 		>

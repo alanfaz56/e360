@@ -80,6 +80,23 @@ async function llamarGemini(prompt: string, apiKey: string, signal: AbortSignal)
 }
 
 /**
+ * Is a provider actually usable right now? Same two conditions `generarNarrativa` fails closed
+ * on — provider selected, and its key present — surfaced as a boolean so a route can hide an "AI"
+ * button instead of showing one that always 503s. Never reveals which provider or the key itself.
+ */
+export async function iaConfigurada(): Promise<boolean> {
+	const proveedor = await valorAjuste("ia.proveedor");
+	if (!esProveedorIA(proveedor)) return false;
+	const clave =
+		proveedor === "anthropic"
+			? "ia.anthropic_apiKey"
+			: proveedor === "openai"
+				? "ia.openai_apiKey"
+				: "ia.gemini_apiKey";
+	return Boolean(await valorAjuste(clave));
+}
+
+/**
  * Calls whichever provider `ia.proveedor` selects, using that provider's stored key.
  * Fails closed (503) if the provider is unset, its key is missing, or the call itself fails —
  * same "degrade loudly, never silently no-op a security/config-relevant check" rule the

@@ -804,6 +804,12 @@ async function seedNota1() {
 			recibidaPorId: operadorId,
 			recibidaAt: new Date(Date.now() - 5 * 86_400_000),
 			mecanicoId,
+			// Same algorithm as `nuevoTokenSeguimiento` (src/lib/server/notificaciones.ts) — not
+			// imported because that module pulls in `$lib/prisma` → `$env`, which tsx can't resolve
+			// (see file header: relative imports only). Without this, a seeded nota has no tracking
+			// link on /panel/notas/[id], unlike every nota created through the real app.
+			seguimientoToken: randomBytes(32).toString("hex"),
+			// (Also set in seedNota2/seedNota3 below, same reason.)
 		},
 	});
 	await audit("nota.create", nota.id, `Nota #${nota.folio}`, "Nota de servicio de demostración: servicio mayor");
@@ -991,6 +997,8 @@ async function seedNota2() {
 			inspeccionAt: new Date(Date.now() - 6 * 86_400_000),
 			recibidaPorId: operadorId,
 			recibidaAt: new Date(Date.now() - 6 * 86_400_000),
+			// See seedNota1 for why this is inlined instead of imported.
+			seguimientoToken: randomBytes(32).toString("hex"),
 		},
 	});
 	await audit("nota.create", nota.id, `Nota #${nota.folio}`, "Nota de servicio de demostración: pieza especial vía CFDI");
@@ -1155,6 +1163,8 @@ async function seedNota3() {
 			inspeccionAt: new Date(),
 			recibidaPorId: operadorId,
 			recibidaAt: new Date(),
+			// See seedNota1 for why this is inlined instead of imported.
+			seguimientoToken: randomBytes(32).toString("hex"),
 		},
 	});
 	await audit("nota.create", nota.id, `Nota #${nota.folio}`, "Nota de servicio de demostración: trabajo abierto, sin cotizar");

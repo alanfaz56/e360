@@ -8,6 +8,7 @@
 -->
 <script lang="ts">
 	import Adjuntos from "$lib/components/Adjuntos.svelte";
+	import Camera from "@lucide/svelte/icons/camera";
 	import Car from "@lucide/svelte/icons/car";
 	import CircleCheck from "@lucide/svelte/icons/circle-check";
 	import MessageSquare from "@lucide/svelte/icons/message-square";
@@ -99,6 +100,19 @@
 				<p class="mt-0.5 text-sm leading-relaxed text-sand-800">{data.nota.motivo}</p>
 			</div>
 		</section>
+
+		{#if data.fotos.length > 0}
+			<section class="rounded-lg border border-sand-200 bg-white p-5">
+				<h2 class="font-display flex items-center gap-2 text-lg text-sand-950">
+					<Camera
+						size={18}
+						aria-hidden="true"
+					/>
+					Fotos de tu unidad
+				</h2>
+				<Adjuntos adjuntos={data.fotos} />
+			</section>
+		{/if}
 
 		<!-- The subscribe prompt lives next to the status, where the value of it is obvious, and it
 		     only ever prompts on a tap. -->

@@ -14,6 +14,7 @@ import { listContactos } from "$lib/server/contactos";
 import { listTalleres } from "$lib/server/talleres";
 import { requirePermission, requireUser } from "$lib/server/guard";
 import { r2Configurado } from "$lib/server/r2";
+import { iaConfigurada } from "$lib/server/ia";
 import {
 	avanzarNota,
 	cancelarNota,
@@ -182,6 +183,11 @@ export const load: ServerLoad = async ({ locals, params, url }) => {
 				controlaInventario: p.controlaInventario,
 			})),
 		r2: r2Configurado(),
+		// Whether a provider is configured at all — NOT a permission check. Each AI button gates
+		// its own permission separately (`puede.comentar`, `puede.reporteIA`); this only decides
+		// whether the button is usable once that permission already says it may render, same idea
+		// as `r2` for uploads.
+		iaDisponible: (can(actor.role, "nota:comment") || can(actor.role, "nota:reporte_ia")) ? await iaConfigurada() : false,
 		// The shop's date, not the browser's — a payment dated by a laptop set to CDMX would land
 		// on the wrong day for the counter. Same rule the agenda follows.
 		hoy: hoy(),

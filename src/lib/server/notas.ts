@@ -11,6 +11,7 @@ import {
 	tipoDeMime,
 	combustibleLabel,
 	esMimePermitido,
+	fotoCategoriaLabel,
 	isFotoCategoria,
 	isInventarioItem,
 	isLiberacionItem,
@@ -65,7 +66,7 @@ export const notaLabel = (n: {
 const INCLUDE = {
 	cliente: { select: { nombreCompleto: true, tipo: true, telefono: true } },
 	unidad: {
-		select: { marca: true, modelo: true, anio: true, placas: true, vin: true, numeroEconomico: true },
+		select: { marca: true, modelo: true, anio: true, color: true, placas: true, vin: true, numeroEconomico: true },
 	},
 	recibidaPor: { select: { name: true, email: true } },
 	mecanico: { select: { id: true, name: true, email: true } },
@@ -189,7 +190,7 @@ export async function seguimientoPorToken(token: string) {
 	});
 	if (!nota) throw new ClienteError(404, "Liga de seguimiento no válida.");
 
-	const [comentarios, avisos, cotizaciones, facturas] = await Promise.all([
+	const [comentarios, fotos, avisos, cotizaciones, facturas] = await Promise.all([
 		prisma.nota_comentario.findMany({
 			// Visible ones only. `comentarNota` already refuses to mark a comment visible if it
 			// names a taller, so this list is safe to show verbatim.
@@ -197,6 +198,16 @@ export async function seguimientoPorToken(token: string) {
 			orderBy: { createdAt: "desc" },
 			take: 30,
 			select: { id: true, texto: true, createdAt: true, adjuntos: { select: ADJUNTOS_SELECT } },
+		}),
+		// Every photo, any category — a picture of the car is not internal information the way a
+		// comment or a diagnóstico can be. `descripcion` is deliberately NOT selected: unlike a
+		// comment, it never passes through `tallerMencionado`, so a staff member's free-text note
+		// on a photo could name a partner shop. Omitting the field is the same call `notaParaCliente`
+		// makes for its own off-limits fields — leave it out rather than trust a runtime filter.
+		prisma.nota_evidencia.findMany({
+			where: { notaId: nota.id, tipo: "foto" },
+			orderBy: { createdAt: "asc" },
+			select: { id: true, categoria: true, clave: true, contentType: true, bytes: true, createdAt: true },
 		}),
 		prisma.notificacion.findMany({
 			where: { clienteId: nota.clienteId, entidad: "nota", entidadId: nota.id },
@@ -255,6 +266,18 @@ export async function seguimientoPorToken(token: string) {
 			texto: c.texto,
 			createdAt: c.createdAt.toISOString(),
 			adjuntos: c.adjuntos.map(adjuntoPublico),
+		})),
+		// Shaped to match `Adjuntos`'s `Adjunto` type (src/lib/components/Adjuntos.svelte) so the
+		// customer page can render this gallery with the same component the comment attachments use,
+		// rather than a second photo-grid. `nombre` is the category label, not the original filename
+		// — a customer has no use for "IMG_2481.jpg", but "Frente" tells them which photo this is.
+		fotos: fotos.map((f) => ({
+			id: f.id,
+			tipo: "foto" as const,
+			nombre: fotoCategoriaLabel(f.categoria),
+			contentType: f.contentType,
+			bytes: f.bytes,
+			url: urlDeLectura(f.clave),
 		})),
 		avisos: avisos.map((a) => ({
 			id: a.id,
@@ -1836,6 +1859,65 @@ export async function comentarNota(input: {
 	}
 
 	return comentario;
+}
+
+/**
+ * Rewrite a draft comment with AI before it is posted — same authorization as posting it
+ * (`nota:comment`): this only helps write text the caller could already submit verbatim, so it
+ * gets no permission of its own. Returns the rewritten text; it is never saved or sent anywhere —
+ * `comentarNota` is the only thing that persists a comment, and only once the human accepts and
+ * submits what is now in the box.
+ *
+ * Unidad/nota context goes into the prompt so the model can write "el Tsuru placas ABC-123" instead
+ * of a vague "su vehículo", same idea as the report prompt in `generarReporteIA`. Never mentions a
+ * partner taller by name — the same rule `tallerMencionado` enforces at post time applies here too,
+ * so the model is not handed a reason to leak one in its own rewrite.
+ */
+export async function mejorarComentarioIA(input: { actor: Actor; id: string; texto: unknown }) {
+	if (!can(input.actor.role, "nota:comment")) throw new ClienteError(403, "Sin permiso: nota:comment");
+	if (!can(input.actor.role, "nota:read")) await exigirNotaPropia(input.actor, input.id);
+
+	const borrador = trim(input.texto);
+	if (!borrador) throw new ClienteError(400, "Escribe algo primero para poder mejorarlo.");
+
+	const nota = await getNota(input.id);
+
+	const partes: string[] = [];
+	partes.push(`Nota de servicio #${nota.folio} — cliente: ${nota.cliente?.nombreCompleto ?? "no especificado"}.`);
+	if (nota.unidad) {
+		const u = nota.unidad;
+		partes.push(
+			[`Unidad: ${u.marca} ${u.modelo} ${u.anio ?? ""}`.trim(), u.color, u.placas && `placas ${u.placas}`, u.numeroEconomico && `económico ${u.numeroEconomico}`]
+				.filter(Boolean)
+				.join(", ") + ".",
+		);
+	}
+	partes.push(`Motivo del servicio: ${nota.motivo ?? "no especificado"}.`);
+	partes.push(`Estado actual: ${notaEstadoLabel(nota.estado)}.`);
+
+	const prompt = [
+		"Eres un asistente de Estación 360, un taller mecánico. Reescribe el siguiente comentario de servicio en español de México: claro, profesional, sin errores, conservando el sentido y los datos que trae — no inventes información nueva, no agregues promesas de fecha o precio que no estén ya en el texto, no menciones talleres aliados por nombre.",
+		"Devuelve ÚNICAMENTE el comentario reescrito, sin comillas, sin explicación ni encabezado.",
+		"---",
+		"Contexto de la nota:",
+		partes.join("\n"),
+		"---",
+		"Comentario a mejorar:",
+		borrador,
+	].join("\n\n");
+
+	const resultado = await generarNarrativa(prompt);
+
+	await registrarUsoIA({
+		proveedor: resultado.proveedor,
+		modelo: resultado.modelo,
+		notaId: nota.id,
+		actorId: input.actor.id,
+		tokensEntrada: resultado.tokensEntrada,
+		tokensSalida: resultado.tokensSalida,
+	});
+
+	return { texto: resultado.texto.trim() };
 }
 
 /**
