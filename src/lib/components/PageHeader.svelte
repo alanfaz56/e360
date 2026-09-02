@@ -8,7 +8,7 @@
 	}: { title: string; description?: string; actions?: Snippet } = $props();
 </script>
 
-<div class="flex flex-wrap items-center gap-4">
+<div class="flex flex-wrap items-center gap-4 max-w-5xl">
 	<div>
 		<h1 class="font-display text-3xl text-sand-950">{title}</h1>
 		{#if description}

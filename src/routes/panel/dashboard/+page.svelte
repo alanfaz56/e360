@@ -26,6 +26,9 @@
 
 <svelte:head><title>Dashboard gerencial — Estación 360</title></svelte:head>
 
+<div class="max-w-5xl mx-auto">
+
+	
 <PageHeader title="Dashboard gerencial" description="La situación del taller: dinero, operación y problemas, primero." />
 
 <!-- Real GET form: los filtros SON la URL, así cualquier vista es compartible y funciona sin JS. -->
@@ -82,3 +85,5 @@
 <VehiculosResumen vehiculos={data.vehiculos} />
 <CitasChart citas={data.citas} />
 <GarantiasResumen garantias={data.garantias} />
+
+</div>

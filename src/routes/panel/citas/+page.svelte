@@ -13,6 +13,8 @@
 	import Button from "$lib/components/Button.svelte";
 	import ClienteUnidadPicker from "$lib/components/ClienteUnidadPicker.svelte";
 	import DataTable from "$lib/components/DataTable.svelte";
+	import ChevronDown from "@lucide/svelte/icons/chevron-down";
+	import SlidersHorizontal from "@lucide/svelte/icons/sliders-horizontal";
 	import Drawer from "$lib/components/Drawer.svelte";
 	import EmptyState from "$lib/components/EmptyState.svelte";
 	import Field from "$lib/components/Field.svelte";
@@ -121,7 +123,6 @@
 		aEstado;
 		recibioUnidad = null;
 	});
-
 </script>
 
 <svelte:head><title>Citas — Estación 360</title></svelte:head>
@@ -132,114 +133,115 @@
 >
 	{#snippet actions()}
 		<!--
-			Table or board, keeping every filter: the switch is a change of lens, not of subject.
-			The board is the default, so it is the one with no param — `?vista=tabla` opts out.
-		-->
-		<span class="flex rounded-md border border-sand-300 p-0.5">
-			<Button
-				href={searchHref(page.url, { vista: null, page: null, mover: null, a: null })}
-				variant={data.tablero ? "primary" : "ghost"}
-				size="sm"
-			>
-				<Columns3
-					size={15}
-					aria-hidden="true"
-				/>
-				Tablero
-			</Button>
-			<Button
-				href={searchHref(page.url, { vista: "tabla", page: null, mover: null, a: null })}
-				variant={data.tablero ? "ghost" : "primary"}
-				size="sm"
-			>
-				<Rows3
-					size={15}
-					aria-hidden="true"
-				/>
-				Tabla
-			</Button>
-		</span>
-		<Button
-			href="/panel/agenda"
-			variant="outline"
-		>
-			<CalendarDays
-				size={18}
-				aria-hidden="true"
-			/>
-			Ver calendario
-		</Button>
-		{#if data.puede.crear}
-			<Button href="/panel/agenda?drawer=nueva">
-				<CalendarPlus
-					size={18}
-					aria-hidden="true"
-				/>
-				Nueva cita
-			</Button>
-		{/if}
+		Table or board, keeping every filter: the switch is a change of lens, not of subject.
+		The board is the default, so it is the one with no param — `?vista=tabla` opts out.
+	-->
+		<div class="flex flex-col items-end sm:flex-row sm:items-center sm:justify-between gap-2 w-full mb-4">
+			<div class="w-fit">
+				<span class="flex rounded-md border border-sand-300 p-0.5">
+					<Button
+						href={searchHref(page.url, { vista: null, page: null, mover: null, a: null })}
+						variant={data.tablero ? "primary" : "ghost"}
+						size="sm"
+					>
+						<Columns3
+							size={15}
+							aria-hidden="true"
+						/>
+						Tablero
+					</Button>
+
+					<Button
+						href={searchHref(page.url, { vista: "tabla", page: null, mover: null, a: null })}
+						variant={data.tablero ? "ghost" : "primary"}
+						size="sm"
+					>
+						<Rows3
+							size={15}
+							aria-hidden="true"
+						/>
+						Tabla
+					</Button>
+				</span>
+			</div>
+
+			<div class="flex flex-wrap items-center gap-2 sm:justify-end">
+				<Button
+					href="/panel/agenda"
+					variant="outline"
+				>
+					<CalendarDays
+						size={18}
+						aria-hidden="true"
+					/>
+					Ver calendario
+				</Button>
+
+				{#if data.puede.crear}
+					<Button href="/panel/agenda?drawer=nueva">
+						<CalendarPlus
+							size={18}
+							aria-hidden="true"
+						/>
+						Nueva cita
+					</Button>
+				{/if}
+			</div>
+		</div>
 	{/snippet}
 </PageHeader>
 
 <Flash {form} />
 
 <!-- Real GET form: the filters ARE the URL, so any view is shareable and works with JS off. -->
-<form
-	method="GET"
-	class="mb-4 grid gap-3 rounded-lg border border-sand-200 bg-white p-4 sm:grid-cols-2 lg:grid-cols-5"
->
+ 
+{#snippet filters()}
 	<Field
 		label="Buscar"
 		name="q"
 		value={data.filtros.q}
 		placeholder="Folio, nombre, teléfono, placas…"
 	/>
-	<Field
-		label="Estado"
-		name="estado"
-	>
+
+	<Field label="Estado" name="estado">
 		{#snippet children(id)}
-			<select
-				{id}
-				name="estado"
-				class={INPUT}
-			>
+			<select {id} name="estado" class={INPUT}>
 				<option value="">Todos</option>
 				{#each data.estados as e (e.value)}
 					<option
 						value={e.value}
-						selected={data.filtros.estado === e.value}>{e.label}</option
+						selected={data.filtros.estado === e.value}
 					>
+						{e.label}
+					</option>
 				{/each}
 			</select>
 		{/snippet}
 	</Field>
-	<Field
-		label="Tipo"
-		name="tipo"
-	>
+
+	<Field label="Tipo" name="tipo">
 		{#snippet children(id)}
-			<select
-				{id}
-				name="tipo"
-				class={INPUT}
-			>
+			<select {id} name="tipo" class={INPUT}>
 				<option value="">Todos</option>
 				{#each data.tipos as t (t.value)}
 					<option
 						value={t.value}
-						selected={data.filtros.tipo === t.value}>{t.label}</option
+						selected={data.filtros.tipo === t.value}
 					>
+						{t.label}
+					</option>
 				{/each}
 			</select>
 		{/snippet}
 	</Field>
+
 	<Field
 		label="Desde"
 		name="desde"
 		type="date"
 		value={data.filtros.desde}
 	/>
+
 	<Field
 		label="Hasta"
 		name="hasta"
@@ -247,60 +249,88 @@
 		value={data.filtros.hasta}
 	/>
 
-	<!-- Carried through the GET form so the toggles survive a filter submit. -->
-	{#if data.mias}<input
-			type="hidden"
-			name="mias"
-			value="1"
-		/>{/if}
-	{#if data.vencidas}<input
-			type="hidden"
-			name="vencidas"
-			value="1"
-		/>{/if}
+	{#if data.mias}
+		<input type="hidden" name="mias" value="1" />
+	{/if}
+
+	{#if data.vencidas}
+		<input type="hidden" name="vencidas" value="1" />
+	{/if}
 
 	<div class="flex flex-wrap items-end gap-2 sm:col-span-2 lg:col-span-5">
 		<Button size="sm">
-			<Search
-				size={16}
-				aria-hidden="true"
-			/>
+			<Search size={16} aria-hidden="true" />
 			Filtrar
 		</Button>
+
 		<Button
-			href={searchHref(page.url, { vencidas: data.vencidas ? null : "1", page: null })}
+			href={searchHref(page.url, {
+				vencidas: data.vencidas ? null : "1",
+				page: null
+			})}
 			variant={data.vencidas ? "primary" : "ghost"}
 			size="sm"
 		>
-			<TriangleAlert
-				size={16}
-				aria-hidden="true"
-			/>
+			<TriangleAlert size={16} aria-hidden="true" />
 			Vencidas
 		</Button>
+
 		<Button
-			href={searchHref(page.url, { mias: data.mias ? null : "1", page: null })}
+			href={searchHref(page.url, {
+				mias: data.mias ? null : "1",
+				page: null
+			})}
 			variant={data.mias ? "primary" : "ghost"}
 			size="sm"
 		>
-			<UserCheck
-				size={16}
-				aria-hidden="true"
-			/>
+			<UserCheck size={16} aria-hidden="true" />
 			Solo las mías
 		</Button>
+
 		{#if hayFiltros}
-			<Button
-				href="/panel/citas"
-				variant="ghost"
-				size="sm">Limpiar filtros</Button
-			>
+			<Button href="/panel/citas" variant="ghost" size="sm">
+				Limpiar filtros
+			</Button>
 		{/if}
+
 		<span class="ml-auto text-sm text-sand-600">
-			{#if data.total > 0}{from}–{to} de {data.total}{:else}Sin resultados{/if}
+			{#if data.total > 0}
+				{from}–{to} de {data.total}
+			{:else}
+				Sin resultados
+			{/if}
 		</span>
 	</div>
+{/snippet}
+<form method="GET" class="mb-4">
+	<!-- MOBILE -->
+	<details class="group lg:hidden">
+		<summary
+			class="flex cursor-pointer list-none items-center justify-between rounded-lg border border-sand-200 bg-white p-4"
+		>
+			<div class="flex items-center gap-2 font-medium">
+				<SlidersHorizontal size={18} aria-hidden="true" />
+				Filtros
+			</div>
+
+			<ChevronDown
+				size={18}
+				class="transition-transform group-open:rotate-180"
+				aria-hidden="true"
+			/>
+		</summary>
+
+		<div class="mt-2 grid gap-3 rounded-lg border border-sand-200 bg-white p-4">
+			{@render filters()}
+		</div>
+	</details>
+
+	<!-- DESKTOP -->
+	<div class="hidden gap-3 rounded-lg border border-sand-200 bg-white p-4 sm:grid-cols-2 lg:grid lg:grid-cols-5">
+		{@render filters()}
+	</div>
 </form>
+
 
 {#if data.citas.length === 0}
 	<EmptyState
@@ -695,8 +725,9 @@
 				{#if !(paso === "recibida" && recibioUnidad === null)}
 					<Button full>
 						{#if paso === "vincular"}Guardar y seguir{:else if paso === "motivo"}Cancelar la cita{:else if paso === "recibida"}Completar
-							sin recibir{:else if paso === "hora"}Confirmar
-							cita{:else}Mover a {citaEstadoLabel(aEstado)}{/if}
+							sin recibir{:else if paso === "hora"}Confirmar cita{:else}Mover a {citaEstadoLabel(
+								aEstado,
+							)}{/if}
 					</Button>
 				{/if}
 			</form>

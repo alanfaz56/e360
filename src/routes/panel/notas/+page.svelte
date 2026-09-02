@@ -9,6 +9,8 @@
 	import Rows3 from "@lucide/svelte/icons/rows-3";
 	import Badge from "$lib/components/Badge.svelte";
 	import Button from "$lib/components/Button.svelte";
+	import ChevronDown from "@lucide/svelte/icons/chevron-down";
+	import SlidersHorizontal from "@lucide/svelte/icons/sliders-horizontal";
 	import DataTable from "$lib/components/DataTable.svelte";
 	import Drawer from "$lib/components/Drawer.svelte";
 	import EmptyState from "$lib/components/EmptyState.svelte";
@@ -35,7 +37,9 @@
 	// Entregada/cancelada are history, not work in progress — hidden columns while "Solo abiertas"
 	// is on instead of rendered empty, same information "abiertas" already filtered out of the rows.
 	const columnasTablero = $derived(
-		data.filtros.abiertas ? data.estados.filter((e) => e.value !== "entregada" && e.value !== "cancelada") : data.estados,
+		data.filtros.abiertas
+			? data.estados.filter((e) => e.value !== "entregada" && e.value !== "cancelada")
+			: data.estados,
 	);
 	const from = $derived(data.total === 0 ? 0 : (data.page - 1) * data.perPage + 1);
 	const to = $derived(Math.min(data.page * data.perPage, data.total));
@@ -86,7 +90,13 @@
 	const movimientoValido = $derived(enMovimiento !== null && aEstado !== null && puedeSoltar(enMovimiento, aEstado));
 	const paso = $derived(enMovimiento && aEstado && movimientoValido ? pasoParaMoverNota(aEstado) : null);
 	const accion = $derived(
-		paso === "cancelar" ? "?/cancelar" : paso === "entregar" ? "?/entregar" : paso === "transferir" ? "?/transferir" : "?/avanzar",
+		paso === "cancelar"
+			? "?/cancelar"
+			: paso === "entregar"
+				? "?/entregar"
+				: paso === "transferir"
+					? "?/transferir"
+					: "?/avanzar",
 	);
 </script>
 
@@ -139,58 +149,164 @@
 <!-- Real GET form: the filters ARE the URL, so any view is shareable and works with JS off. -->
 <form
 	method="GET"
-	class="mb-4 grid gap-3 rounded-lg border border-sand-200 bg-white p-4 sm:grid-cols-2 lg:grid-cols-4"
+	class="mb-4"
 >
-	<Field
-		label="Buscar"
-		name="q"
-		value={data.filtros.q}
-		placeholder="Folio, cliente, placas, VIN, económico…"
-	/>
-	<Field
-		label="Estado"
-		name="estado"
-	>
-		{#snippet children(id)}
-			<select
-				{id}
-				name="estado"
-				class={INPUT}
-			>
-				<option value="">Todos</option>
-				{#each data.estados as e (e.value)}
-					<option
-						value={e.value}
-						selected={data.filtros.estado === e.value}>{e.label}</option
-					>
-				{/each}
-			</select>
-		{/snippet}
-	</Field>
-	{#if !data.filtros.abiertas}<input
-			type="hidden"
-			name="abiertas"
-			value="0"
-		/>{/if}
+	<!-- Mobile -->
+	<details class="group lg:hidden">
+		<summary
+			class="flex cursor-pointer list-none items-center justify-between rounded-lg border border-sand-200 bg-white p-4"
+		>
+			<div class="flex items-center gap-2 font-medium">
+				<SlidersHorizontal
+					size={18}
+					aria-hidden="true"
+				/>
+				Filtros
+			</div>
 
-	<div class="flex flex-wrap items-end gap-2 sm:col-span-2 lg:col-span-4">
-		<Button size="sm">
-			<Search
-				size={16}
+			<ChevronDown
+				size={18}
+				class="transition-transform group-open:rotate-180"
 				aria-hidden="true"
 			/>
-			Filtrar
-		</Button>
-		{#if hayFiltros}
-			<Button
-				href="/panel/notas"
-				variant="ghost"
-				size="sm">Limpiar filtros</Button
+		</summary>
+
+		<div class="mt-2 grid gap-3 rounded-lg border border-sand-200 bg-white p-4">
+			<Field
+				label="Buscar"
+				name="q"
+				value={data.filtros.q}
+				placeholder="Folio, cliente, placas, VIN, económico…"
+			/>
+
+			<Field
+				label="Estado"
+				name="estado"
 			>
+				{#snippet children(id)}
+					<select
+						{id}
+						name="estado"
+						class={INPUT}
+					>
+						<option value="">Todos</option>
+						{#each data.estados as e (e.value)}
+							<option
+								value={e.value}
+								selected={data.filtros.estado === e.value}
+							>
+								{e.label}
+							</option>
+						{/each}
+					</select>
+				{/snippet}
+			</Field>
+
+			{#if !data.filtros.abiertas}
+				<input
+					type="hidden"
+					name="abiertas"
+					value="0"
+				/>
+			{/if}
+
+			<div class="flex flex-wrap items-end gap-2">
+				<Button size="sm">
+					<Search
+						size={16}
+						aria-hidden="true"
+					/>
+					Filtrar
+				</Button>
+
+				{#if hayFiltros}
+					<Button
+						href="/panel/notas"
+						variant="ghost"
+						size="sm"
+					>
+						Limpiar filtros
+					</Button>
+				{/if}
+
+				<span class="ml-auto text-sm text-sand-600">
+					{#if data.total > 0}
+						{from}–{to} de {data.total}
+					{:else}
+						Sin resultados
+					{/if}
+				</span>
+			</div>
+		</div>
+	</details>
+
+	<!-- Desktop -->
+	<div class="hidden gap-3 rounded-lg border border-sand-200 bg-white p-4 sm:grid-cols-2 lg:grid lg:grid-cols-4">
+		<Field
+			label="Buscar"
+			name="q"
+			value={data.filtros.q}
+			placeholder="Folio, cliente, placas, VIN, económico…"
+		/>
+
+		<Field
+			label="Estado"
+			name="estado"
+		>
+			{#snippet children(id)}
+				<select
+					{id}
+					name="estado"
+					class={INPUT}
+				>
+					<option value="">Todos</option>
+					{#each data.estados as e (e.value)}
+						<option
+							value={e.value}
+							selected={data.filtros.estado === e.value}
+						>
+							{e.label}
+						</option>
+					{/each}
+				</select>
+			{/snippet}
+		</Field>
+
+		{#if !data.filtros.abiertas}
+			<input
+				type="hidden"
+				name="abiertas"
+				value="0"
+			/>
 		{/if}
-		<span class="ml-auto text-sm text-sand-600">
-			{#if data.total > 0}{from}–{to} de {data.total}{:else}Sin resultados{/if}
-		</span>
+
+		<div class="flex flex-wrap items-end gap-2 sm:col-span-2 lg:col-span-4">
+			<Button size="sm">
+				<Search
+					size={16}
+					aria-hidden="true"
+				/>
+				Filtrar
+			</Button>
+
+			{#if hayFiltros}
+				<Button
+					href="/panel/notas"
+					variant="ghost"
+					size="sm"
+				>
+					Limpiar filtros
+				</Button>
+			{/if}
+
+			<span class="ml-auto text-sm text-sand-600">
+				{#if data.total > 0}
+					{from}–{to} de {data.total}
+				{:else}
+					Sin resultados
+				{/if}
+			</span>
+		</div>
 	</div>
 </form>
 
@@ -520,7 +636,9 @@
 							>
 								<option value="">Elige…</option>
 								{#each data.talleres as t (t.id)}
-									<option value={t.id}>{t.nombre}{t.especialidades ? ` · ${t.especialidades}` : ""}</option>
+									<option value={t.id}
+										>{t.nombre}{t.especialidades ? ` · ${t.especialidades}` : ""}</option
+									>
 								{/each}
 							</select>
 						{/snippet}

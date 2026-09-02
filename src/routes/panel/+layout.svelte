@@ -236,7 +236,7 @@
 				</form>
 			</div>
 		{/if}
-		<main class="mx-auto max-w-5xl px-4 py-6 md:px-8 md:py-10 print:my-8!">
+		<main class="mx-auto px-4 py-6 md:px-8 md:py-10 print:my-8!">
 			{@render children()}
 		</main>
 	</div>
