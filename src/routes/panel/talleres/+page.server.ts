@@ -18,6 +18,7 @@ import {
 	updateTaller,
 } from "$lib/server/talleres";
 import { fallo } from "$lib/server/errores";
+import { getPostHogClient } from "$lib/server/posthog";
 
 /** Partner workshops Estación 360 sources jobs out to, plus the applications waiting to be judged. */
 export const load: ServerLoad = async ({ locals, url }) => {
@@ -57,7 +58,16 @@ export const actions: Actions = {
 		const actor = requireUser(locals);
 		const body = Object.fromEntries(await request.formData()) as Record<string, unknown>;
 		try {
-			await createTaller({ actor, body });
+			const taller = await createTaller({ actor, body });
+
+			const posthog = getPostHogClient();
+			posthog.capture({
+				distinctId: actor.id,
+				event: "taller_created",
+				properties: { taller_id: taller.id },
+			});
+			await posthog.flush();
+
 			redirect(303, "/panel/talleres");
 		} catch (err) {
 			return fallo(err);
@@ -95,13 +105,24 @@ export const actions: Actions = {
 	revisar: async ({ locals, request }) => {
 		const actor = requireUser(locals);
 		const data = await request.formData();
+		const tallerId = String(data.get("id"));
+		const estado = String(data.get("estado"));
 		try {
 			await revisarTaller({
 				actor,
-				id: String(data.get("id")),
-				estado: String(data.get("estado")),
+				id: tallerId,
+				estado,
 				motivo: data.get("motivo"),
 			});
+
+			const posthog = getPostHogClient();
+			posthog.capture({
+				distinctId: actor.id,
+				event: "taller_reviewed",
+				properties: { taller_id: tallerId, estado },
+			});
+			await posthog.flush();
+
 			redirect(303, "/panel/talleres?estado=solicitado");
 		} catch (err) {
 			return fallo(err);

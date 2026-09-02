@@ -2,6 +2,7 @@ import { error, json, type RequestHandler } from "@sveltejs/kit";
 import { requirePermission, requireUser } from "$lib/server/guard";
 import { ClienteError } from "$lib/server/clientes";
 import { crearFactura, listFacturas, publicFactura } from "$lib/server/comercial";
+import { getPostHogClient } from "$lib/server/posthog";
 
 /**
  * GET /api/facturas — Permission: `factura:read`.
@@ -35,7 +36,21 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 	const body = (await request.json().catch(() => null)) ?? {};
 
 	try {
-		return json({ factura: publicFactura(await crearFactura({ actor, body })) }, { status: 201 });
+		const factura = await crearFactura({ actor, body });
+
+		const posthog = getPostHogClient();
+		posthog.capture({
+			distinctId: actor.id,
+			event: "factura_created",
+			properties: {
+				factura_id: factura.id,
+				condicion_pago: factura.condicionPago,
+				serie: factura.serie,
+			},
+		});
+		await posthog.flush();
+
+		return json({ factura: publicFactura(factura) }, { status: 201 });
 	} catch (err) {
 		if (err instanceof ClienteError) error(err.status, err.message);
 		throw err;

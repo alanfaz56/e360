@@ -4,6 +4,7 @@ import { hoy, sumarDias } from "$lib/agenda";
 import { solicitarCita } from "$lib/server/citas";
 import { turnstileSiteKey } from "$lib/server/turnstile";
 import { fallo } from "$lib/server/errores";
+import { getPostHogClient } from "$lib/server/posthog";
 
 /**
  * The public booking page. Dynamic, not prerendered: it needs the Turnstile site key from the
@@ -31,6 +32,21 @@ export const actions: Actions = {
 				turnstileToken: data.get("cf-turnstile-response"),
 				ip: getClientAddress(),
 			});
+
+			// Track the appointment request; no PII in event properties.
+			const posthog = getPostHogClient();
+			posthog.capture({
+				distinctId: String(cita.folio),
+				event: "appointment_requested",
+				properties: {
+					folio: cita.folio,
+					tipo: String(body.tipo ?? ""),
+					franja: String(body.franja ?? ""),
+					fecha: String(body.fecha ?? ""),
+				},
+			});
+			await posthog.flush();
+
 			// POST → redirect → GET, so a refresh cannot book a second appointment.
 			redirect(303, `/citas/gracias?folio=${cita.folio}`);
 		} catch (err) {

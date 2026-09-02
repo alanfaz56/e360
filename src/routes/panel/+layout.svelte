@@ -8,8 +8,18 @@
 	import NotificationDrawer from "$lib/components/NotificationDrawer.svelte";
 	import { searchHref } from "$lib/url";
 	import { page } from "$app/state";
+	import posthog from "posthog-js";
+	import { browser } from "$app/environment";
 
 	let { data, children } = $props();
+
+	// Identify the authenticated user in PostHog on every panel load / page refresh,
+	// so that client-side events are correlated with server-side events for the same user.
+	$effect(() => {
+		if (browser && data.actor) {
+			posthog.identify(data.actor.email, { name: data.actor.name, role: data.actor.role });
+		}
+	});
 
 	// The mobile sidebar is URL state, same as the drawers — it works without JavaScript
 	// and never desyncs from the back button.

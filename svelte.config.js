@@ -12,7 +12,9 @@ const config = {
 		// See https://svelte.dev/docs/kit/adapters for more information about adapters.
 		adapter: adapter(),
 		// The landing links to /login, which isn't built yet. Warn instead of failing the build.
-		prerender: { handleHttpError: 'warn' }
+		prerender: { handleHttpError: 'warn' },
+		// Required for PostHog session replay to work correctly with SSR.
+		paths: { relative: false }
 	}
 };
 

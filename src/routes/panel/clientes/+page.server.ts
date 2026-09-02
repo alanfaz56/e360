@@ -10,6 +10,7 @@ import {
 	parseClienteQuery,
 } from "$lib/server/clientes";
 import { fallo } from "$lib/server/errores";
+import { getPostHogClient } from "$lib/server/posthog";
 
 export const load: ServerLoad = async ({ locals, url }) => {
 	const actor = requirePermission(locals, "cliente:read");
@@ -32,6 +33,15 @@ export const actions: Actions = {
 
 		try {
 			const cliente = await createCliente({ actor, body });
+
+			const posthog = getPostHogClient();
+			posthog.capture({
+				distinctId: actor.id,
+				event: "cliente_created",
+				properties: { tipo: cliente.tipo, cliente_id: cliente.id },
+			});
+			await posthog.flush();
+
 			redirect(303, conFlash(`/panel/clientes/${cliente.id}`, "cliente.crear"));
 		} catch (err) {
 			return fallo(err);
