@@ -23,6 +23,7 @@
 	import Truck from "@lucide/svelte/icons/truck";
 	import MessageCircle from "@lucide/svelte/icons/message-circle";
 	import CircleHelp from "@lucide/svelte/icons/circle-help";
+	import CreditCard from "@lucide/svelte/icons/credit-card";
 	import type { NavItem } from "$lib/nav";
 
 	const ICONS = {
@@ -46,6 +47,7 @@
 		truck: Truck,
 		"message-circle": MessageCircle,
 		"circle-help": CircleHelp,
+		"credit-card": CreditCard,
 	};
 
 	let { name, ...rest }: { name: NavItem["icon"]; [key: string]: unknown } = $props();

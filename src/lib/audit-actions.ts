@@ -121,6 +121,7 @@ export const AUDIT_ACTIONS = {
 	// one now exists — never a value, never a hint. The audit trail must never become a way to
 	// obtain access (Rule 3).
 	"ajuste.update": "Ajustes del sistema actualizados",
+	"pago_app.upload": "Pago de la app registrado",
 	"empresa.update": "Información de contacto de la empresa actualizada",
 	"cuenta_bancaria.create": "Cuenta bancaria dada de alta",
 	"cuenta_bancaria.update": "Cuenta bancaria actualizada",

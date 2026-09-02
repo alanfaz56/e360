@@ -12,6 +12,7 @@
  * browser" something you can check by reading the call sites instead of trusting a mapper.
  */
 import { env } from "$env/dynamic/private";
+import { centavos } from "$lib/comercial";
 import prisma from "$lib/prisma";
 import {
 	AJUSTES,
@@ -200,6 +201,13 @@ export async function guardarAjustes(input: { actor: Actor; body: Record<string,
 		const def = AJUSTES[clave] as { tipo: string; opciones?: readonly { valor: string }[] };
 		if (def.tipo === "opcion" && !def.opciones?.some((o) => o.valor === valor)) {
 			throw new ClienteError(400, `Valor inválido para ${AJUSTES[clave].label}`);
+		}
+		if (clave === "facturacion_app.monto_mensual" && centavos(valor) === null) {
+			throw new ClienteError(400, "Monto inválido. Usa el formato 1500.00");
+		}
+		// Empty is valid here — it's how the owner turns the override off again.
+		if (clave === "facturacion_app.plazo_extendido" && valor !== "" && Number.isNaN(Date.parse(valor))) {
+			throw new ClienteError(400, "Fecha inválida. Usa el formato 2026-09-20");
 		}
 
 		cambios.push({ clave, valor: valor === "" ? null : valor, secreto });

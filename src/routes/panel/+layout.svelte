@@ -6,6 +6,7 @@
 	import Icon from "$lib/components/Icon.svelte";
 	import NotificationBell from "$lib/components/NotificationBell.svelte";
 	import NotificationDrawer from "$lib/components/NotificationDrawer.svelte";
+	import PagoAppAvisoModal from "$lib/components/PagoAppAvisoModal.svelte";
 	import { searchHref } from "$lib/url";
 	import { page } from "$app/state";
 	import posthog from "posthog-js";
@@ -244,5 +245,10 @@
 	<NotificationDrawer
 		noLeidas={data.noLeidas}
 		avisos={data.avisos}
+	/>
+
+	<PagoAppAvisoModal
+		estadoPago={data.facturacionApp.estado}
+		vencimientoLabel={data.facturacionApp.vencimientoLabel}
 	/>
 </div>

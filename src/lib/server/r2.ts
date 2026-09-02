@@ -69,11 +69,12 @@ export type SubidaFirmada = { clave: string; url: string; expiraEn: number };
  * Sign one upload.
  *
  * The KEY is generated HERE and never taken from the client. A caller-chosen key could overwrite
- * another note's evidence or escape the prefix entirely; a generated one carries the note id, so
- * every object is traceable back to the job it documents.
+ * another job's evidence or escape the prefix entirely; a generated one carries the caller's
+ * `carpeta` (e.g. `notas/${notaId}`, `facturacion-app/2026-09`), so every object is traceable back
+ * to what it documents, and every caller validates the same prefix before trusting a reported key.
  */
 export function firmarSubida(input: {
-	notaId: string;
+	carpeta: string;
 	nombreOriginal: string;
 	expiraSegundos?: number;
 }): SubidaFirmada | null {
@@ -81,7 +82,7 @@ export function firmarSubida(input: {
 	if (!cfg) return null;
 
 	const extension = (input.nombreOriginal.match(/\.[a-z0-9]{1,5}$/i)?.[0] ?? "").toLowerCase();
-	const clave = `notas/${input.notaId}/${Date.now()}-${randomUUID()}${extension}`;
+	const clave = `${input.carpeta}/${Date.now()}-${randomUUID()}${extension}`;
 	const expiraSegundos = input.expiraSegundos ?? 600;
 
 	return { clave, expiraEn: expiraSegundos, url: firmar(cfg, "PUT", clave, expiraSegundos) };

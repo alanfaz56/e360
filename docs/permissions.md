@@ -705,6 +705,61 @@ Three rules about secrets that are each one bug away from being wrong:
 credential takes effect on the next invoice instead of the next deploy — and it names the missing
 field in its 503, because "falta la API key" is actionable and "no se pudo timbrar" is a ticket.
 
+### Facturación de la app: `/panel/facturacion-app`
+
+The shop pays a monthly subscription for Estación 360 itself, to the deployment's owner
+(`esDueno`/`OWNER_EMAILS`, see above). `pago_app:upload` (Admin, Gerente) is who may upload the
+shop's own proof of payment for the current cycle — an existential/billing action, one tier below
+`ajustes:*` but still above ordinary ops. Uploading auto-approves for v1: there is no review step,
+no `estado` column on `pago_app_ciclo`, because there is nothing to transition through yet.
+
+**The same screen renders two entirely different things depending on who is looking, gated on two
+INDEPENDENT axes rather than one permission.** A shop Admin/Gerente (`pago_app:upload`) sees the
+upload form for the current month. The owner (`esDueno`) sees the full payment ledger instead —
+every cycle paid, who uploaded it, and a link to the comprobante — and never sees an upload form,
+because the owner is never the one paying. `+page.server.ts`'s `load` checks `esDueno` OR
+`can(actor.role, "pago_app:upload")`, not `requirePermission`, precisely because a caller only
+needs to clear ONE of the two axes, and which one determines which half of the page renders — the
+same "two gates answer different questions" reasoning as `requireDueno` above, just without a 404
+between them since both axes are legitimate ways to be allowed onto this screen, not a narrowing of
+one by the other. `listPagosApp` (the ledger read) is owner-only at the domain-function level too —
+it 403s on its own if ever called for a non-owner, so the UI branch is never the only thing
+standing between a shop Admin and somebody else's upload history.
+
+**The monthly amount is not gated by `pago_app:upload` — it lives in `ajuste`, same as the PAC
+credentials, owner-only via `requireDueno`.** The shop can prove it paid; it cannot decide what it
+owes. Same two-gate reasoning as Ajustes above: letting the shop's own Admin edit its own price is
+the identical trust-boundary mistake `ajuste`'s owner-only fields already exist to prevent.
+
+**`esDueno` is exempt from the block, unconditionally.** The owner needs to reach their own product
+regardless of whether a client has paid — `estadoFacturacionApp` checks `esDueno(actor)` first and
+short-circuits to `al_corriente` before it ever reads a payment row. This is the one place in the
+app where an authorization check exists purely to protect the *provider's* access, not the shop's
+data — worth flagging because every other rule in this document is about the shop's data reaching
+only who should see it, and this one is about the software staying reachable to the person who
+built it, no matter what the shop that installed it does or doesn't pay.
+
+**Cycle status is fully derived, no scheduled job.** `estadoFacturacionApp` (in
+[src/lib/server/facturacion-app.ts](src/lib/server/facturacion-app.ts)) computes `al_corriente` /
+`por_vencer` / `bloqueado` from today's date, the latest `pago_app_ciclo` row, and an optional
+owner-set extension — on every `/panel/**` page load, in `panel/+layout.server.ts`. A month with no
+uploaded evidence simply has no row; "no row" already means "not paid" without a job having to
+create a pending one every month.
+
+**The owner can extend the current month's deadline** (`facturacion_app.plazo_extendido`, an
+`ajuste` like the amount) to a specific date instead of the 15th. The override is scoped to the
+month it was set in by construction — `vencimientoEfectivo` checks the extension date falls in the
+*current* calendar month before honoring it, so a forgotten override from a past month, or one set
+ahead of time for a future month, is silently ignored rather than needing to be remembered and
+cleared. This is the same "state that can't rot because it's re-validated against the present every
+time it's read" idea as `ajuste`'s live-read-on-every-stamp above.
+
+**Blocking is a redirect in `panel/+layout.server.ts`, scoped to `/panel/**` only.** Every route
+whose pathname isn't `/panel/facturacion-app` gets redirected there when `bloqueado`; the upload
+page itself is excluded from the check by construction, so there is no redirect loop. Public routes
+— `/`, `/seguimiento/[token]`, booking — are untouched: the shop's own customers must never be
+denied service because the shop is late paying its own subscription.
+
 ### Registro de talleres — solicitud pública y certificación
 
 Partner workshops apply from the public page at `/talleres`. Certification is a **status on the one

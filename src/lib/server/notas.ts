@@ -2016,7 +2016,7 @@ export async function firmarEvidencia(input: {
 	}
 
 	const nota = await getNota(input.id);
-	const firma = firmarSubida({ notaId: nota.id, nombreOriginal: nombre });
+	const firma = firmarSubida({ carpeta: `notas/${nota.id}`, nombreOriginal: nombre });
 	if (!firma) {
 		throw new ClienteError(
 			503,

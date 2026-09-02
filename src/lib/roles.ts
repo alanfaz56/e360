@@ -241,6 +241,12 @@ export const PERMISOS_DEFAULT = {
 	"nota:reporte_ia": ["admin", "gerente", "operador"],
 	"ia:uso_read": ["admin", "gerente"],
 
+	// Upload/view the shop's own proof of payment for its Estación 360 subscription. Existential
+	// billing, not day-to-day ops — Admin and Gerente only, same tier as `nota:reporte_ia`. The
+	// MONTHLY AMOUNT itself is not gated here: it lives in `ajuste`, owner-only via `requireDueno`,
+	// same reasoning as the PAC credentials above — the shop shouldn't be able to set what it owes.
+	"pago_app:upload": ["admin", "gerente"],
+
 	// Estación 360's own contact info (phone, site). Deliberately NOT gated by `requireDueno` like
 	// `ajustes:*` above — a phone number is routine shop info, not a PAC credential, and the shop's
 	// own Admin/Gerente must be able to change it without being the system owner.

@@ -38,6 +38,7 @@ model user {
 
   notasRecibidas    nota_servicio[]      @relation("notaRecibidaPor")
   evidenciasSubidas nota_evidencia[]     @relation("evidenciaSubidaPor")
+  pagosAppSubidos   pago_app_ciclo[]     @relation("pagoAppSubidaPor")
   comentarios       nota_comentario[]    @relation("comentarioAutor")
   transferencias    nota_transferencia[] @relation("transferenciaEnviadaPor")
   qaTransferencias  nota_transferencia[] @relation("transferenciaQaPor")
@@ -757,6 +758,38 @@ model nota_evidencia {
   /// Every comment renders its attachments through this.
   @@index([comentarioId])
   @@map("nota_evidencia")
+}
+
+/// One row per calendar month the shop has paid its Estación 360 subscription for. Created only
+/// when evidence is uploaded — "no row for this month" already means "not paid". Auto-approved on
+/// upload for v1: no `estado` column, no review step, because there's nothing to transition
+/// through yet. A future manual-review requirement adds `estado`/`aprobadoPorId`/`aprobadoAt`.
+model pago_app_ciclo {
+  id String @id
+
+  /// The month this covers, first-of-month UTC (e.g. 2026-09-01 for September, due the 15th). A
+  /// DATE not a "YYYY-MM" string so the unique constraint below enforces "one row per month"
+  /// directly, with no parsing needed to check it.
+  ciclo DateTime @unique @db.Date
+
+  /// Snapshot of the monthly amount at upload time — NOT read live from `ajuste` for display. A
+  /// later price change must not repaint what a past cycle was actually charged.
+  montoCentavos BigInt
+
+  /// R2 object key, server-generated, prefix-validated before trust — same rule as
+  /// `nota_evidencia.clave`.
+  clave       String @unique @db.VarChar(500)
+  nombre      String @db.VarChar(255)
+  contentType String @db.VarChar(120)
+  bytes       Int?
+
+  subidaPorId String
+  /// Proof of payment — `Restrict`, never `Cascade`/`SetNull`. A user being deleted must never
+  /// delete or orphan the one record showing the shop paid that month.
+  subidaPor   user     @relation("pagoAppSubidaPor", fields: [subidaPorId], references: [id], onDelete: Restrict)
+  createdAt   DateTime @default(now())
+
+  @@map("pago_app_ciclo")
 }
 
 /// Running commentary on the job. `interno` never leaves the shop; the rest is what gets read

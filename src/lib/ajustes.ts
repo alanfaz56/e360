@@ -43,6 +43,10 @@ export const GRUPOS = {
 		descripcion:
 			"Llave para generar el reporte con IA de una nota de servicio. Puedes cargar una o varias — el proveedor activo decide cuál se usa. Solo se cobra tokens de uso, no hay créditos ni facturación dentro de la app.",
 	},
+	facturacion_app: {
+		label: "Facturación de la app",
+		descripcion: "Lo que el taller paga por usar Estación 360. Ciclo mensual, vence el día 15.",
+	},
 } as const satisfies Record<string, { label: string; descripcion: string }>;
 
 export type GrupoAjuste = keyof typeof GRUPOS;
@@ -178,6 +182,19 @@ export const AJUSTES = {
 		tipo: "secreto",
 		grupo: "ia",
 		ayuda: "aistudio.google.com → Get API key.",
+	},
+	"facturacion_app.monto_mensual": {
+		label: "Monto mensual",
+		descripcion: "Cuota mensual en pesos, ej. 1500.00. Se cobra el día 15 de cada mes.",
+		tipo: "texto",
+		grupo: "facturacion_app",
+	},
+	"facturacion_app.plazo_extendido": {
+		label: "Plazo extendido (opcional)",
+		descripcion:
+			"Da más tiempo SOLO para el mes actual, ej. 2026-09-20. Vacío = vence el día 15 como siempre. Se ignora automáticamente en cuanto cambia el mes — no hay que acordarse de quitarlo.",
+		tipo: "texto",
+		grupo: "facturacion_app",
 	},
 } as const satisfies Record<string, DefinicionAjuste>;
 

@@ -72,6 +72,9 @@ export const FLASH: Record<string, string> = {
 	"cuentaBancaria.restaurar": "Cuenta bancaria restaurada.",
 	"permisos.guardar": "Permisos actualizados.",
 
+	// --- Facturación de la app -------------------------------------------------------------------
+	"pago_app.registrado": "Comprobante registrado. Gracias.",
+
 	// --- Inventario y catálogo -----------------------------------------------------------------
 	"producto.crear": "Producto dado de alta.",
 	"producto.editar": "Producto actualizado.",

@@ -31,7 +31,8 @@ export type NavItem = {
 		| "sparkles"
 		| "truck"
 		| "message-circle"
-		| "circle-help";
+		| "circle-help"
+		| "credit-card";
 	permission: Permission;
 	/**
 	 * Collapses this entry into an accordion with every other item sharing the same label —
@@ -111,6 +112,13 @@ export const NAV: readonly NavItem[] = [
 	{ href: "/panel/usuarios", label: "Usuarios", icon: "users", permission: "user:list", grupo: "Administración" },
 	{ href: "/panel/auditoria", label: "Auditoría", icon: "scroll-text", permission: "audit:read", grupo: "Administración" },
 	{ href: "/panel/ia-uso", label: "Uso de IA", icon: "sparkles", permission: "ia:uso_read", grupo: "Administración" },
+	{
+		href: "/panel/facturacion-app",
+		label: "Facturación de la app",
+		icon: "credit-card",
+		permission: "pago_app:upload",
+		grupo: "Administración",
+	},
 	{
 		href: "/panel/empresa",
 		label: "Datos de la empresa",

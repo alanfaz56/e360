@@ -462,7 +462,7 @@ async function subirEvidenciaDesdeTelegram(input: {
 	}
 
 	const firma = firmarSubida({
-		notaId: input.notaId,
+		carpeta: `notas/${input.notaId}`,
 		nombreOriginal: input.archivo.file_name ?? `telegram-${Date.now()}.jpg`,
 	});
 	if (!firma) {

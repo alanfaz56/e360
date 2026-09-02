@@ -3,11 +3,22 @@ import prisma from "$lib/prisma";
 import { NAV } from "$lib/nav";
 import { ROLE_LABEL, can, permissionsFor } from "$lib/roles";
 import { esDueno, requireUser } from "$lib/server/guard";
+import { estadoFacturacionApp } from "$lib/server/facturacion-app";
 import { contarNoLeidas, listarNotificaciones } from "$lib/server/notificaciones";
+
+const RUTA_PAGO_APP = "/panel/facturacion-app";
 
 export const load: ServerLoad = async ({ locals, url }) => {
 	if (!locals.user) redirect(303, `/login?next=${encodeURIComponent(url.pathname + url.search)}`);
 	const actor = requireUser(locals);
+
+	// Blocked for the whole panel except the upload screen itself — checked here, not per-route, so
+	// no new route can forget it. `esDueno` short-circuits inside `estadoFacturacionApp`, so the
+	// owner is never redirected regardless of the shop's payment status.
+	const facturacionApp = await estadoFacturacionApp(actor);
+	if (facturacionApp.estado === "bloqueado" && url.pathname !== RUTA_PAGO_APP) {
+		redirect(303, RUTA_PAGO_APP);
+	}
 
 	// Set only while an Admin is inside another account's session — see /panel/usuarios's
 	// "Entrar como" and /impersonar/salir. One extra lookup, and only on that rare path.
@@ -38,5 +49,6 @@ export const load: ServerLoad = async ({ locals, url }) => {
 		avisos: bandeja.notificaciones,
 		noLeidas: bandeja.noLeidas,
 		impersonando: impersonadoPor ? { adminName: impersonadoPor.name, adminEmail: impersonadoPor.email } : null,
+		facturacionApp,
 	};
 };
