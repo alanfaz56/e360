@@ -25,6 +25,7 @@ export const FLASH: Record<string, string> = {
 	"cita.avanzar": "Estado de la cita actualizado.",
 	"cita.cancelar": "Cita cancelada.",
 	"cita.vincular": "Cliente y unidad vinculados.",
+	"canal.verificado": "WhatsApp del cliente verificado.",
 	"cita.asignarHora": "Hora asignada. Falta vincular cliente y unidad para que se confirme sola.",
 
 	// --- Notas de servicio ---------------------------------------------------------------------

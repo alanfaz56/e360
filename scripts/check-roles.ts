@@ -168,6 +168,7 @@ assert.deepEqual(permissionsFor("operador"), [
 	"pago:register",
 	"nota:reporte_ia",
 	"canal:chat",
+	"canal:verificar-cliente",
 ]);
 assert.equal(can("taller", "user:list"), false);
 

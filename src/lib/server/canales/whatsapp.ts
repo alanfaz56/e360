@@ -58,16 +58,51 @@ export async function verificarHandshake(params: {
 	return params.challenge;
 }
 
+/**
+ * Meta's own webhook reports an MX sender as "521XXXXXXXXXX" (wa_id form — country code "52"
+ * plus a mobile "1" plus the 10-digit number), but that same "1" makes the Cloud API's send
+ * endpoint reject the number with (#131030) "Recipient phone number not in allowed list" — the
+ * allow-list (and, per Meta's own docs, normal delivery generally) wants "52XXXXXXXXXX", no "1".
+ * Every reply path echoes `mensaje.from` straight back as `to`, so this has to be fixed once here
+ * rather than at each call site. MX-only: this shop is Hermosillo-only (see CLAUDE.md).
+ */
+/**
+ * Meta's own webhook reports an MX sender as "521XXXXXXXXXX" (wa_id form — country code "52"
+ * plus a mobile "1" plus the 10-digit number), but that same "1" makes the Cloud API's send
+ * endpoint reject the number with (#131030) "Recipient phone number not in allowed list" — the
+ * allow-list (and, per Meta's own docs, normal delivery generally) wants "52XXXXXXXXXX", no "1".
+ * Every reply path echoes `mensaje.from` straight back as `to`, so this has to be fixed once here
+ * rather than at each call site.
+ *
+ * Exported because callers that store a `from`/wa_id as a customer-facing phone number (a cita's
+ * own `telefono` field, say) need the same stripping — Meta's wire form is not what a human
+ * should be handed back or asked to dial. Inverse of `aWaId` in `verificacionCliente.ts`, which
+ * converts a stored number INTO wa_id form for lookups; the two are a pair, change them together.
+ *
+ * MX only — this shop is Hermosillo-only (see CLAUDE.md).
+ */
+export function aEnvioMx(to: string): string {
+	const digitos = to.replace(/\D/g, "");
+	if (digitos.startsWith("521") && digitos.length === 13) return "52" + digitos.slice(3);
+	if (digitos.length === 10) return "52" + digitos;
+	return to;
+}
+
 async function llamarMensajes(to: string, body: Record<string, unknown>): Promise<void> {
 	const res = await fetch(`${API}/${await phoneId()}/messages`, {
 		method: "POST",
 		headers: { "Content-Type": "application/json", Authorization: `Bearer ${await token()}` },
-		body: JSON.stringify({ messaging_product: "whatsapp", to, ...body }),
+		body: JSON.stringify({ messaging_product: "whatsapp", to: aEnvioMx(to), ...body }),
 	});
+	const cuerpo = await res.text().catch(() => "");
 	if (!res.ok) {
-		const cuerpo = await res.text().catch(() => "");
+		console.error(`whatsapp enviarMensaje: ${res.status} a ${to}: ${cuerpo.slice(0, 500)}`);
 		throw new Error(`WhatsApp sendMessage falló (${res.status}): ${cuerpo.slice(0, 300)}`);
 	}
+	// A 200 here only means Meta ACCEPTED the call — not that the phone received it. Log the
+	// wamid/contacts so a "sent but never arrived" report can be traced in Meta's own dashboard
+	// (usually a 24h-session-window or sandbox-tester-allowlist issue, not a bug in this code).
+	console.log(`whatsapp enviarMensaje: 200 a ${to}: ${cuerpo.slice(0, 500)}`);
 }
 
 export type WaBoton = { id: string; titulo: string };

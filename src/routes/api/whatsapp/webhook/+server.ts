@@ -4,6 +4,7 @@ import prisma from "$lib/prisma";
 import * as booking from "$lib/server/canales/conversacion";
 import * as chat from "$lib/server/canales/chat";
 import {
+	aEnvioMx,
 	enviarMensaje,
 	esFirmaValida,
 	extraerMensajes,
@@ -14,8 +15,9 @@ import {
 	type WhatsAppMensaje,
 	type WhatsAppWebhookBody,
 } from "$lib/server/canales/whatsapp";
-import { solicitarCitaPorCanal } from "$lib/server/citas";
+import { solicitarCitaPorCanal, vincularCitaPorCanal } from "$lib/server/citas";
 import { ClienteError } from "$lib/server/clientes";
+import { clientePorCanal, redimirVerificacion, verificacionPendiente } from "$lib/server/canales/verificacionCliente";
 
 const CANAL = "whatsapp" as const;
 
@@ -104,6 +106,14 @@ async function procesarMensaje(mensaje: WhatsAppMensaje, contacto: WhatsAppConta
 	await continuarFlujo(from, conversacionId, { texto, boton });
 }
 
+/**
+ * Does this message look like a verification code rather than a booking answer? Mirrors
+ * `generarCodigoLegible` in `verificacionCliente.ts`: exactly 6 characters from an alphabet with
+ * no 0/O/1/I. Only used to decide whether to TRY redeeming mid-booking — a false positive costs
+ * one failed lookup and falls through to the booking step, never an error to the customer.
+ */
+const pareceCodigo = (texto: string) => /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{6}$/.test(texto);
+
 /** Booking's own `resumen()` step formats with Telegram's `<b>` HTML — WhatsApp uses `*bold*`. */
 function htmlAWhatsapp(texto: string): string {
 	return texto
@@ -133,12 +143,56 @@ async function continuarFlujo(from: string, conversacionId: string, entrada: { t
 		await chat.registrarMensajeBot(conversacionId, mensajeTexto);
 	};
 
-	if (!(await booking.enProgreso(CANAL, from))) {
-		await booking.iniciarBooking(CANAL, from);
-		await responder("Hola 👋 Soy el asistente de Estación 360. Te ayudo a agendar una cita. ¿Cuál es tu nombre?");
+	// A staff-sent verification code may be outstanding for this number. An IN-PROGRESS BOOKING
+	// WINS: eating every message as a code attempt while somebody is mid-booking traps them in a
+	// loop for the code's whole TTL — `avanzar` never runs, so not even "cancelar" gets them out.
+	// Mid-booking, only something actually SHAPED like a code is treated as one, and a failed
+	// redemption falls through to the booking rather than answering "no reconozco ese código".
+	const bookingActivo = await booking.enProgreso(CANAL, from);
+	if (await verificacionPendiente(CANAL, from)) {
+		const codigo = (entrada.texto ?? "").trim().toUpperCase();
+		if (!bookingActivo || pareceCodigo(codigo)) {
+			const resultado = await redimirVerificacion({ canal: CANAL, idExterno: from, codigo });
+			if (resultado) {
+				await responder(`¡Listo! Tu número quedó verificado, ${resultado.clienteNombre}.`);
+				return;
+			}
+			// Never leaks WHICH check failed (bad code vs. expired vs. wrong number) — see
+			// verificacionCliente.ts. Only says so when there's no booking to fall through to.
+			if (!bookingActivo) {
+				await responder("No reconozco ese código. Verifica que sea el que te enviamos e inténtalo de nuevo.");
+				return;
+			}
+		}
+	}
+
+	if (!bookingActivo) {
+		const cliente = await clientePorCanal(CANAL, from);
+		if (cliente) {
+			await booking.iniciarBooking(CANAL, from, {
+				telefono: cliente.telefono ?? aEnvioMx(from),
+				verificado: { nombre: cliente.nombreCompleto, clienteId: cliente.id },
+			});
+			await responder(`Hola 👋 ¿Eres ${cliente.nombreCompleto}?`, [
+				{ id: "cita:verificar:si", titulo: "✅ Sí" },
+				{ id: "cita:verificar:no", titulo: "No" },
+			]);
+		} else {
+			// WhatsApp always knows the sender's number — only Telegram's own booking start
+			// (a separate call site, not this one) ever needs to ask for it. `aEnvioMx` strips
+			// Meta's wa_id "1" — the cita's `telefono` should read like a real number, not Meta's
+			// wire form of one.
+			await booking.iniciarBooking(CANAL, from, { telefono: aEnvioMx(from) });
+			await responder("Hola 👋 Soy el asistente de Estación 360. Te ayudo a agendar una cita. ¿Cuál es tu nombre?");
+		}
 		return;
 	}
 
+	// `avanzar` commits the next step before we get a chance to send the question. If the send
+	// then fails, the customer is advanced past a question they never saw — and `canal_evento`'s
+	// dedupe means Meta's retry never re-delivers it. Snapshot first, put it back on failure, and
+	// their next message simply re-runs the step.
+	const previo = await booking.instantanea(CANAL, from);
 	const paso = await booking.avanzar(CANAL, from, entrada);
 
 	if (paso.tipo === "cancelado") {
@@ -146,13 +200,29 @@ async function continuarFlujo(from: string, conversacionId: string, entrada: { t
 		return;
 	}
 	if (paso.tipo === "pregunta") {
-		await responder(paso.html ? htmlAWhatsapp(paso.texto) : paso.texto, paso.botones ? aBotonesWa(paso.botones) : undefined);
+		try {
+			await responder(
+				paso.html ? htmlAWhatsapp(paso.texto) : paso.texto,
+				paso.botones ? aBotonesWa(paso.botones) : undefined,
+			);
+		} catch (err) {
+			await booking.restaurar(CANAL, from, previo);
+			throw err;
+		}
 		return;
 	}
 
 	// paso.tipo === "completo"
 	try {
-		const cita = await solicitarCitaPorCanal(paso.body, CANAL);
+		const cita = await solicitarCitaPorCanal(paso.body, CANAL, conversacionId);
+		const cliente = await clientePorCanal(CANAL, from);
+		// The cita is real either way — a failure here is a missed convenience, not a reason to
+		// tell the customer their request didn't go through.
+		if (cliente) {
+			await vincularCitaPorCanal(cita.id, cliente.id, paso.unidadId || undefined).catch((err) =>
+				console.error("vincularCitaPorCanal:", err),
+			);
+		}
 		await responder(
 			`✅ ¡Listo! Tu solicitud quedó registrada con el folio #${cita.folio}. Te confirmamos por teléfono en cuanto la revisemos.`,
 		);

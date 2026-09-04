@@ -272,6 +272,9 @@ export const PERMISOS_DEFAULT = {
 	// `taller` never sees this: a mechanic's channel access is the Telegram staff commands
 	// (comment, evidence), gated by `nota:*`, never a customer-facing conversation.
 	"canal:chat": ["admin", "gerente", "operador"],
+	// Staff-triggered send of a phone-verification code to a cliente over WhatsApp — same
+	// front-desk roster as canal:chat, not a `taller` action.
+	"canal:verificar-cliente": ["admin", "gerente", "operador"],
 } as const satisfies Record<string, readonly Role[]>;
 
 export type Permission = keyof typeof PERMISOS_DEFAULT;

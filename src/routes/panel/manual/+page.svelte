@@ -354,6 +354,14 @@
 				Cada unidad guarda su historial de kilometraje y su dueño puede cambiar con el tiempo
 				(se registra cuándo y por qué) sin perder el historial de servicios anteriores.
 			</p>
+			<p>
+				Desde la ficha del cliente, un botón <strong>"Verificar WhatsApp"</strong> le manda un
+				código de un solo uso al teléfono que tenemos registrado. Si el cliente contesta ese
+				código desde ese mismo número, su conversación de WhatsApp queda ligada a su ficha — solo
+				así el bot puede darle avance de su servicio, mandarle cotizaciones para autorizar, o
+				recordatorios de cita por ese medio. El código expira en 15 minutos y solo sirve una vez;
+				pedir uno nuevo invalida el anterior.
+			</p>
 		</div>
 	</details>
 

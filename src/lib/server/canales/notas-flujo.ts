@@ -10,12 +10,19 @@ import prisma from "$lib/prisma";
 
 const TTL_MINUTOS = 30;
 const PREFIJO = "nota_";
+// Deliberately the same tipo as conversacion.ts's booking flow — this module shares that one
+// row per (canal, idExterno) on purpose (see file doc comment), distinguished only by the
+// `nota_` paso prefix. A different tipo here would let this flow and a booking run at once,
+// which is exactly the collision the shared row exists to prevent.
+const TIPO = "booking";
 
 type Paso = "accion" | "comentario" | "evidencia";
 type Estado = { paso: Paso; folio: number; notaId: string };
 
 async function leer(canal: string, idExterno: string): Promise<Estado | null> {
-	const fila = await prisma.conversacion_estado.findUnique({ where: { canal_idExterno: { canal, idExterno } } });
+	const fila = await prisma.conversacion_estado.findUnique({
+		where: { canal_idExterno_tipo: { canal, idExterno, tipo: TIPO } },
+	});
 	if (!fila || fila.expiraAt < new Date() || !fila.paso.startsWith(PREFIJO)) return null;
 	const datos = fila.datos as Record<string, string>;
 	return { paso: fila.paso.slice(PREFIJO.length) as Paso, folio: Number(datos.folio), notaId: datos.notaId };
@@ -24,11 +31,12 @@ async function leer(canal: string, idExterno: string): Promise<Estado | null> {
 async function guardar(canal: string, idExterno: string, estado: Estado): Promise<void> {
 	const datos = { folio: String(estado.folio), notaId: estado.notaId };
 	await prisma.conversacion_estado.upsert({
-		where: { canal_idExterno: { canal, idExterno } },
+		where: { canal_idExterno_tipo: { canal, idExterno, tipo: TIPO } },
 		create: {
 			id: randomUUID(),
 			canal,
 			idExterno,
+			tipo: TIPO,
 			paso: PREFIJO + estado.paso,
 			datos,
 			expiraAt: new Date(Date.now() + TTL_MINUTOS * 60_000),
@@ -47,7 +55,7 @@ export async function estadoActual(canal: string, idExterno: string): Promise<Es
 
 /** Only clears a row that is actually ours — never touches an in-progress booking. */
 export async function cancelar(canal: string, idExterno: string): Promise<void> {
-	if (await leer(canal, idExterno)) await prisma.conversacion_estado.deleteMany({ where: { canal, idExterno } });
+	if (await leer(canal, idExterno)) await prisma.conversacion_estado.deleteMany({ where: { canal, idExterno, tipo: TIPO } });
 }
 
 export async function iniciarAccion(canal: string, idExterno: string, folio: number, notaId: string): Promise<void> {

@@ -79,6 +79,7 @@ type CitaRow = {
 	notas: string | null;
 	clienteId: string | null;
 	unidadId: string | null;
+	origenConversacionId: string | null;
 	direccionRecoleccion: string | null;
 	asignadoId: string | null;
 	entregadorId: string | null;
@@ -120,6 +121,9 @@ export const publicCita = (c: CitaRow) => ({
 	// A persona can sign for their own unit; an organización cannot, so it needs a named
 	// entregador. The detail screen says which case this is.
 	clienteTipo: c.cliente?.tipo ?? null,
+	// Non-null only for a cita born from a WhatsApp/Telegram conversation — the "Verificar
+	// WhatsApp" shortcut on this page needs it to know there's a real conversation to link.
+	origenConversacionId: c.origenConversacionId,
 	unidadId: c.unidadId,
 	unidadEtiqueta: c.unidad
 		? [`${c.unidad.marca} ${c.unidad.modelo}`, c.unidad.placas].filter(Boolean).join(" · ")
@@ -522,7 +526,7 @@ const finPorDefecto = (inicio: Date) => new Date(inicio.getTime() + DURACION_MIN
  * same invariants either way: never confirmed, never linked to a cliente/unidad/assignee, never
  * carries an hour or internal notes.
  */
-async function crearCitaPublica(body: Record<string, unknown>, origen: string) {
+async function crearCitaPublica(body: Record<string, unknown>, origen: string, conversacionId?: string) {
 	const contacto = leerDatosContacto(body);
 	const { tipo, direccionRecoleccion } = leerTipo(body);
 	const fecha = leerFecha(body.fecha, { futuro: true });
@@ -547,6 +551,7 @@ async function crearCitaPublica(body: Record<string, unknown>, origen: string) {
 				clienteId: null,
 				unidadId: null,
 				asignadoId: null,
+				origenConversacionId: conversacionId ?? null,
 			},
 			include: INCLUDE,
 		});
@@ -594,8 +599,48 @@ export async function solicitarCita(input: {
  * this is ever called. `origen` records which channel, same free-text column `"publico"`/`"panel"`
  * already use.
  */
-export async function solicitarCitaPorCanal(body: Record<string, unknown>, canal: "whatsapp" | "telegram") {
-	return crearCitaPublica(body, canal);
+export async function solicitarCitaPorCanal(
+	body: Record<string, unknown>,
+	canal: "whatsapp" | "telegram",
+	conversacionId?: string,
+) {
+	return crearCitaPublica(body, canal, conversacionId);
+}
+
+/**
+ * Link a just-created cita to a cliente the CHANNEL already vouches for — a phone-verified
+ * WhatsApp conversation (see `verificacionCliente.ts`), not a name/phone a bot took on faith.
+ * `crearCitaPublica` always starts every cita unlinked (`clienteId: null`) and staff normally
+ * links it by hand via `vincularCita` — this is the one path allowed to skip that review, because
+ * the identity claim here is cryptographic (a redeemed one-time code), stronger than the free
+ * text a human reviewer is there to double-check. No `Actor`/permission check for exactly that
+ * reason: this isn't a staff decision being bypassed, it's a decision the channel already proved.
+ */
+export async function vincularCitaPorCanal(citaId: string, clienteId: string, unidadId?: string): Promise<void> {
+	// The bot only ever offers a cliente their OWN units as buttons, but a button's payload is
+	// still attacker-reachable input by the time it gets here — verify the unit is actually
+	// theirs rather than trust the id round-tripped through the conversation state.
+	let unidadValida: string | null = null;
+	if (unidadId) {
+		const unidad = await prisma.unidad.findUnique({ where: { id: unidadId }, select: { clienteId: true } });
+		if (unidad?.clienteId === clienteId) unidadValida = unidadId;
+	}
+
+	const cita = await prisma.cita.update({
+		where: { id: citaId },
+		data: { clienteId, unidadId: unidadValida },
+		include: INCLUDE,
+	});
+
+	await recordAudit(prisma, {
+		action: "cita.link",
+		actor: ACTOR_PUBLICO,
+		entityId: cita.id,
+		entityLabel: citaLabel(cita),
+		summary: `Cita #${cita.folio} vinculada automáticamente a ${cita.cliente?.nombreCompleto ?? clienteId} (WhatsApp verificado)`,
+		before: { clienteId: null, unidadId: null },
+		after: { clienteId, unidadId: unidadValida },
+	});
 }
 
 /** The counter path. Staff book an exact hour, so `inicio` is required. */

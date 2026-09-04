@@ -16,6 +16,7 @@ import {
 	vincularCita,
 } from "$lib/server/citas";
 import prisma from "$lib/prisma";
+import { verificarManualmente } from "$lib/server/canales/verificacionCliente";
 import { crearNota, historialUnidad } from "$lib/server/notas";
 import { crearRecordatorio } from "$lib/server/recordatorios";
 import { listContactos } from "$lib/server/contactos";
@@ -220,6 +221,33 @@ export const actions: Actions = {
 		try {
 			await cancelarCita({ actor, id: params.id!, motivo: data.get("motivo") });
 			redirect(303, conFlash(`/panel/citas/${params.id}`, "cita.cancelar"));
+		} catch (err) {
+			return fallo(err);
+		}
+	},
+
+	/**
+	 * Skip the code-send/redeem dance: staff is already looking at a cita that arrived through
+	 * this exact WhatsApp conversation and about to confirm it against a real cliente — that IS
+	 * the proof, no separate code is needed. See `verificarManualmente`.
+	 */
+	verificarWhatsapp: async ({ locals, params }) => {
+		const actor = requireUser(locals);
+		try {
+			const cita = await getCita(params.id!);
+			if (!cita.origenConversacionId) throw new CitaError(400, "Esta cita no vino de una conversación de WhatsApp.");
+			if (!cita.clienteId) throw new CitaError(409, "Vincula la cita a un cliente antes de verificar su WhatsApp.");
+
+			const conversacion = await prisma.canal_conversacion.findUnique({
+				where: { id: cita.origenConversacionId },
+				select: { canal: true, idExterno: true },
+			});
+			if (!conversacion || conversacion.canal !== "whatsapp") {
+				throw new CitaError(400, "Esta cita no vino de WhatsApp.");
+			}
+
+			await verificarManualmente(actor, "whatsapp", conversacion.idExterno, cita.clienteId);
+			redirect(303, conFlash(`/panel/citas/${params.id}`, "canal.verificado"));
 		} catch (err) {
 			return fallo(err);
 		}

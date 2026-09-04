@@ -176,6 +176,17 @@
 			.reduce((s, f) => s + importeConcepto(f.cantidad, f.monto), 0n),
 	);
 
+	/**
+	 * Rejected quotes, folded away by default.
+	 *
+	 * Filtered here rather than in the load: this list is already capped at 50 and fully in hand, so
+	 * hiding a few rows is not worth a round-trip. The count comes off the same array, so the button
+	 * can never promise rows the toggle does not then show.
+	 */
+	let verRechazadas = $state(false);
+	const rechazadas = $derived(data.cotizaciones.filter((c) => c.estado === "rechazada"));
+	const cotizacionesVisibles = $derived(verRechazadas ? data.cotizaciones : data.cotizaciones.filter((c) => c.estado !== "rechazada"));
+
 	/** The quote a drawer is acting on, taken from the URL so the drawer survives a reload. */
 	const cotizacionEnFoco = $derived(data.cotizaciones.find((c) => c.id === page.url.searchParams.get("cot")));
 	const facturaEnFoco = $derived(data.facturas.find((f) => f.id === page.url.searchParams.get("fac")));
@@ -806,7 +817,7 @@
 				<p class="mt-2 text-sm text-sand-500">Nada cotizado ni facturado todavía.</p>
 			{:else}
 				<ul class="mt-3 space-y-2 text-sm">
-					{#each data.cotizaciones as c (c.id)}
+					{#each cotizacionesVisibles as c (c.id)}
 						{@const faltaSurtir = c.conceptos.some((x) => x.productoId && !x.surtidoCompleto)}
 						<li class="rounded border border-sand-200 p-3">
 							<div class="flex flex-wrap items-center gap-2">
@@ -872,6 +883,19 @@
 
 							{#if c.rechazadaMotivo}
 								<p class="mt-1 text-xs text-danger">Rechazó: {c.rechazadaMotivo}</p>
+							{/if}
+
+							<!--
+								The customer pressed "no quiero este trabajo" on their seguimiento link. It is a
+								REQUEST, not the answer — the quote is still `enviada`. Confirm it with the
+								Rechazar button below, which is the only thing that actually changes the state.
+							-->
+							{#if c.rechazoSolicitadoAt}
+								<p class="mt-2 rounded border border-danger/40 bg-danger/5 p-2 text-xs text-danger">
+									<strong>El cliente pidió rechazarla</strong> desde su liga de seguimiento.
+									{#if c.rechazoSolicitadoMotivo}Motivo: {c.rechazoSolicitadoMotivo}{/if}
+									Confírmalo con «Rechazar» para cerrarla.
+								</p>
 							{/if}
 
 							<div class="mt-2 flex flex-wrap gap-1.5">
@@ -1080,6 +1104,25 @@
 							</div>
 						</li>
 					{/each}
+					<!--
+						A rejected quote is a closed question — kept for the record, out of the way of the
+						ones still in play. Progressive enhancement note: this is a pure display toggle
+						over rows already on the page, not a workflow, so a button is honest here; with JS
+						off nothing is lost that was not already a click away.
+					-->
+					{#if rechazadas.length > 0}
+						<li>
+							<button
+								type="button"
+								class="text-xs text-sand-600 underline underline-offset-2 hover:text-sand-900"
+								onclick={() => (verRechazadas = !verRechazadas)}
+							>
+								{verRechazadas
+									? "Ocultar rechazadas"
+									: `Mostrar rechazadas (${rechazadas.length})`}
+							</button>
+						</li>
+					{/if}
 					{#each data.cotizacionesInternas as ci (ci.id)}
 						<li class="rounded border border-sand-200 p-3">
 							<div class="flex flex-wrap items-center gap-2">

@@ -115,6 +115,7 @@ export async function getConversacion(actor: Actor, id: string) {
 			tomadaPor: { select: { name: true } },
 			cliente: { select: { nombreCompleto: true } },
 			mensajes: { orderBy: { createdAt: "asc" }, include: { autor: { select: { name: true } } } },
+			citaCreada: { select: { id: true, folio: true, estado: true } },
 		},
 	});
 	if (!conversacion) throw new ClienteError(404, "Conversación no encontrada");
@@ -126,6 +127,7 @@ export async function getConversacion(actor: Actor, id: string) {
 		nombre: conversacion.cliente?.nombreCompleto ?? conversacion.nombreCanal ?? conversacion.idExterno,
 		modo: conversacion.modo,
 		tomadaPorNombre: conversacion.tomadaPor?.name ?? null,
+		citaCreada: conversacion.citaCreada,
 		mensajes: conversacion.mensajes.map((m) => ({
 			id: m.id,
 			direccion: m.direccion,

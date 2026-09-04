@@ -14,6 +14,7 @@ import {
 	type CampoFusionable,
 } from "$lib/server/clientes";
 import { resumenClienteFinanciero } from "$lib/server/comercial";
+import { enviarCodigoVerificacion } from "$lib/server/canales/verificacionCliente";
 import prisma from "$lib/prisma";
 import { createContacto, deleteContacto, listContactos, updateContacto } from "$lib/server/contactos";
 import { actualizarTelefono, crearTelefono, eliminarTelefono, listTelefonos } from "$lib/server/cliente-telefonos";
@@ -127,6 +128,7 @@ export const load: ServerLoad = async ({ locals, params, url }) => {
 			// Same permission that gates the button on a factura: this creates nothing that costs
 			// anything (a receptor at the PAC is free), but it does reach an outside service.
 			vincularPac: can(actor.role, "factura:timbrar"),
+			verificarWhatsapp: can(actor.role, "canal:verificar-cliente"),
 		},
 	};
 };
@@ -263,6 +265,16 @@ export const actions: Actions = {
 		try {
 			const { entorno } = await vincularClienteConPac({ actor, clienteId: params.id! });
 			return { ok: `Vinculado con factura.com (${entorno}).` };
+		} catch (err) {
+			return fallo(err);
+		}
+	},
+
+	verificarWhatsapp: async ({ locals, params }) => {
+		const actor = requireUser(locals);
+		try {
+			const { expiraMinutos } = await enviarCodigoVerificacion(actor, params.id!);
+			return { ok: `Código enviado, expira en ${expiraMinutos} minutos.` };
 		} catch (err) {
 			return fallo(err);
 		}

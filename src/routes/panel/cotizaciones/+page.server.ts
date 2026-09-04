@@ -40,14 +40,19 @@ export const load: ServerLoad = async ({ locals, url }) => {
 	// "vencidas" drops the date filter entirely rather than silently hiding the very rows it's
 	// asking for.
 	const vencidas = url.searchParams.get("vencidas") === "1";
+	// Rejected quotes are dead weight on the money screen — they were never going to be collected.
+	// Hidden by default, one link away, and the `estado` filter still overrides (see
+	// `listCotizaciones`) so picking "Rechazada" from the dropdown does what it says.
+	const rechazadas = url.searchParams.get("rechazadas") === "1";
 
 	try {
-		const [cotizaciones, facturas, dinero] = await Promise.all([
+		const [cotizaciones, facturas, dinero, rechazadasOcultas] = await Promise.all([
 			listCotizaciones({
 				estado,
 				estadoInterno,
 				desde,
 				hasta,
+				ocultarRechazadas: !rechazadas,
 				page: pestana === "cotizaciones" ? Number(url.searchParams.get("page") ?? 1) || 1 : 1,
 				perPage: 25,
 			}),
@@ -61,6 +66,12 @@ export const load: ServerLoad = async ({ locals, url }) => {
 					})
 				: null,
 			resumenDinero(desde, hasta),
+			// How many the toggle is hiding, under the SAME window and filters as the list above —
+			// a count taken any other way would disagree with what the link actually reveals. Only
+			// worth asking when they are hidden and the user has not already narrowed to them.
+			rechazadas || estado === "rechazada"
+				? null
+				: listCotizaciones({ estado: "rechazada", estadoInterno, desde, hasta, perPage: 1 }),
 		]);
 
 		// Admin-only, and only for the page actually on screen — the list is capped at 25, so this
@@ -80,6 +91,8 @@ export const load: ServerLoad = async ({ locals, url }) => {
 			dinero,
 			utilidades,
 			pestana,
+			rechazadas,
+			rechazadasOcultas: rechazadasOcultas?.total ?? 0,
 			filtros: { estado, estadoInterno, desde, hasta },
 			estados: COTIZACION_ESTADO_KEYS.map((k) => ({ value: k, label: COTIZACION_ESTADOS[k].label })),
 			internos: COTIZACION_INTERNO_KEYS.map((k) => ({ value: k, label: COTIZACION_INTERNOS[k].label })),

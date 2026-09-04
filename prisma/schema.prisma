@@ -52,16 +52,16 @@ model user {
   cuentasBancarias  cuenta_bancaria[]    @relation("cuentaBancariaActualizadoPor")
   permisosOtorgados permiso_rol[]        @relation("permisoOtorgadoPor")
 
-  notificaciones      notificacion[]             @relation("notificacionDestinatario")
-  suscripcionesPush   push_suscripcion[]         @relation("pushSuscripcion")
-  preferenciasAviso   notificacion_preferencia[] @relation("notificacionPreferencia")
-  talleresRevisados   taller[]                   @relation("tallerRevisadoPor")
-  canalesVinculados   canal_identidad[]          @relation("canalIdentidadUsuario")
-  canalVinculaciones  canal_vinculacion[]        @relation("canalVinculacionUsuario")
-  conversacionesTomadas canal_conversacion[]     @relation("conversacionTomadaPor")
-  mensajesEnviados      canal_mensaje[]          @relation("mensajeAutor")
-  usosIA              ia_uso[]                   @relation("iaUsoActor")
-  reportesIAGenerados nota_reporte_ia[]          @relation("notaReporteIaGeneradoPor")
+  notificaciones        notificacion[]             @relation("notificacionDestinatario")
+  suscripcionesPush     push_suscripcion[]         @relation("pushSuscripcion")
+  preferenciasAviso     notificacion_preferencia[] @relation("notificacionPreferencia")
+  talleresRevisados     taller[]                   @relation("tallerRevisadoPor")
+  canalesVinculados     canal_identidad[]          @relation("canalIdentidadUsuario")
+  canalVinculaciones    canal_vinculacion[]        @relation("canalVinculacionUsuario")
+  conversacionesTomadas canal_conversacion[]       @relation("conversacionTomadaPor")
+  mensajesEnviados      canal_mensaje[]            @relation("mensajeAutor")
+  usosIA                ia_uso[]                   @relation("iaUsoActor")
+  reportesIAGenerados   nota_reporte_ia[]          @relation("notaReporteIaGeneradoPor")
 
   notasAsignadas         nota_servicio[]         @relation("notaMecanico")
   entradasRegistradas    inventario_entrada[]    @relation("entradaRegistradaPor")
@@ -245,10 +245,11 @@ model cliente {
   notasVenta    nota_venta[]
   recordatorios recordatorio[]
 
-  notificaciones    notificacion[]     @relation("notificacionCliente")
-  suscripcionesPush push_suscripcion[] @relation("pushSuscripcionCliente")
-  canalesVinculados canal_identidad[]
-  conversaciones    canal_conversacion[]
+  notificaciones      notificacion[]         @relation("notificacionCliente")
+  suscripcionesPush   push_suscripcion[]     @relation("pushSuscripcionCliente")
+  canalesVinculados   canal_identidad[]
+  conversaciones      canal_conversacion[]
+  verificacionesCanal cliente_verificacion[]
 
   @@index([nombreCompleto])
   @@index([rfc])
@@ -444,6 +445,11 @@ model cita {
   /// express "belongs to the same customer".
   entregadorId String?
   entregador   cliente_contacto? @relation(fields: [entregadorId], references: [id], onDelete: SetNull)
+
+  /// The WhatsApp/Telegram thread that booked this, when `origen` is a canal — lets the chat
+  /// panel link back to what a conversation actually produced. Null for 'publico'/'panel'.
+  origenConversacionId String?             @unique
+  origenConversacion   canal_conversacion? @relation(fields: [origenConversacionId], references: [id], onDelete: SetNull)
 
   /// Required when tipo = 'recoleccion' (CHECK constraint) — sending someone to collect a
   /// vehicle without an address is not a real appointment.
@@ -969,6 +975,16 @@ model cotizacion {
   autorizadaAt            DateTime?
   rechazadaMotivo         String?           @db.VarChar(500)
 
+  /// The customer asked to reject this, from their seguimiento link — an INTENT, not the answer.
+  ///
+  /// Deliberately not `estado = "rechazada"`. The seguimiento token is a URL anyone holding the
+  /// link can use, so it must not be able to close a quote by itself; a staff member confirms the
+  /// rejection through `cambiarEstadoCotizacion`, which is where the permission and the audit
+  /// record live. Cleared when they confirm or when the customer changes their mind.
+  rechazoSolicitadoAt     DateTime?
+  /// Why, in the customer's own words. Optional — a rejection with no reason is still a rejection.
+  rechazoSolicitadoMotivo String?           @db.VarChar(500)
+
   creadaPorId String?
   creadaPor   user?    @relation("cotizacionCreadaPor", fields: [creadaPorId], references: [id], onDelete: SetNull)
   createdAt   DateTime @default(now())
@@ -1146,11 +1162,11 @@ model factura_concepto {
 /// and reporting have exactly one place to look; `pago_exactamente_un_destino_check` enforces the
 /// exclusivity the two nullable FKs can't express by themselves.
 model pago {
-  id           String      @id
-  facturaId    String?
-  factura      factura?    @relation(fields: [facturaId], references: [id], onDelete: Restrict)
-  notaVentaId  String?
-  notaVenta    nota_venta? @relation(fields: [notaVentaId], references: [id], onDelete: Restrict)
+  id          String      @id
+  facturaId   String?
+  factura     factura?    @relation(fields: [facturaId], references: [id], onDelete: Restrict)
+  notaVentaId String?
+  notaVenta   nota_venta? @relation(fields: [notaVentaId], references: [id], onDelete: Restrict)
 
   monto      Decimal @db.Decimal(12, 2)
   /// efectivo | tarjeta | transferencia | cheque | otro
@@ -1178,14 +1194,14 @@ model pago {
 /// a real `factura` (IVA computed on top, own folio/UUID lifecycle) and every `pago` already
 /// registered here is re-pointed at the new factura — nothing is re-collected.
 model nota_venta {
-  id     String        @id
-  folio  Int           @unique @default(autoincrement())
-  notaId String?
-  nota   nota_servicio? @relation(fields: [notaId], references: [id], onDelete: SetNull)
+  id           String         @id
+  folio        Int            @unique @default(autoincrement())
+  notaId       String?
+  nota         nota_servicio? @relation(fields: [notaId], references: [id], onDelete: SetNull)
   clienteId    String
-  cliente      cliente     @relation(fields: [clienteId], references: [id], onDelete: Restrict)
+  cliente      cliente        @relation(fields: [clienteId], references: [id], onDelete: Restrict)
   cotizacionId String?
-  cotizacion   cotizacion? @relation(fields: [cotizacionId], references: [id], onDelete: SetNull)
+  cotizacion   cotizacion?    @relation(fields: [cotizacionId], references: [id], onDelete: SetNull)
 
   /// activa | cancelada | facturada. `pagada` is NOT a stored value — same reasoning as
   /// `factura.pagada`, it falls out of the arithmetic over `pagos`, never set by hand.
@@ -1221,9 +1237,9 @@ model nota_venta {
 
 /// What the nota de venta actually sells — its own lines, same vocabulary as factura_concepto.
 model nota_venta_concepto {
-  id           String     @id
-  notaVentaId  String
-  notaVenta    nota_venta @relation(fields: [notaVentaId], references: [id], onDelete: Cascade)
+  id          String     @id
+  notaVentaId String
+  notaVenta   nota_venta @relation(fields: [notaVentaId], references: [id], onDelete: Cascade)
 
   /// refaccion | mano_obra | insumo | externo
   tipo           String  @db.VarChar(16)
@@ -1530,11 +1546,14 @@ model conversacion_estado {
   id        String   @id
   canal     String   @db.VarChar(16)
   idExterno String   @db.VarChar(64)
+  /// Discriminates which flow this row belongs to — booking, verification, (later) survey — so
+  /// two flows for the same chat never clobber each other's state under one (canal, idExterno).
+  tipo      String   @default("booking") @db.VarChar(16)
   paso      String   @db.VarChar(32)
   datos     Json
   expiraAt  DateTime
 
-  @@unique([canal, idExterno])
+  @@unique([canal, idExterno, tipo])
   @@map("conversacion_estado")
 }
 
@@ -1573,15 +1592,35 @@ model canal_vinculacion {
   @@map("canal_vinculacion")
 }
 
+/// Staff-initiated counterpart to canal_vinculacion, scoped to a cliente instead of a user: a
+/// staff member sends a one-time code to the customer's phone on file, the customer redeems it
+/// from a chat. `idExterno` is snapshotted at send time (the number the code was sent to) so
+/// redemption is a match against THAT number, never any number that guesses the code.
+model cliente_verificacion {
+  id         String    @id
+  clienteId  String
+  cliente    cliente   @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  canal      String    @db.VarChar(16)
+  idExterno  String    @db.VarChar(64)
+  codigoHash String    @unique
+  expiraAt   DateTime
+  usadoAt    DateTime?
+  revocadoAt DateTime?
+  creadoAt   DateTime  @default(now())
+
+  @@index([clienteId])
+  @@map("cliente_verificacion")
+}
+
 /// A WhatsApp/Telegram conversation thread — the customer-facing counterpart to
 /// `canal_vinculacion`'s staff linking. One row per (canal, idExterno), living for as long as the
 /// conversation does — unlike `conversacion_estado`'s 30-minute booking-flow TTL, this is meant to
 /// persist. `modo` is the human-takeover switch: a person answering directly stops the bot from
 /// also replying to the same incoming message.
 model canal_conversacion {
-  id        String @id
-  canal     String @db.VarChar(16)
-  idExterno String @db.VarChar(64)
+  id          String  @id
+  canal       String  @db.VarChar(16)
+  idExterno   String  @db.VarChar(64)
   /// Display name from the provider (WhatsApp profile name, Telegram @username) — never the
   /// lookup key, same rule `canal_identidad.nombreCanal` follows.
   nombreCanal String? @db.VarChar(64)
@@ -1603,6 +1642,8 @@ model canal_conversacion {
   createdAt DateTime @default(now())
 
   mensajes canal_mensaje[]
+  /// The cita this thread's booking flow produced, if it completed one. See `cita.origenConversacionId`.
+  citaCreada cita?
 
   @@unique([canal, idExterno])
   @@map("canal_conversacion")

@@ -219,7 +219,24 @@
 	<dl class="mt-3 grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
 		<div>
 			<dt class="text-sand-500">Teléfono</dt>
-			<dd class="text-sand-950">{data.cliente.telefono ?? "—"}</dd>
+			<dd class="flex flex-wrap items-center gap-2 text-sand-950">
+				{data.cliente.telefono ?? "—"}
+				{#if data.puede.verificarWhatsapp}
+					<!-- Sends a one-time code to the cliente's phone on file; they confirm it back over
+					     WhatsApp to link the conversation to this cliente record (see verificacionCliente.ts). -->
+					<form
+						method="POST"
+						action="?/verificarWhatsapp"
+					>
+						<Button
+							size="sm"
+							variant="outline"
+						>
+							Enviar código de verificación por WhatsApp
+						</Button>
+					</form>
+				{/if}
+			</dd>
 		</div>
 		<div>
 			<dt class="text-sand-500">Correo</dt>

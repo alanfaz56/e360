@@ -117,6 +117,10 @@ export const publicCotizacion = (c: CotizacionRow) => {
 		autorizadaMedio: c.autorizadaMedio,
 		autorizadaAt: c.autorizadaAt?.toISOString() ?? null,
 		rechazadaMotivo: c.rechazadaMotivo,
+		// The customer asked to reject it and is waiting on the shop to confirm. Not an `estado`:
+		// see `solicitarRechazoCotizacion`.
+		rechazoSolicitadoAt: c.rechazoSolicitadoAt?.toISOString() ?? null,
+		rechazoSolicitadoMotivo: c.rechazoSolicitadoMotivo,
 		creadaPor: c.creadaPor?.name ?? null,
 		conceptos: c.conceptos.map((x) => ({
 			id: x.id,
@@ -158,12 +162,23 @@ export async function listCotizaciones(
 		estadoInterno?: string | null;
 		desde?: string | null;
 		hasta?: string | null;
+		/**
+		 * Opt-in: drop `rechazada` quotes from the list.
+		 *
+		 * Off by default on purpose — the API routes and the internal `borrador` lookup below both
+		 * call this and must keep seeing every quote. Only the two screens that offer a "Ver
+		 * rechazadas" toggle pass it, and an explicit `estado=rechazada` filter still wins: asking
+		 * for rejected quotes and getting none back would be the more surprising behavior.
+		 */
+		ocultarRechazadas?: boolean;
 	} & Partial<PageParams>,
 ) {
 	const paging = { page: query.page ?? 1, perPage: query.perPage ?? 25 };
+	const ocultar = query.ocultarRechazadas && query.estado !== "rechazada";
 	const where: Prisma.cotizacionWhereInput = {
 		...(query.notaId ? { notaId: query.notaId } : {}),
 		...(isCotizacionEstado(query.estado) ? { estado: query.estado } : {}),
+		...(ocultar ? { estado: { not: "rechazada" } } : {}),
 		...(isCotizacionInterno(query.estadoInterno) ? { estadoInterno: query.estadoInterno } : {}),
 		...rangoCreado(query.desde, query.hasta),
 	};
@@ -642,6 +657,13 @@ export async function cambiarEstadoCotizacion(input: {
 	const body = input.body ?? {};
 	const data: Prisma.cotizacionUpdateInput = { estado: destino as CotizacionEstado };
 
+	// The customer's pending request is answered now, whichever way it went — clear it so the quote
+	// does not keep advertising a decision the shop has already made.
+	if (destino === "autorizada" || destino === "rechazada") {
+		data.rechazoSolicitadoAt = null;
+		data.rechazoSolicitadoMotivo = null;
+	}
+
 	if (destino === "enviada") data.enviadaAt = new Date();
 
 	if (destino === "rechazada") {
@@ -716,6 +738,19 @@ export async function cambiarEstadoCotizacion(input: {
 			cuerpo: `Cotización #${cotizacion.folio} por $${monto(cotizacion.total)}. Ábrela para autorizarla o rechazarla.`,
 		});
 	} else if (destino === "autorizada" || destino === "rechazada") {
+		// Close the loop on the customer's own timeline. Without this, "Ábrela para autorizarla o
+		// rechazarla" stays the newest thing on their Avance forever — an open question they have
+		// already answered. `cliente_avance` on purpose: no email, no priority push, because this
+		// is an echo of what they just did, not news.
+		await avisarClienteDeNota(cotizacion.notaId, {
+			evento: "cliente_avance",
+			titulo: destino === "autorizada" ? "Autorizaste la cotización" : "Rechazaste la cotización",
+			cuerpo:
+				destino === "autorizada"
+					? `Cotización #${cotizacion.folio} por $${monto(cotizacion.total)}. Ya vamos a empezar el trabajo.`
+					: `Cotización #${cotizacion.folio} por $${monto(cotizacion.total)}. No haremos ese trabajo. Si quieres revisarla de nuevo, avísanos.`,
+		});
+
 		// The answer is what unblocks the work, so it goes to whoever can act on it — not just to
 		// the person who happened to send the quote.
 		await notificar({
@@ -731,6 +766,80 @@ export async function cambiarEstadoCotizacion(input: {
 	}
 
 	return cotizacion;
+}
+
+/**
+ * The customer asks to reject a quote, from their seguimiento link.
+ *
+ * **This does not reject anything.** It records the request and tells the shop; a staff member
+ * confirms it through `cambiarEstadoCotizacion`, which is where the permission, the mandatory
+ * motivo and the audit row live. The split is the point: the seguimiento token is a URL, so
+ * anyone who gets hold of a forwarded link would otherwise be able to kill a quote outright.
+ *
+ * No `Actor` — there is no account behind this call. The token is the credential, and the caller
+ * has already exchanged it for `notaId`; passing the id in is what keeps this function unable to
+ * touch a quote on somebody else's note.
+ */
+export async function solicitarRechazoCotizacion(input: { notaId: string; folio: unknown; motivo?: unknown }) {
+	const folio = Number(input.folio);
+	if (!Number.isInteger(folio)) throw new ClienteError(400, "Cotización no válida");
+
+	// Scoped by `notaId`, not by folio alone: the quote must belong to the note the token opened.
+	// Looking it up by folio only would let one valid token reject any quote in the shop.
+	const current = await prisma.cotizacion.findFirst({
+		where: { folio, notaId: input.notaId },
+		include: COTIZACION_INCLUDE,
+	});
+	if (!current) throw new ClienteError(404, "Cotización no encontrada");
+
+	// Only a quote actually awaiting their answer. A borrador was never shown to them, and one
+	// already answered is a closed question — re-opening it is a phone call, not a button.
+	if (current.estado !== "enviada") {
+		throw new ClienteError(409, "Esta cotización ya no está esperando tu respuesta.");
+	}
+
+	const motivo = trim(input.motivo, 500, "El motivo") || null;
+
+	const cotizacion = await prisma.cotizacion.update({
+		where: { id: current.id },
+		data: { rechazoSolicitadoAt: new Date(), rechazoSolicitadoMotivo: motivo },
+		include: COTIZACION_INCLUDE,
+	});
+
+	// Staff need to see this to act on it — same broadcast the answer itself uses.
+	await notificar({
+		evento: "cotizacion_respondida",
+		destino: { difusion: true },
+		titulo: "El cliente quiere rechazar una cotización",
+		cuerpo: `#${cotizacion.folio} · $${monto(cotizacion.total)} — ${cotizacion.nota.cliente.nombreCompleto}${motivo ? `: ${motivo}` : ""}`,
+		url: `/panel/notas/${cotizacion.notaId}`,
+		entidad: "nota",
+		entidadId: cotizacion.notaId,
+	});
+
+	return publicCotizacion(cotizacion);
+}
+
+/** The customer changes their mind before the shop has confirmed. Same token scoping as above. */
+export async function cancelarRechazoCotizacion(input: { notaId: string; folio: unknown }) {
+	const folio = Number(input.folio);
+	if (!Number.isInteger(folio)) throw new ClienteError(400, "Cotización no válida");
+
+	const current = await prisma.cotizacion.findFirst({
+		where: { folio, notaId: input.notaId },
+		select: { id: true, estado: true },
+	});
+	if (!current) throw new ClienteError(404, "Cotización no encontrada");
+	if (current.estado !== "enviada") {
+		throw new ClienteError(409, "Esta cotización ya no está esperando tu respuesta.");
+	}
+
+	const cotizacion = await prisma.cotizacion.update({
+		where: { id: current.id },
+		data: { rechazoSolicitadoAt: null, rechazoSolicitadoMotivo: null },
+		include: COTIZACION_INCLUDE,
+	});
+	return publicCotizacion(cotizacion);
 }
 
 /**

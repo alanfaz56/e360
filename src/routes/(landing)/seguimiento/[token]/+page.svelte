@@ -19,7 +19,7 @@
 	import { haceCuanto } from "$lib/notificaciones";
 	import { telHref, telefonoFormato, waHref } from "$lib/empresa";
 
-	let { data } = $props();
+	let { data, form } = $props();
 
 	// Amounts arrive as "1234.50" strings on purpose — Decimal drops trailing zeros over the wire.
 	const pesos = (v: string) => formatoPesos(Number(v));
@@ -137,6 +137,15 @@
 					/>
 					Cotizaciones y facturas
 				</h2>
+				{#if form?.message}
+					<p
+						class="mt-3 rounded border border-red-300 bg-red-50 p-3 text-sm text-red-800"
+						role="alert"
+					>
+						{form.message}
+					</p>
+				{/if}
+
 				<ul class="mt-3 space-y-3 text-sm">
 					<!--
 						The line items, not just a total. "¿Qué me van a cobrar?" is the whole question,
@@ -216,6 +225,88 @@
 								<p class="mt-2 text-xs text-sand-500">
 									Precio vigente hasta el {c.vigenciaHasta.slice(0, 10)}
 								</p>
+							{/if}
+
+							<!--
+								Rejecting is a two-step on purpose: the <details> has to be opened before the
+								confirm button exists, so no single stray tap on a phone kills a quote. And it
+								still only REQUESTS the rejection — the shop confirms it. Plain form, no JS.
+							-->
+							{#if c.estado === "enviada"}
+								{#if c.rechazoSolicitadoAt}
+									<div class="mt-3 rounded border border-accent-500/40 bg-accent-500/10 p-3">
+										<p class="text-sm font-medium text-sand-900">
+											Pediste rechazar esta cotización.
+										</p>
+										{#if c.rechazoSolicitadoMotivo}
+											<p class="mt-1 text-xs text-sand-600">
+												Tu motivo: {c.rechazoSolicitadoMotivo}
+											</p>
+										{/if}
+										<p class="mt-1 text-xs text-sand-600">
+											Ya lo vimos y te vamos a contactar para confirmarlo. El trabajo no ha
+											empezado.
+										</p>
+										<form
+											method="POST"
+											action="?/cancelarRechazo"
+											class="mt-2"
+										>
+											<input
+												type="hidden"
+												name="folio"
+												value={c.folio}
+											/>
+											<button
+												type="submit"
+												class="text-xs text-sand-700 underline underline-offset-2 hover:text-sand-950"
+											>
+												Cambié de opinión, sí la autorizo
+											</button>
+										</form>
+									</div>
+								{:else}
+									<details class="group mt-3">
+										<summary
+											class="cursor-pointer list-none text-xs text-sand-600 underline underline-offset-2 hover:text-sand-900"
+										>
+											No quiero este trabajo
+										</summary>
+										<form
+											method="POST"
+											action="?/solicitarRechazo"
+											class="mt-2 rounded border border-sand-200 bg-sand-50 p-3"
+										>
+											<input
+												type="hidden"
+												name="folio"
+												value={c.folio}
+											/>
+											<label
+												class="block text-xs text-sand-700"
+												for="motivo-{c.folio}"
+											>
+												¿Nos cuentas por qué? (opcional)
+											</label>
+											<textarea
+												id="motivo-{c.folio}"
+												name="motivo"
+												rows="2"
+												maxlength="500"
+												class="mt-1 w-full rounded-md border border-sand-300 bg-white px-3 py-2 text-sm focus:border-brand-600 focus:outline-none"
+											></textarea>
+											<button
+												type="submit"
+												class="mt-2 rounded-md bg-sand-900 px-3 py-2 text-sm font-medium text-white hover:bg-sand-950"
+											>
+												Confirmar que la rechazo
+											</button>
+											<p class="mt-2 text-xs text-sand-500">
+												Nos avisas y lo confirmamos contigo. Nada se cancela solo.
+											</p>
+										</form>
+									</details>
+								{/if}
 							{/if}
 						</li>
 					{/each}

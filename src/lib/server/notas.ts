@@ -216,8 +216,11 @@ export async function seguimientoPorToken(token: string) {
 			select: { id: true, titulo: true, cuerpo: true, createdAt: true },
 		}),
 		prisma.cotizacion.findMany({
-			// A draft is not something the customer has been shown yet.
-			where: { notaId: nota.id, estado: { notIn: ["borrador"] } },
+			// Only what is still live for the customer: what they approved, and what is waiting on
+			// their answer. A draft is not something they have been shown yet, and a quote they
+			// already rejected is a closed question — re-showing it just clutters the one screen
+			// they use to see what is happening with their car.
+			where: { notaId: nota.id, estado: { notIn: ["borrador", "rechazada"] } },
 			orderBy: { createdAt: "desc" },
 			select: {
 				id: true,
@@ -228,6 +231,8 @@ export async function seguimientoPorToken(token: string) {
 				total: true,
 				vigenciaHasta: true,
 				enviadaAt: true,
+				rechazoSolicitadoAt: true,
+				rechazoSolicitadoMotivo: true,
 				// The line items, because "¿qué me van a cobrar?" is the whole question. Safe by
 				// construction: `exigirSinTaller` refuses a description naming a partner shop at
 				// write time, so nothing has to be redacted on the way out.
@@ -289,6 +294,10 @@ export async function seguimientoPorToken(token: string) {
 			folio: c.folio,
 			estado: c.estado,
 			estadoLabel: cotizacionEstadoLabel(c.estado),
+			// Their own pending "quiero rechazarla", echoed back so the screen shows the shop has
+			// it. Still `estado: "enviada"` underneath — only staff can actually reject.
+			rechazoSolicitadoAt: c.rechazoSolicitadoAt?.toISOString() ?? null,
+			rechazoSolicitadoMotivo: c.rechazoSolicitadoMotivo,
 			// `.toFixed(2)`, never `.toString()`: Decimal drops trailing zeros and 5050.00 would
 			// serialize as "5050".
 			subtotal: c.subtotal.toFixed(2),

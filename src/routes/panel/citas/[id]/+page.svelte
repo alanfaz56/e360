@@ -11,6 +11,7 @@
 	import ClipboardList from "@lucide/svelte/icons/clipboard-list";
 	import Bell from "@lucide/svelte/icons/bell";
 	import Badge from "$lib/components/Badge.svelte";
+	import { enhance } from "$app/forms";
 	import Button from "$lib/components/Button.svelte";
 	import Drawer from "$lib/components/Drawer.svelte";
 	import ClienteUnidadPicker from "$lib/components/ClienteUnidadPicker.svelte";
@@ -158,6 +159,21 @@
 	<Badge tone={citaEstadoTone(c.estado)}>{citaEstadoLabel(c.estado)}</Badge>
 	<Badge tone={c.tipo === "recoleccion" ? "brand" : "neutral"}>{c.tipoLabel}</Badge>
 	{#if c.origen === "publico"}<Badge tone="warn">Del formulario público</Badge>{/if}
+	{#if c.origenConversacionId && c.clienteId}
+		<form
+			method="POST"
+			action="?/verificarWhatsapp"
+			use:enhance
+		>
+			<Button
+				type="submit"
+				variant="outline"
+				size="sm"
+			>
+				Verificar WhatsApp del cliente
+			</Button>
+		</form>
+	{/if}
 </div>
 
 <!--

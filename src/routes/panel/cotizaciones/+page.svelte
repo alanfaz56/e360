@@ -211,6 +211,22 @@
 	{/if}
 </div>
 
+<!--
+	Rejected quotes are hidden here by default — they are money that was never going to arrive, and
+	they push the live ones off the page. Plain link, so it is shareable and works with JS off like
+	every other filter on this screen.
+-->
+{#if !enFacturas && (data.rechazadas || data.rechazadasOcultas > 0)}
+	<p class="mb-3">
+		<a
+			href={searchHref(page.url, { rechazadas: data.rechazadas ? null : "1", page: null })}
+			class="text-sm text-brand-700 underline underline-offset-2 hover:text-brand-800"
+		>
+			{data.rechazadas ? "Ocultar rechazadas" : `Mostrar rechazadas (${data.rechazadasOcultas})`}
+		</a>
+	</p>
+{/if}
+
 {#if enFacturas}
 	{#if data.facturas.length === 0}
 		<EmptyState

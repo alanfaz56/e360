@@ -1,4 +1,7 @@
 <script lang="ts">
+	import { onMount } from "svelte";
+	import { enhance } from "$app/forms";
+	import { invalidateAll } from "$app/navigation";
 	import Bot from "@lucide/svelte/icons/bot";
 	import UserRound from "@lucide/svelte/icons/user-round";
 	import Send from "@lucide/svelte/icons/send";
@@ -10,6 +13,15 @@
 	import PageHeader from "$lib/components/PageHeader.svelte";
 
 	let { data, form } = $props();
+
+	// Live updates: new inbound WhatsApp/Telegram messages, without the staff member ever
+	// refreshing. `invalidateAll` re-runs `load` over fetch (no full navigation), same mechanism
+	// `use:enhance` below already relies on for form submits.
+	onMount(() => {
+		const fuente = new EventSource("/api/chat/eventos");
+		fuente.onmessage = () => invalidateAll();
+		return () => fuente.close();
+	});
 
 	const CANAL_LABEL: Record<string, string> = { whatsapp: "WhatsApp", telegram: "Telegram" };
 
@@ -85,6 +97,14 @@
 				</div>
 
 				<div class="flex shrink-0 items-center gap-2">
+					{#if c.citaCreada}
+						<a
+							href="/panel/citas/{c.citaCreada.id}"
+							class="rounded-md border border-sand-300 px-2 py-1 text-xs font-medium text-sand-700 hover:bg-sand-50"
+						>
+							Cita #{c.citaCreada.folio}
+						</a>
+					{/if}
 					<a
 						href="/panel/chat?id={c.id}"
 						class="rounded p-1.5 text-sand-500 hover:bg-sand-100"
@@ -97,6 +117,7 @@
 						<form
 							method="POST"
 							action="?/regresarBot"
+							use:enhance
 						>
 							<input
 								type="hidden"
@@ -116,6 +137,7 @@
 						<form
 							method="POST"
 							action="?/tomarControl"
+							use:enhance
 						>
 							<input
 								type="hidden"
@@ -157,6 +179,7 @@
 				method="POST"
 				action="?/enviar"
 				class="flex items-end gap-2 border-t border-sand-200 p-3"
+				use:enhance
 			>
 				<input
 					type="hidden"
