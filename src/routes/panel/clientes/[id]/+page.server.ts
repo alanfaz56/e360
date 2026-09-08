@@ -125,6 +125,7 @@ export const load: ServerLoad = async ({ locals, params, url }) => {
 			fusionar: puedeFusionar,
 			verNotas: puedeVerNotas,
 			verDinero: puedeVerDinero,
+			cotizar: can(actor.role, "cotizacion:create"),
 			// Same permission that gates the button on a factura: this creates nothing that costs
 			// anything (a receptor at the PAC is free), but it does reach an outside service.
 			vincularPac: can(actor.role, "factura:timbrar"),

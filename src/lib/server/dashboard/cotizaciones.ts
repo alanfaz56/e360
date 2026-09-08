@@ -24,7 +24,9 @@ export async function getDashboardCotizaciones(periodo: Periodo) {
 				estado: true,
 				createdAt: true,
 				notaId: true,
-				nota: { select: { folio: true, cliente: { select: { nombreCompleto: true } }, unidad: { select: { marca: true, modelo: true, placas: true } } } },
+				cliente: { select: { nombreCompleto: true } },
+				unidad: { select: { marca: true, modelo: true, placas: true } },
+				nota: { select: { folio: true } },
 			},
 		}),
 	]);
@@ -65,10 +67,12 @@ export async function getDashboardCotizaciones(periodo: Periodo) {
 		pendientes: pendientes.map((c) => ({
 			id: c.id,
 			folio: c.folio,
-			cliente: c.nota.cliente?.nombreCompleto ?? "—",
-			unidad: c.nota.unidad ? `${c.nota.unidad.marca} ${c.nota.unidad.modelo}${c.nota.unidad.placas ? ` (${c.nota.unidad.placas})` : ""}` : "—",
+			cliente: c.cliente.nombreCompleto,
+			unidad: c.unidad
+				? `${c.unidad.marca} ${c.unidad.modelo}${c.unidad.placas ? ` (${c.unidad.placas})` : ""}`
+				: "—",
 			notaId: c.notaId,
-			notaFolio: c.nota.folio,
+			notaFolio: c.nota?.folio ?? null,
 			total: pesos(aCentavos(c.total)),
 			estado: c.estado,
 			createdAt: c.createdAt.toISOString(),

@@ -678,6 +678,14 @@ export async function crearNota(input: { actor: Actor; body: Record<string, unkn
 					where: { id: citaId, estado: { in: VIVAS } },
 					data: { estado: "completada" },
 				});
+
+				// A pre-arrival quote followed the appointment into the shop. Link every quote from
+				// this same customer and appointment to the new nota in the intake transaction, so
+				// service, inventory and billing immediately share one job context.
+				await tx.cotizacion.updateMany({
+					where: { citaId, clienteId: clienteId!, notaId: null },
+					data: { notaId: creada.id, unidadId: unidadId! },
+				});
 			}
 
 			await recordAudit(tx, {

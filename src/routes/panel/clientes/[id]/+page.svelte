@@ -10,6 +10,7 @@
 	import Combine from "@lucide/svelte/icons/combine";
 	import Phone from "@lucide/svelte/icons/phone";
 	import Star from "@lucide/svelte/icons/star";
+	import ReceiptText from "@lucide/svelte/icons/receipt-text";
 	import Badge from "$lib/components/Badge.svelte";
 	import Button from "$lib/components/Button.svelte";
 	import DataTable from "$lib/components/DataTable.svelte";
@@ -139,6 +140,11 @@
 	description={data.cliente.tipoLabel}
 >
 	{#snippet actions()}
+		{#if data.puede.cotizar && !data.cliente.archivado}
+			<Button href={`/panel/cotizaciones?drawer=cotizar&clienteId=${data.cliente.id}`} variant="ghost" size="sm">
+				<ReceiptText size={16} aria-hidden="true" />Cotizar
+			</Button>
+		{/if}
 		{#if data.puede.editar}
 			<Button
 				href={searchHref(page.url, { drawer: "editar" })}

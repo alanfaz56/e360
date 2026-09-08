@@ -211,6 +211,16 @@
 					value={data.prefillCita.recordatorioId}
 				/>
 			{/if}
+			{#if data.prefillCita.cotizacionId}
+				<input
+					type="hidden"
+					name="cotizacionId"
+					value={data.prefillCita.cotizacionId}
+				/>
+				<p class="rounded border border-brand-200 bg-brand-50 px-3 py-2 text-xs text-brand-900">
+					Esta cita quedará ligada a la cotización seleccionada.
+				</p>
+			{/if}
 
 			<Field
 				label="¿Qué necesita?"

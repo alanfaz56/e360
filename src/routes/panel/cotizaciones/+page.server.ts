@@ -10,7 +10,11 @@ import { conFlash } from "$lib/flash";
 import { can } from "$lib/roles";
 import { fallaEnCarga, fallo } from "$lib/server/errores";
 import { requirePermission, requireUser } from "$lib/server/guard";
+import { getCliente, listClientes } from "$lib/server/clientes";
+import { listProductos } from "$lib/server/productos";
+import { listUnidades } from "$lib/server/unidades";
 import {
+	crearCotizacion,
 	listCotizaciones,
 	listFacturas,
 	reenviarCotizacionCorreo,
@@ -83,6 +87,20 @@ export const load: ServerLoad = async ({ locals, url }) => {
 			}
 		}
 
+		// Standalone quotes start here, before agenda. These are server-rendered fallback options;
+		// the picker searches the APIs after hydration so large registries are not capped at 100.
+		const puedeCrear = can(actor.role, "cotizacion:create");
+		const prepararCotizacion = puedeCrear && url.searchParams.get("drawer") === "cotizar";
+		const [clientes, unidades, productos] = prepararCotizacion
+			? await Promise.all([
+					listClientes({ perPage: 100 }),
+					listUnidades({ perPage: 100 }),
+					can(actor.role, "producto:read") ? listProductos({ perPage: 200 }) : null,
+				])
+			: [null, null, null];
+		const prefillClienteId = prepararCotizacion ? url.searchParams.get("clienteId") : null;
+		const prefillCliente = prefillClienteId ? await getCliente(prefillClienteId).catch(() => null) : null;
+
 		return {
 			...cotizaciones,
 			facturas: facturas?.facturas ?? [],
@@ -96,7 +114,12 @@ export const load: ServerLoad = async ({ locals, url }) => {
 			filtros: { estado, estadoInterno, desde, hasta },
 			estados: COTIZACION_ESTADO_KEYS.map((k) => ({ value: k, label: COTIZACION_ESTADOS[k].label })),
 			internos: COTIZACION_INTERNO_KEYS.map((k) => ({ value: k, label: COTIZACION_INTERNOS[k].label })),
+			clientes: clientes?.clientes ?? [],
+			unidades: unidades?.unidades ?? [],
+			productos: productos?.productos ?? [],
+			prefillCliente: prefillCliente ? { id: prefillCliente.id, nombre: prefillCliente.nombreCompleto } : null,
 			puede: {
+				crear: puedeCrear,
 				verFacturas: can(actor.role, "factura:read"),
 				timbrar: can(actor.role, "factura:timbrar"),
 				enviarCotizacion: can(actor.role, "cotizacion:send"),
@@ -110,6 +133,33 @@ export const load: ServerLoad = async ({ locals, url }) => {
 };
 
 export const actions: Actions = {
+	/** Create a customer-owned quote before any appointment or service note exists. */
+	cotizar: async ({ locals, request }) => {
+		const actor = requireUser(locals);
+		const data = await request.formData();
+		const tipos = data.getAll("tipo");
+		const conceptos = tipos
+			.map((tipo, i) => ({
+				tipo,
+				descripcion: data.getAll("descripcion")[i],
+				cantidad: data.getAll("cantidad")[i],
+				precioUnitario: data.getAll("precioUnitario")[i],
+				productoId: data.getAll("productoId")[i],
+			}))
+			.filter((c) => String(c.descripcion ?? "").trim() !== "" || String(c.productoId ?? "").trim() !== "");
+		try {
+			const cotizacion = await crearCotizacion({
+				actor,
+				clienteId: String(data.get("clienteId") ?? ""),
+				unidadId: String(data.get("unidadId") ?? ""),
+				body: { conceptos, vigenciaHasta: data.get("vigenciaHasta"), notas: data.get("notas") },
+			});
+			redirect(303, conFlash(`/panel/cotizaciones/${cotizacion.id}`, "cotizacion.crear"));
+		} catch (err) {
+			return fallo(err);
+		}
+	},
+
 	/** Same shared function the nota detail's "Reenviar correo" button calls (Rule 4/5). */
 	reenviarCotizacionCorreo: async ({ locals, request, url }) => {
 		const actor = requireUser(locals);

@@ -4,6 +4,7 @@ import { can } from "$lib/roles";
 import { agenda, crearCita, resumenAgenda } from "$lib/server/citas";
 import { listClientes } from "$lib/server/clientes";
 import { listUnidades, getUnidad } from "$lib/server/unidades";
+import { getCotizacion } from "$lib/server/comercial";
 import { requirePermission, requireUser } from "$lib/server/guard";
 import { listUsers } from "$lib/server/users";
 import { fallo } from "$lib/server/errores";
@@ -66,7 +67,9 @@ export const load: ServerLoad = async ({ locals, url }) => {
 
 	// "Convertir en cita": the reminders screen links here with the unit already chosen, so the
 	// picker opens on that vehicle instead of an empty search.
-	const prefillUnidadId = puedeCrear ? url.searchParams.get("unidadId") : null;
+	const cotizacionId = puedeCrear && can(actor.role, "cotizacion:read") ? url.searchParams.get("cotizacionId") : null;
+	const cotizacion = cotizacionId ? await getCotizacion(cotizacionId).catch(() => null) : null;
+	const prefillUnidadId = puedeCrear ? (url.searchParams.get("unidadId") ?? cotizacion?.unidadId) : null;
 	const prefillUnidad = prefillUnidadId ? await getUnidad(prefillUnidadId).catch(() => null) : null;
 
 	return {
@@ -89,10 +92,15 @@ export const load: ServerLoad = async ({ locals, url }) => {
 			unidadEtiqueta: prefillUnidad
 				? [`${prefillUnidad.marca} ${prefillUnidad.modelo}`, prefillUnidad.placas].filter(Boolean).join(" · ")
 				: "",
-			clienteId: prefillUnidad?.clienteId ?? "",
-			clienteNombre: prefillUnidad?.cliente?.nombreCompleto ?? "",
-			motivo: url.searchParams.get("motivo") ?? "",
+			clienteId: prefillUnidad?.clienteId ?? cotizacion?.clienteId ?? "",
+			clienteNombre: prefillUnidad?.cliente?.nombreCompleto ?? cotizacion?.cliente.nombreCompleto ?? "",
+			motivo:
+				url.searchParams.get("motivo") ??
+				(cotizacion
+					? `Cotización #${cotizacion.folio}: ${cotizacion.conceptos.map((c) => c.descripcion).join(", ")}`
+					: ""),
 			recordatorioId: url.searchParams.get("recordatorioId") ?? "",
+			cotizacionId: cotizacion?.id ?? "",
 		},
 		puede: {
 			crear: puedeCrear,

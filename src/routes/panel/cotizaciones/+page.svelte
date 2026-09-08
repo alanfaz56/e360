@@ -7,6 +7,7 @@
 	import ChevronLeft from "@lucide/svelte/icons/chevron-left";
 	import ChevronRight from "@lucide/svelte/icons/chevron-right";
 	import Mail from "@lucide/svelte/icons/mail";
+	import FilePlus from "@lucide/svelte/icons/file-plus";
 	import Badge from "$lib/components/Badge.svelte";
 	import Button from "$lib/components/Button.svelte";
 	import DataTable from "$lib/components/DataTable.svelte";
@@ -15,7 +16,14 @@
 	import Flash from "$lib/components/Flash.svelte";
 	import PageHeader from "$lib/components/PageHeader.svelte";
 	import StatCard from "$lib/components/StatCard.svelte";
+	import Drawer from "$lib/components/Drawer.svelte";
+	import CotizacionDestinoPicker from "$lib/components/CotizacionDestinoPicker.svelte";
+	import ConceptosForm, { type ConceptoFila } from "$lib/components/ConceptosForm.svelte";
 	import {
+		CONCEPTO_TIPO_KEYS,
+		CONCEPTO_TIPOS,
+		centavos,
+		totales,
 		cotizacionEstadoTone,
 		cotizacionInternoTone,
 		facturaEstadoTone,
@@ -35,6 +43,32 @@
 
 	const enFacturas = $derived(data.pestana === "facturas");
 	const totalPaginas = $derived(enFacturas ? data.facturasPages : data.totalPages);
+	const drawer = $derived(page.url.searchParams.get("drawer"));
+
+	const filaVacia = (): ConceptoFila => ({
+		productoId: "",
+		tipo: "refaccion",
+		descripcion: "",
+		cantidad: "1",
+		monto: "",
+	});
+	let filas = $state<ConceptoFila[]>([filaVacia(), filaVacia(), filaVacia()]);
+	const tiposConcepto = CONCEPTO_TIPO_KEYS.map((t) => ({ value: t, label: CONCEPTO_TIPOS[t].label }));
+	const formatoOpcionProducto = (p: Record<string, unknown>) =>
+		`${p.nombre} · ${formatoPesos(Number(p.precioVenta))}${p.controlaInventario ? ` · ${Number(p.existencia)} ${p.unidad}` : ""}`;
+	function alElegirProducto(i: number, p: Record<string, unknown> | undefined) {
+		if (!p) return;
+		filas[i].tipo = p.tipo as string;
+		if (!filas[i].descripcion) filas[i].descripcion = p.nombre as string;
+		if (!filas[i].monto) filas[i].monto = p.precioVenta as string;
+	}
+	const previa = $derived(
+		totales(
+			filas
+				.map((f) => ({ cantidad: Number(f.cantidad), precioUnitario: centavos(f.monto) ?? 0n }))
+				.filter((f) => Number.isFinite(f.cantidad) && f.cantidad > 0),
+		),
+	);
 
 	// Shortcuts for the windows a shop actually asks about. Plain links, so they are shareable and
 	// work with JavaScript off like every other filter here.
@@ -49,7 +83,16 @@
 <PageHeader
 	title="Dinero"
 	description="Lo cotizado, lo autorizado, lo facturado y lo que sí entró."
-/>
+>
+	{#snippet actions()}
+		{#if data.puede.crear}<Button href={searchHref(page.url, { drawer: "cotizar" })}
+				><FilePlus
+					size={18}
+					aria-hidden="true"
+				/>Nueva cotización</Button
+			>{/if}
+	{/snippet}
+</PageHeader>
 
 <Flash {form} />
 
@@ -341,7 +384,7 @@
 {:else if data.cotizaciones.length === 0}
 	<EmptyState
 		title="Sin cotizaciones en este periodo"
-		description="Cambia el rango de fechas, o crea una desde la nota de servicio de la unidad."
+		description="Cambia el rango de fechas, o crea una para un cliente incluso antes de agendar su unidad."
 	>
 		{#snippet icon()}<ReceiptText
 				size={40}
@@ -363,7 +406,10 @@
 	>
 		{#snippet row(c)}
 			<td class="px-4 py-2.5">
-				<span class="block font-medium text-sand-950">#{c.folio}</span>
+				<a
+					class="block font-medium text-brand-700 hover:underline"
+					href="/panel/cotizaciones/{c.id}">#{c.folio}</a
+				>
 				<span class="block text-xs text-sand-500">{dia(c.createdAt)}</span>
 			</td>
 			<td class="px-4 py-2.5">
@@ -381,7 +427,11 @@
 				<td class="px-4 py-2.5 tabular-nums text-sand-900">
 					{data.utilidades[c.id] ? formatoPesos(Number(data.utilidades[c.id]?.utilidad)) : "—"}
 				</td>
-				<td class="px-4 py-2.5 tabular-nums {(data.utilidades[c.id]?.margen ?? 0) < 0 ? 'text-danger' : 'text-sand-900'}">
+				<td
+					class="px-4 py-2.5 tabular-nums {(data.utilidades[c.id]?.margen ?? 0) < 0
+						? 'text-danger'
+						: 'text-sand-900'}"
+				>
 					{data.utilidades[c.id]?.margen != null ? `${data.utilidades[c.id]?.margen}%` : "—"}
 				</td>
 			{/if}
@@ -398,18 +448,29 @@
 						/>
 						Imprimir
 					</Button>
-					{#if c.notaId}
-						<Button
-							href="/panel/notas/{c.notaId}"
-							variant="ghost"
-							size="sm">Abrir</Button
-						>
-					{/if}
+					<Button
+						href="/panel/cotizaciones/{c.id}"
+						variant="ghost"
+						size="sm">Abrir</Button
+					>
 					{#if data.puede.enviarCotizacion && c.estado !== "borrador"}
-						<form method="POST" action="?/reenviarCotizacionCorreo">
-							<input type="hidden" name="cotizacionId" value={c.id} />
-							<Button variant="ghost" size="sm">
-								<Mail size={14} aria-hidden="true" />
+						<form
+							method="POST"
+							action="?/reenviarCotizacionCorreo"
+						>
+							<input
+								type="hidden"
+								name="cotizacionId"
+								value={c.id}
+							/>
+							<Button
+								variant="ghost"
+								size="sm"
+							>
+								<Mail
+									size={14}
+									aria-hidden="true"
+								/>
 								Reenviar correo
 							</Button>
 						</form>
@@ -418,6 +479,67 @@
 			</td>
 		{/snippet}
 	</DataTable>
+{/if}
+
+{#if drawer === "cotizar" && data.puede.crear}
+	<Drawer
+		title="Nueva cotización"
+		description="Para un cliente que todavía no tiene cita ni nota de servicio."
+		closeHref={searchHref(page.url, { drawer: null })}
+	>
+		<form
+			method="POST"
+			action="?/cotizar"
+			class="space-y-4"
+		>
+			<CotizacionDestinoPicker
+				clientes={data.clientes}
+				unidades={data.unidades}
+				clienteId={data.prefillCliente?.id ?? ""}
+				clienteNombre={data.prefillCliente?.nombre ?? ""}
+			/>
+			<ConceptosForm
+				bind:filas
+				productos={data.productos}
+				montoName="precioUnitario"
+				montoLabel="Precio unitario"
+				tipos={tiposConcepto}
+				formatoOpcion={formatoOpcionProducto}
+				onProducto={alElegirProducto}
+			/>
+			<dl class="rounded border border-sand-200 bg-sand-50 p-3 text-sm">
+				<div class="flex justify-between">
+					<dt class="text-sand-600">Subtotal</dt>
+					<dd>{formatoPesos(previa.subtotal)}</dd>
+				</div>
+				<div class="flex justify-between">
+					<dt class="text-sand-600">IVA</dt>
+					<dd>{formatoPesos(previa.iva)}</dd>
+				</div>
+				<div class="mt-1 flex justify-between border-t border-sand-200 pt-1 font-medium">
+					<dt>Total</dt>
+					<dd>{formatoPesos(previa.total)}</dd>
+				</div>
+			</dl>
+			<Field
+				label="Vigencia"
+				name="vigenciaHasta"
+				type="date"
+				hint="Opcional. Hasta cuándo se respeta el precio."
+			/>
+			<Field
+				label="Notas"
+				name="notas"
+				>{#snippet children(id)}<textarea
+						{id}
+						name="notas"
+						rows="2"
+						class={INPUT}
+					></textarea>{/snippet}</Field
+			>
+			<Button full>Guardar borrador</Button>
+		</form>
+	</Drawer>
 {/if}
 
 {#if totalPaginas > 1}

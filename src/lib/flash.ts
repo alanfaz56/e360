@@ -45,8 +45,9 @@ export const FLASH: Record<string, string> = {
 
 	// --- Dinero --------------------------------------------------------------------------------
 	"cotizacion.crear": "Cotización creada en borrador.",
+	"cotizacion.editar": "Cotización actualizada.",
 	"cotizacion.estado": "Respuesta del cliente registrada.",
-	"cotizacion.enviada": "Cotización marcada como enviada. Mándasela por WhatsApp.",
+	"cotizacion.enviada": "Cotización enviada y cliente avisado.",
 	"cotizacion.reenviar": "Correo reenviado.",
 	"cotizacion.interno": "Avance interno registrado.",
 	"cotizacion.surtir": "Refacciones surtidas del almacén.",

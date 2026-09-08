@@ -1,5 +1,4 @@
 import type { ServerLoad } from "@sveltejs/kit";
-import prisma from "$lib/prisma";
 import { getCotizacion, publicCotizacion } from "$lib/server/comercial";
 import { fallaEnCarga } from "$lib/server/errores";
 import { requirePermission } from "$lib/server/guard";
@@ -15,34 +14,27 @@ export const load: ServerLoad = async ({ locals, params }) => {
 	requirePermission(locals, "cotizacion:read");
 
 	try {
-		const cotizacion = publicCotizacion(await getCotizacion(params.id!));
-		const nota = await prisma.nota_servicio.findUnique({
-			where: { id: cotizacion.notaId },
-			select: {
-				folio: true,
-				cliente: { select: { nombreCompleto: true, rfc: true, direccion: true, telefono: true } },
-				unidad: { select: { marca: true, modelo: true, anio: true, placas: true } },
-			},
-		});
+		const fila = await getCotizacion(params.id!);
+		const cotizacion = publicCotizacion(fila);
 
 		return {
 			cotizacion,
 			cliente: {
-				nombre: nota?.cliente?.nombreCompleto ?? cotizacion.clienteNombre ?? "",
-				rfc: nota?.cliente?.rfc ?? null,
-				direccion: nota?.cliente?.direccion ?? null,
-				telefono: nota?.cliente?.telefono ?? null,
+				nombre: fila.cliente.nombreCompleto,
+				rfc: fila.cliente.rfc,
+				direccion: fila.cliente.direccion,
+				telefono: fila.cliente.telefono,
 			},
-			unidad: nota?.unidad
+			unidad: fila.unidad
 				? [
-						`${nota.unidad.marca} ${nota.unidad.modelo}`,
-						nota.unidad.anio ? String(nota.unidad.anio) : null,
-						nota.unidad.placas,
+						`${fila.unidad.marca} ${fila.unidad.modelo}`,
+						fila.unidad.anio ? String(fila.unidad.anio) : null,
+						fila.unidad.placas,
 					]
 						.filter(Boolean)
 						.join(" · ")
 				: null,
-			notaFolio: nota?.folio ?? null,
+			notaFolio: fila.nota?.folio ?? null,
 		};
 	} catch (err) {
 		fallaEnCarga(err);

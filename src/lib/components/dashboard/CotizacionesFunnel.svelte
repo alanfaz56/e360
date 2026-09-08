@@ -36,7 +36,8 @@
 		<DataTable columns={["Folio", "Cliente", "Unidad", "Importe", "Estado", "Días"]} items={data.pendientes}>
 			{#snippet row(c: (typeof data.pendientes)[number])}
 				<td class="px-4 py-2">
-					<a class="font-medium text-brand-700 hover:underline" href="/panel/notas/{c.notaId}">#{c.folio}</a>
+					<a class="font-medium text-brand-700 hover:underline" href="/panel/cotizaciones/{c.id}">#{c.folio}</a>
+					{#if c.notaFolio}<span class="block text-xs text-sand-500">Nota #{c.notaFolio}</span>{/if}
 				</td>
 				<td class="px-4 py-2 text-sand-700">{c.cliente}</td>
 				<td class="px-4 py-2 text-sand-600">{c.unidad}</td>

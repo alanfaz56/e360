@@ -38,8 +38,16 @@
 	// id is a JS enhancement only: an exact match to a suggestion links the record; nothing here
 	// is required, so a no-JS submit still posts a fine `entregoNombre`.
 	let entregoContactoId = $state("");
+	let entregoTelefono = $state("");
 	function alEscribirEntrego(e: Event & { currentTarget: HTMLInputElement }) {
-		entregoContactoId = data.contactos.find((ct) => ct.nombre === e.currentTarget.value)?.id ?? "";
+		const contacto = data.contactos.find((ct) => ct.nombre === e.currentTarget.value);
+		entregoContactoId = contacto?.id ?? "";
+		// Selecting a registered name fills its saved phone; a phone edited afterwards remains until
+		// the operator explicitly chooses another registered contact.
+		if (contacto) entregoTelefono = contacto.telefono ?? "";
+	}
+	function alEditarEntregoTelefono(e: Event & { currentTarget: HTMLInputElement }) {
+		entregoTelefono = e.currentTarget.value;
 	}
 
 	// "recibida" asks first whether the unit showed up — reset every time the drawer reopens, so a
@@ -48,6 +56,8 @@
 	$effect(() => {
 		drawer;
 		recibioUnidad = null;
+		entregoContactoId = "";
+		entregoTelefono = "";
 	});
 
 	const INPUT =
@@ -604,6 +614,8 @@
 						label="Teléfono"
 						name="entregoTelefono"
 						type="tel"
+						value={entregoTelefono}
+						oninput={alEditarEntregoTelefono}
 					/>
 				</div>
 				<p class="mt-2 text-xs text-sand-500">

@@ -130,10 +130,11 @@
 				<li><Badge tone="danger">Cancelada</Badge> — se canceló, con motivo.</li>
 			</ul>
 			<p>
-				Todo lo demás cuelga de la nota: sus cotizaciones, sus facturas o notas de venta, las
+				El trabajo del vehículo cuelga de la nota: sus facturas o notas de venta, las
 				estimaciones internas, las refacciones que se surtieron del almacén, los comentarios
 				(internos o visibles al cliente) y la liga de seguimiento que se le manda por WhatsApp
-				para que vea el estatus sin necesidad de cuenta.
+				para que vea el estatus sin necesidad de cuenta. Una cotización también puede nacer antes,
+				ligada directamente al cliente, y seguir a la cita y a la nota cuando el vehículo ingrese.
 			</p>
 		</div>
 	</details>
@@ -148,6 +149,14 @@
 			<span class="text-sand-400 group-open:rotate-180">▾</span>
 		</summary>
 		<div class="mt-3 space-y-3 text-sm text-sand-700">
+			<p>
+				Para promociones o trabajos que todavía no llegan al taller, crea la cotización desde
+				<strong>Dinero</strong> o desde la ficha del cliente. El cliente es obligatorio y la unidad es
+				opcional. Desde su liga, el cliente solicita autorizar o rechazar; la cotización permanece
+				<strong>Enviada</strong> hasta que un usuario confirme la respuesta. Después de confirmarla,
+				<strong>Agendar servicio</strong> crea la cita; al recibirla, la misma cotización queda ligada
+				automáticamente a la nota.
+			</p>
 			<p>Una cotización tiene DOS estados corriendo al mismo tiempo, y responden preguntas distintas:</p>
 			<ul class="ml-4 list-disc space-y-1">
 				<li>
@@ -174,6 +183,11 @@
 				compra a proveedor</strong> — cada renglón queda ligado a esa compra, y quien tiene
 				permiso de inventario puede ver de qué compra vino cada uno directamente en la
 				cotización.
+			</p>
+			<p>
+				Los costos internos se pueden seguir agregando y aprobando después de liberar o entregar la
+				unidad, porque pueden llegar facturas o gastos tardíos. Esto actualiza la rentabilidad sin reabrir
+				el trabajo operativo; únicamente las notas canceladas rechazan gastos nuevos.
 			</p>
 		</div>
 	</details>

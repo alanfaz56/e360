@@ -673,6 +673,42 @@ export async function crearCita(input: { actor: Actor; body: Record<string, unkn
 		},
 	);
 
+	// "Agendar" from a pre-arrival quote carries this id. The form may still be edited, so validate
+	// the submitted customer/unit against the quote instead of assuming the URL prefill survived.
+	const cotizacionId = trim(input.body.cotizacionId);
+	if (cotizacionId && !can(input.actor.role, "cotizacion:read")) {
+		throw new ClienteError(403, "Sin permiso: cotizacion:read");
+	}
+	const cotizacion = cotizacionId
+		? await prisma.cotizacion.findUnique({
+				where: { id: cotizacionId },
+				select: {
+					id: true,
+					folio: true,
+					estado: true,
+					clienteId: true,
+					unidadId: true,
+					citaId: true,
+					notaId: true,
+				},
+			})
+		: null;
+	if (cotizacionId && !cotizacion) throw new ClienteError(404, "Cotización no encontrada");
+	if (cotizacion) {
+		if (cotizacion.estado !== "autorizada") {
+			throw new ClienteError(409, "Autoriza la cotización antes de agendarla.");
+		}
+		if (cotizacion.citaId || cotizacion.notaId) {
+			throw new ClienteError(409, "Esa cotización ya está ligada a una cita o nota.");
+		}
+		if (cotizacion.clienteId !== clienteId) {
+			throw new ClienteError(400, "La cita debe conservar el cliente de la cotización.");
+		}
+		if (cotizacion.unidadId && cotizacion.unidadId !== unidadId) {
+			throw new ClienteError(400, "La cita debe conservar la unidad de la cotización.");
+		}
+	}
+
 	// The free-text snapshot mirrors what was linked, so the row still reads correctly even if
 	// the customer is renamed or the vehicle is transferred later.
 	const contacto = leerDatosContacto({
@@ -710,13 +746,40 @@ export async function crearCita(input: { actor: Actor; body: Record<string, unkn
 			include: INCLUDE,
 		});
 
+		if (cotizacion) {
+			// Claim the still-unlinked quote inside the same transaction as the appointment. Two tabs
+			// cannot schedule it twice, and a failed link cannot leave an unrelated cita behind.
+			const ligada = await tx.cotizacion.updateMany({
+				where: { id: cotizacion.id, citaId: null, notaId: null },
+				data: { citaId: creada.id, unidadId },
+			});
+			if (ligada.count !== 1) throw new ClienteError(409, "Esa cotización ya fue agendada.");
+			await recordAudit(tx, {
+				action: "cotizacion.update",
+				actor: input.actor,
+				entityId: cotizacion.id,
+				entityLabel: `Cotización #${cotizacion.folio}`,
+				summary: `Cotización #${cotizacion.folio} ligada a la cita #${creada.folio}`,
+				before: { citaId: null, unidadId: cotizacion.unidadId },
+				after: { citaId: creada.id, unidadId },
+			});
+		}
+
 		await recordAudit(tx, {
 			action: "cita.create",
 			actor: input.actor,
 			entityId: creada.id,
 			entityLabel: citaLabel(creada),
 			summary: `Cita creada para ${creada.cliente?.nombreCompleto ?? creada.nombre} el ${creada.fecha.toISOString().slice(0, 10)}`,
-			after: { inicio: inicio.toISOString(), fin: fin.toISOString(), tipo, clienteId, unidadId, asignadoId },
+			after: {
+				inicio: inicio.toISOString(),
+				fin: fin.toISOString(),
+				tipo,
+				clienteId,
+				unidadId,
+				asignadoId,
+				cotizacionId,
+			},
 		});
 
 		return creada;

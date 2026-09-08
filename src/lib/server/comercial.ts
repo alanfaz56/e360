@@ -36,7 +36,7 @@ import { diasEntre, enZona, fechaEnZona, hoy, parseFecha, sumarDias } from "$lib
 import { consumirFifo } from "./inventario";
 import { recordAudit } from "./audit";
 import { ClienteError, trim } from "./clientes";
-import { avisarClienteDeNota, notificar } from "./notificaciones";
+import { avisarClienteDeNota, notificar, nuevoTokenSeguimiento } from "./notificaciones";
 import { pageMeta, parsePageParams, skipFor, type PageParams } from "./paginate";
 import { tallerMencionado } from "./talleres";
 import type { Actor } from "./guard";
@@ -75,7 +75,12 @@ const COTIZACION_INCLUDE = {
 			entrada: { select: { folio: true, proveedor: true, cfdiUuid: true, cfdiEmisorNombre: true } },
 		},
 	},
-	nota: { select: { folio: true, clienteId: true, cliente: { select: { nombreCompleto: true, tipo: true } } } },
+	cliente: {
+		select: { id: true, nombreCompleto: true, tipo: true, rfc: true, direccion: true, telefono: true },
+	},
+	unidad: { select: { id: true, marca: true, modelo: true, anio: true, placas: true } },
+	cita: { select: { id: true, folio: true } },
+	nota: { select: { folio: true, clienteId: true } },
 	autorizadaPorContacto: { select: { nombre: true } },
 	creadaPor: { select: { name: true } },
 } satisfies Prisma.cotizacionInclude;
@@ -100,7 +105,18 @@ export const publicCotizacion = (c: CotizacionRow) => {
 		folio: c.folio,
 		notaId: c.notaId,
 		notaFolio: c.nota?.folio ?? null,
-		clienteNombre: c.nota?.cliente?.nombreCompleto ?? null,
+		clienteId: c.clienteId,
+		clienteNombre: c.cliente.nombreCompleto,
+		clienteTipo: c.cliente.tipo,
+		unidadId: c.unidadId,
+		unidad: c.unidad
+			? [`${c.unidad.marca} ${c.unidad.modelo}`, c.unidad.anio ? String(c.unidad.anio) : null, c.unidad.placas]
+					.filter(Boolean)
+					.join(" · ")
+			: null,
+		citaId: c.citaId,
+		citaFolio: c.cita?.folio ?? null,
+		seguimientoToken: c.seguimientoToken,
 		estado: c.estado,
 		estadoLabel: vencida ? cotizacionEstadoLabel("vencida") : cotizacionEstadoLabel(c.estado),
 		// The shop's own track, alongside the customer's. Two axes, two columns — see COTIZACION_INTERNOS.
@@ -117,6 +133,7 @@ export const publicCotizacion = (c: CotizacionRow) => {
 		autorizadaMedio: c.autorizadaMedio,
 		autorizadaAt: c.autorizadaAt?.toISOString() ?? null,
 		rechazadaMotivo: c.rechazadaMotivo,
+		autorizacionSolicitadaAt: c.autorizacionSolicitadaAt?.toISOString() ?? null,
 		// The customer asked to reject it and is waiting on the shop to confirm. Not an `estado`:
 		// see `solicitarRechazoCotizacion`.
 		rechazoSolicitadoAt: c.rechazoSolicitadoAt?.toISOString() ?? null,
@@ -149,6 +166,41 @@ export const publicCotizacion = (c: CotizacionRow) => {
 	};
 };
 
+/**
+ * Customer-safe projection for the standalone token page. Keep this separate from the staff DTO:
+ * page data is serialized to the browser, even when a field is not rendered by the component.
+ */
+export const publicCotizacionCliente = (c: CotizacionRow) => {
+	const vencida = cotizacionVencida(c.estado, c.vigenciaHasta);
+	return {
+		folio: c.folio,
+		clienteNombre: c.cliente.nombreCompleto,
+		unidad: c.unidad
+			? [`${c.unidad.marca} ${c.unidad.modelo}`, c.unidad.anio ? String(c.unidad.anio) : null, c.unidad.placas]
+					.filter(Boolean)
+					.join(" · ")
+			: null,
+		estado: c.estado,
+		estadoLabel: vencida ? cotizacionEstadoLabel("vencida") : cotizacionEstadoLabel(c.estado),
+		subtotal: monto(c.subtotal),
+		iva: monto(c.iva),
+		total: monto(c.total),
+		vigenciaHasta: c.vigenciaHasta?.toISOString() ?? null,
+		notas: c.notas,
+		autorizacionSolicitadaAt: c.autorizacionSolicitadaAt?.toISOString() ?? null,
+		rechazoSolicitadoAt: c.rechazoSolicitadoAt?.toISOString() ?? null,
+		rechazoSolicitadoMotivo: c.rechazoSolicitadoMotivo,
+		conceptos: c.conceptos.map((x) => ({
+			id: x.id,
+			tipoLabel: conceptoTipoLabel(x.tipo),
+			descripcion: x.descripcion,
+			cantidad: x.cantidad.toFixed(2),
+			precioUnitario: monto(x.precioUnitario),
+			importe: monto(x.importe),
+		})),
+	};
+};
+
 export async function getCotizacion(id: string) {
 	const cotizacion = await prisma.cotizacion.findUnique({ where: { id }, include: COTIZACION_INCLUDE });
 	if (!cotizacion) throw new ClienteError(404, "Cotización no encontrada");
@@ -158,6 +210,7 @@ export async function getCotizacion(id: string) {
 export async function listCotizaciones(
 	query: {
 		notaId?: string | null;
+		clienteId?: string | null;
 		estado?: string | null;
 		estadoInterno?: string | null;
 		desde?: string | null;
@@ -177,6 +230,7 @@ export async function listCotizaciones(
 	const ocultar = query.ocultarRechazadas && query.estado !== "rechazada";
 	const where: Prisma.cotizacionWhereInput = {
 		...(query.notaId ? { notaId: query.notaId } : {}),
+		...(query.clienteId ? { clienteId: query.clienteId } : {}),
 		...(isCotizacionEstado(query.estado) ? { estado: query.estado } : {}),
 		...(ocultar ? { estado: { not: "rechazada" } } : {}),
 		...(isCotizacionInterno(query.estadoInterno) ? { estadoInterno: query.estadoInterno } : {}),
@@ -414,7 +468,12 @@ const conImportes = <T extends { cantidad: number; precioUnitario: bigint }>(con
 
 export async function crearCotizacion(input: {
 	actor: Actor;
-	notaId: string;
+	/** Existing note flow supplies this; pre-arrival quotes deliberately do not. */
+	notaId?: string | null;
+	/** Required when there is no note. When there is one, its customer remains authoritative. */
+	clienteId?: string | null;
+	/** Optional vehicle for a promotion or estimate made before the appointment. */
+	unidadId?: string | null;
 	body: Record<string, unknown>;
 	/** Set only when this cotización is being seeded from an imported purchase. */
 	entradaId?: string;
@@ -423,12 +482,48 @@ export async function crearCotizacion(input: {
 		throw new ClienteError(403, "Sin permiso: cotizacion:create");
 	}
 
-	const nota = await prisma.nota_servicio.findUnique({
-		where: { id: input.notaId },
-		select: { id: true, folio: true, estado: true },
+	const notaId = trim(input.notaId);
+	const nota = notaId
+		? await prisma.nota_servicio.findUnique({
+				where: { id: notaId },
+				select: { id: true, folio: true, estado: true, clienteId: true, unidadId: true, citaId: true },
+			})
+		: null;
+	if (notaId && !nota) throw new ClienteError(404, "Nota de servicio no encontrada");
+	if (nota?.estado === "cancelada") throw new ClienteError(409, "Una nota cancelada ya no se cotiza.");
+
+	let clienteId = trim(input.clienteId);
+	let unidadId = trim(input.unidadId);
+	if (nota) {
+		if (clienteId && clienteId !== nota.clienteId) {
+			throw new ClienteError(400, "La nota pertenece a otro cliente.");
+		}
+		if (unidadId && unidadId !== nota.unidadId) {
+			throw new ClienteError(400, "La nota pertenece a otra unidad.");
+		}
+		clienteId = nota.clienteId;
+		unidadId = nota.unidadId;
+	}
+	if (!clienteId) throw new ClienteError(400, "Falta el cliente");
+
+	const cliente = await prisma.cliente.findUnique({
+		where: { id: clienteId },
+		select: { id: true, nombreCompleto: true, archivedAt: true },
 	});
-	if (!nota) throw new ClienteError(404, "Nota de servicio no encontrada");
-	if (nota.estado === "cancelada") throw new ClienteError(409, "Una nota cancelada ya no se cotiza.");
+	if (!cliente) throw new ClienteError(404, "Cliente no encontrado");
+	if (cliente.archivedAt) throw new ClienteError(409, "Ese cliente está archivado.");
+
+	if (unidadId) {
+		const unidad = await prisma.unidad.findUnique({
+			where: { id: unidadId },
+			select: { clienteId: true, archivedAt: true },
+		});
+		if (!unidad) throw new ClienteError(404, "Unidad no encontrada");
+		if (unidad.clienteId !== clienteId) {
+			throw new ClienteError(400, "Esa unidad no pertenece al cliente seleccionado");
+		}
+		if (unidad.archivedAt) throw new ClienteError(409, "Esa unidad está archivada.");
+	}
 
 	const conceptos = conImportes(await resolverProductos(leerConceptos(input.body.conceptos)));
 	await exigirSinTaller(conceptos);
@@ -439,7 +534,12 @@ export async function crearCotizacion(input: {
 		const creada = await tx.cotizacion.create({
 			data: {
 				id: randomUUID(),
-				notaId: nota.id,
+				clienteId,
+				unidadId,
+				citaId: nota?.citaId ?? null,
+				notaId: nota?.id ?? null,
+				// This credential belongs to the quote, so it works before a nota has its own token.
+				seguimientoToken: nuevoTokenSeguimiento(),
 				estado: "borrador",
 				subtotal: dec(subtotal),
 				iva: dec(iva),
@@ -473,9 +573,13 @@ export async function crearCotizacion(input: {
 			action: "cotizacion.create",
 			actor: input.actor,
 			entityId: creada.id,
-			entityLabel: `Cotización #${creada.folio} (nota #${nota.folio})`,
-			summary: `Cotización #${creada.folio} por ${pesos(total)} en la nota #${nota.folio}`,
-			after: { total: pesos(total), conceptos: conceptos.length },
+			entityLabel: nota
+				? `Cotización #${creada.folio} (nota #${nota.folio})`
+				: `Cotización #${creada.folio} (${cliente.nombreCompleto})`,
+			summary: nota
+				? `Cotización #${creada.folio} por ${pesos(total)} en la nota #${nota.folio}`
+				: `Cotización #${creada.folio} por ${pesos(total)} para ${cliente.nombreCompleto}, antes de agenda`,
+			after: { total: pesos(total), conceptos: conceptos.length, clienteId, unidadId, notaId: nota?.id ?? null },
 		});
 
 		return creada;
@@ -633,6 +737,28 @@ function leerFechaOpcional(value: unknown): Date | null {
 	return d;
 }
 
+/**
+ * Deliver quote news through its own unguessable customer page whenever possible. Historical
+ * quotes without an independent token fall back to their nota's established tracking page. Both
+ * paths address the stored customer; neither trusts a customer id supplied by the caller.
+ */
+async function avisarClienteDeCotizacion(
+	cotizacion: { id: string; notaId: string | null; clienteId: string; seguimientoToken: string | null },
+	aviso: { evento: "cliente_cotizacion" | "cliente_avance"; titulo: string; cuerpo: string },
+) {
+	if (!cotizacion.seguimientoToken && cotizacion.notaId) {
+		await avisarClienteDeNota(cotizacion.notaId, aviso);
+		return;
+	}
+	await notificar({
+		...aviso,
+		destino: { clienteId: cotizacion.clienteId },
+		url: cotizacion.seguimientoToken ? `/cotizacion/${cotizacion.seguimientoToken}` : null,
+		entidad: "cotizacion",
+		entidadId: cotizacion.id,
+	});
+}
+
 /** Move a quote along. Sending needs `cotizacion:send`; recording the answer does not. */
 export async function cambiarEstadoCotizacion(input: {
 	actor: Actor;
@@ -657,9 +783,10 @@ export async function cambiarEstadoCotizacion(input: {
 	const body = input.body ?? {};
 	const data: Prisma.cotizacionUpdateInput = { estado: destino as CotizacionEstado };
 
-	// The customer's pending request is answered now, whichever way it went — clear it so the quote
-	// does not keep advertising a decision the shop has already made.
+	// The customer's pending request is answered now, whichever way it went — clear both mutually
+	// exclusive intents so the quote does not keep advertising an already-resolved decision.
 	if (destino === "autorizada" || destino === "rechazada") {
+		data.autorizacionSolicitadaAt = null;
 		data.rechazoSolicitadoAt = null;
 		data.rechazoSolicitadoMotivo = null;
 	}
@@ -682,7 +809,7 @@ export async function cambiarEstadoCotizacion(input: {
 				select: { clienteId: true, roles: true, nombre: true, archivedAt: true },
 			});
 			if (!contacto) throw new ClienteError(404, "Contacto no encontrado");
-			if (contacto.clienteId !== current.nota.clienteId) {
+			if (contacto.clienteId !== current.clienteId) {
 				throw new ClienteError(400, "Ese contacto pertenece a otro cliente");
 			}
 			if (contacto.archivedAt) throw new ClienteError(409, "Ese contacto está archivado.");
@@ -693,7 +820,7 @@ export async function cambiarEstadoCotizacion(input: {
 				);
 			}
 			data.autorizadaPorContacto = { connect: { id: contactoId } };
-		} else if (current.nota.cliente?.tipo === "organizacion") {
+		} else if (current.cliente.tipo === "organizacion") {
 			throw new ClienteError(
 				400,
 				"Una organización no autoriza por sí misma: indica qué contacto con rol de Autorizador aprobó.",
@@ -732,17 +859,17 @@ export async function cambiarEstadoCotizacion(input: {
 	});
 
 	if (destino === "enviada") {
-		await avisarClienteDeNota(cotizacion.notaId, {
+		await avisarClienteDeCotizacion(cotizacion, {
 			evento: "cliente_cotizacion",
 			titulo: "Tu cotización está lista",
-			cuerpo: `Cotización #${cotizacion.folio} por $${monto(cotizacion.total)}. Ábrela para autorizarla o rechazarla.`,
+			cuerpo: `Cotización #${cotizacion.folio} por $${monto(cotizacion.total)}. Ábrela para revisarla y solicitar autorización o rechazo; un asesor confirmará tu respuesta.`,
 		});
 	} else if (destino === "autorizada" || destino === "rechazada") {
 		// Close the loop on the customer's own timeline. Without this, "Ábrela para autorizarla o
 		// rechazarla" stays the newest thing on their Avance forever — an open question they have
 		// already answered. `cliente_avance` on purpose: no email, no priority push, because this
 		// is an echo of what they just did, not news.
-		await avisarClienteDeNota(cotizacion.notaId, {
+		await avisarClienteDeCotizacion(cotizacion, {
 			evento: "cliente_avance",
 			titulo: destino === "autorizada" ? "Autorizaste la cotización" : "Rechazaste la cotización",
 			cuerpo:
@@ -757,10 +884,10 @@ export async function cambiarEstadoCotizacion(input: {
 			evento: "cotizacion_respondida",
 			destino: { difusion: true },
 			titulo: destino === "autorizada" ? "Cotización autorizada" : "Cotización rechazada",
-			cuerpo: `#${cotizacion.folio} · $${monto(cotizacion.total)} — ${cotizacion.nota.cliente.nombreCompleto}`,
-			url: `/panel/notas/${cotizacion.notaId}`,
-			entidad: "nota",
-			entidadId: cotizacion.notaId,
+			cuerpo: `#${cotizacion.folio} · $${monto(cotizacion.total)} — ${cotizacion.cliente.nombreCompleto}`,
+			url: `/panel/cotizaciones/${cotizacion.id}`,
+			entidad: "cotizacion",
+			entidadId: cotizacion.id,
 			excepto: input.actor.id,
 		});
 	}
@@ -797,27 +924,7 @@ export async function solicitarRechazoCotizacion(input: { notaId: string; folio:
 	if (current.estado !== "enviada") {
 		throw new ClienteError(409, "Esta cotización ya no está esperando tu respuesta.");
 	}
-
-	const motivo = trim(input.motivo, 500, "El motivo") || null;
-
-	const cotizacion = await prisma.cotizacion.update({
-		where: { id: current.id },
-		data: { rechazoSolicitadoAt: new Date(), rechazoSolicitadoMotivo: motivo },
-		include: COTIZACION_INCLUDE,
-	});
-
-	// Staff need to see this to act on it — same broadcast the answer itself uses.
-	await notificar({
-		evento: "cotizacion_respondida",
-		destino: { difusion: true },
-		titulo: "El cliente quiere rechazar una cotización",
-		cuerpo: `#${cotizacion.folio} · $${monto(cotizacion.total)} — ${cotizacion.nota.cliente.nombreCompleto}${motivo ? `: ${motivo}` : ""}`,
-		url: `/panel/notas/${cotizacion.notaId}`,
-		entidad: "nota",
-		entidadId: cotizacion.notaId,
-	});
-
-	return publicCotizacion(cotizacion);
+	return registrarSolicitudRechazo(current, input.motivo);
 }
 
 /** The customer changes their mind before the shop has confirmed. Same token scoping as above. */
@@ -827,18 +934,128 @@ export async function cancelarRechazoCotizacion(input: { notaId: string; folio: 
 
 	const current = await prisma.cotizacion.findFirst({
 		where: { folio, notaId: input.notaId },
-		select: { id: true, estado: true },
+		include: COTIZACION_INCLUDE,
 	});
 	if (!current) throw new ClienteError(404, "Cotización no encontrada");
 	if (current.estado !== "enviada") {
 		throw new ClienteError(409, "Esta cotización ya no está esperando tu respuesta.");
 	}
 
-	const cotizacion = await prisma.cotizacion.update({
-		where: { id: current.id },
-		data: { rechazoSolicitadoAt: null, rechazoSolicitadoMotivo: null },
+	return cancelarSolicitudRechazo(current);
+}
+
+/** Read the one quote named by its independent customer credential. Drafts are staff-only. */
+export async function cotizacionPorToken(token: string) {
+	if (!token || token.length < 32) throw new ClienteError(404, "Cotización no encontrada");
+	const current = await prisma.cotizacion.findUnique({
+		where: { seguimientoToken: token },
 		include: COTIZACION_INCLUDE,
 	});
+	if (!current || current.estado === "borrador") throw new ClienteError(404, "Cotización no encontrada");
+	return current;
+}
+
+/** Standalone equivalent of the nota-token rejection path, scoped by the quote token itself. */
+export async function solicitarRechazoCotizacionPorToken(token: string, motivo?: unknown) {
+	const current = await cotizacionPorToken(token);
+	if (current.estado !== "enviada") {
+		throw new ClienteError(409, "Esta cotización ya no está esperando tu respuesta.");
+	}
+	return registrarSolicitudRechazo(current, motivo);
+}
+
+/** Undo a still-pending rejection request from the quote's own public page. */
+export async function cancelarRechazoCotizacionPorToken(token: string) {
+	const current = await cotizacionPorToken(token);
+	if (current.estado !== "enviada") {
+		throw new ClienteError(409, "Esta cotización ya no está esperando tu respuesta.");
+	}
+	return cancelarSolicitudRechazo(current);
+}
+
+/** Public-link approval is only a request; an authenticated user performs the real transition. */
+export async function solicitarAutorizacionCotizacionPorToken(token: string) {
+	const current = await cotizacionPorToken(token);
+	if (current.estado !== "enviada") {
+		throw new ClienteError(409, "Esta cotización ya no está esperando tu respuesta.");
+	}
+
+	// Include the still-pending state in the write itself: if staff resolves it between the read
+	// above and this click, the public request must not reappear on a closed quote.
+	const aplicada = await prisma.cotizacion.updateMany({
+		where: { id: current.id, estado: "enviada" },
+		data: {
+			autorizacionSolicitadaAt: new Date(),
+			// A quote cannot be pending approval and rejection at the same time. The newest explicit
+			// choice wins, while neither choice changes the authoritative state by itself.
+			rechazoSolicitadoAt: null,
+			rechazoSolicitadoMotivo: null,
+		},
+	});
+	if (aplicada.count !== 1) throw new ClienteError(409, "Esta cotización ya fue respondida.");
+	const cotizacion = await getCotizacion(current.id);
+
+	await notificar({
+		evento: "cotizacion_respondida",
+		destino: { difusion: true },
+		titulo: "El cliente quiere autorizar una cotización",
+		cuerpo: `#${cotizacion.folio} · $${monto(cotizacion.total)} — ${cotizacion.cliente.nombreCompleto}`,
+		url: `/panel/cotizaciones/${cotizacion.id}`,
+		entidad: "cotizacion",
+		entidadId: cotizacion.id,
+	});
+	return publicCotizacion(cotizacion);
+}
+
+/** Withdraw a public approval request while staff have not confirmed it. */
+export async function cancelarAutorizacionCotizacionPorToken(token: string) {
+	const current = await cotizacionPorToken(token);
+	if (current.estado !== "enviada") {
+		throw new ClienteError(409, "Esta cotización ya no está esperando tu respuesta.");
+	}
+	const aplicada = await prisma.cotizacion.updateMany({
+		where: { id: current.id, estado: "enviada" },
+		data: { autorizacionSolicitadaAt: null },
+	});
+	if (aplicada.count !== 1) throw new ClienteError(409, "Esta cotización ya fue respondida.");
+	const cotizacion = await getCotizacion(current.id);
+	return publicCotizacion(cotizacion);
+}
+
+async function registrarSolicitudRechazo(current: CotizacionRow, motivoInput: unknown) {
+	const motivo = trim(motivoInput, 500, "El motivo") || null;
+	const aplicada = await prisma.cotizacion.updateMany({
+		where: { id: current.id, estado: "enviada" },
+		data: {
+			autorizacionSolicitadaAt: null,
+			rechazoSolicitadoAt: new Date(),
+			rechazoSolicitadoMotivo: motivo,
+		},
+	});
+	if (aplicada.count !== 1) throw new ClienteError(409, "Esta cotización ya fue respondida.");
+	const cotizacion = await getCotizacion(current.id);
+
+	// Staff need to see this to act on it — link to the quote itself because a pre-arrival quote has
+	// no nota screen, and the same destination also works for ordinary note-backed quotes.
+	await notificar({
+		evento: "cotizacion_respondida",
+		destino: { difusion: true },
+		titulo: "El cliente quiere rechazar una cotización",
+		cuerpo: `#${cotizacion.folio} · $${monto(cotizacion.total)} — ${cotizacion.cliente.nombreCompleto}${motivo ? `: ${motivo}` : ""}`,
+		url: `/panel/cotizaciones/${cotizacion.id}`,
+		entidad: "cotizacion",
+		entidadId: cotizacion.id,
+	});
+	return publicCotizacion(cotizacion);
+}
+
+async function cancelarSolicitudRechazo(current: CotizacionRow) {
+	const aplicada = await prisma.cotizacion.updateMany({
+		where: { id: current.id, estado: "enviada" },
+		data: { rechazoSolicitadoAt: null, rechazoSolicitadoMotivo: null },
+	});
+	if (aplicada.count !== 1) throw new ClienteError(409, "Esta cotización ya fue respondida.");
+	const cotizacion = await getCotizacion(current.id);
 	return publicCotizacion(cotizacion);
 }
 
@@ -856,10 +1073,10 @@ export async function reenviarCotizacionCorreo(input: { actor: Actor; id: string
 		throw new ClienteError(409, "Esta cotización todavía no se ha enviado.");
 	}
 
-	await avisarClienteDeNota(current.notaId, {
+	await avisarClienteDeCotizacion(current, {
 		evento: "cliente_cotizacion",
 		titulo: "Tu cotización está lista",
-		cuerpo: `Cotización #${current.folio} por $${monto(current.total)}. Ábrela para autorizarla o rechazarla.`,
+		cuerpo: `Cotización #${current.folio} por $${monto(current.total)}. Ábrela para revisarla y solicitar autorización o rechazo; un asesor confirmará tu respuesta.`,
 	});
 
 	await recordAudit(prisma, {
@@ -1012,8 +1229,11 @@ async function cargarNotaParaCosto(notaId: string) {
 		select: { id: true, folio: true, estado: true },
 	});
 	if (!nota) throw new ClienteError(404, "Nota de servicio no encontrada");
-	if (nota.estado === "cancelada" || nota.estado === "entregada") {
-		throw new ClienteError(409, "Esa nota ya está cerrada.");
+	// Delivering the vehicle closes operational work, not cost capture. Supplier invoices, towing,
+	// commissions and other late expenses can arrive afterwards and must still affect the note's
+	// real margin. A cancelled note is the only one that cannot receive a new internal cost.
+	if (nota.estado === "cancelada") {
+		throw new ClienteError(409, "Una nota cancelada no puede recibir gastos.");
 	}
 	return nota;
 }
@@ -1711,8 +1931,8 @@ export async function crearFactura(input: { actor: Actor; body: Record<string, u
 		});
 		if (yaFacturada > 0) throw new ClienteError(409, "Esa cotización ya está facturada.");
 
-		notaId ??= cotizacion.notaId;
-		clienteId ??= cotizacion.nota.clienteId;
+		if (!notaId && cotizacion.notaId) notaId = cotizacion.notaId;
+		clienteId ??= cotizacion.clienteId;
 		subtotal = aCentavos(cotizacion.subtotal);
 		iva = aCentavos(cotizacion.iva);
 		total = aCentavos(cotizacion.total);
@@ -2103,8 +2323,8 @@ export async function crearNotaVenta(input: { actor: Actor; body: Record<string,
 		const yaNotaVenta = await prisma.nota_venta.count({ where: { cotizacionId, estado: { not: "cancelada" } } });
 		if (yaNotaVenta > 0) throw new ClienteError(409, "Esa cotización ya tiene una nota de venta.");
 
-		notaId ??= cotizacion.notaId;
-		clienteId ??= cotizacion.nota.clienteId;
+		if (!notaId && cotizacion.notaId) notaId = cotizacion.notaId;
+		clienteId ??= cotizacion.clienteId;
 		// No IVA on a nota de venta: the customer pays the quote's SUBTOTAL, tax is added only if
 		// this later gets promoted to a real factura.
 		total = aCentavos(cotizacion.subtotal);

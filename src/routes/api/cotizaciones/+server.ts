@@ -1,6 +1,7 @@
-import { json, type RequestHandler } from "@sveltejs/kit";
-import { requirePermission } from "$lib/server/guard";
-import { listCotizaciones } from "$lib/server/comercial";
+import { error, json, type RequestHandler } from "@sveltejs/kit";
+import { requirePermission, requireUser } from "$lib/server/guard";
+import { ClienteError } from "$lib/server/clientes";
+import { crearCotizacion, listCotizaciones, publicCotizacion } from "$lib/server/comercial";
 
 /**
  * GET /api/cotizaciones — quotes across every job. Permission: `cotizacion:read`.
@@ -15,10 +16,32 @@ export const GET: RequestHandler = async ({ locals, url }) => {
 	return json(
 		await listCotizaciones({
 			notaId: url.searchParams.get("notaId"),
+			clienteId: url.searchParams.get("clienteId"),
 			estado: url.searchParams.get("estado"),
 			estadoInterno: url.searchParams.get("estadoInterno"),
 			page: Number(url.searchParams.get("page") ?? 1) || 1,
 			perPage: Math.min(Number(url.searchParams.get("perPage") ?? 25) || 25, 100),
 		}),
 	);
+};
+
+/**
+ * POST /api/cotizaciones — draft a pre-arrival quote owned directly by a customer.
+ * Body: { clienteId, unidadId?, conceptos, vigenciaHasta?, notas? }.
+ */
+export const POST: RequestHandler = async ({ locals, request }) => {
+	const actor = requireUser(locals);
+	const body = ((await request.json().catch(() => null)) ?? {}) as Record<string, unknown>;
+	try {
+		const cotizacion = await crearCotizacion({
+			actor,
+			clienteId: typeof body.clienteId === "string" ? body.clienteId : null,
+			unidadId: typeof body.unidadId === "string" ? body.unidadId : null,
+			body,
+		});
+		return json({ cotizacion: publicCotizacion(cotizacion) }, { status: 201 });
+	} catch (err) {
+		if (err instanceof ClienteError) error(err.status, err.message);
+		throw err;
+	}
 };

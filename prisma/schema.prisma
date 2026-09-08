@@ -243,6 +243,7 @@ model cliente {
   notasServicio nota_servicio[]
   facturas      factura[]
   notasVenta    nota_venta[]
+  cotizaciones  cotizacion[]
   recordatorios recordatorio[]
 
   notificaciones      notificacion[]         @relation("notificacionCliente")
@@ -362,6 +363,7 @@ model unidad {
   notasServicio nota_servicio[]
   lecturasKm    unidad_kilometraje[]
   recordatorios recordatorio[]
+  cotizaciones  cotizacion[]
 
   @@index([clienteId])
   @@index([placas])
@@ -466,6 +468,7 @@ model cita {
   completadoSinNotaMotivo String? @db.VarChar(255)
 
   recordatorios recordatorio[]
+  cotizaciones  cotizacion[]
 
   createdAt DateTime       @default(now())
   updatedAt DateTime       @updatedAt
@@ -939,10 +942,28 @@ model recordatorio {
 /// A quote for the work. Editable only while `borrador`: once the customer has seen it, changing
 /// the numbers underneath them is exactly what the estado machine prevents.
 model cotizacion {
-  id     String        @id
-  folio  Int           @unique @default(autoincrement())
-  notaId String
-  nota   nota_servicio @relation(fields: [notaId], references: [id], onDelete: Cascade)
+  id    String @id
+  folio Int    @unique @default(autoincrement())
+
+  /// The customer is the quote's permanent owner. A quote can exist before an appointment or
+  /// service note; when it later gains either relation, server validation requires the same
+  /// customer on every object.
+  clienteId String
+  cliente   cliente        @relation(fields: [clienteId], references: [id], onDelete: Restrict)
+  /// Optional because promotional/pre-arrival quotes are created before the vehicle enters.
+  unidadId  String?
+  unidad    unidad?        @relation(fields: [unidadId], references: [id], onDelete: SetNull)
+  /// Optional link created when the customer schedules from a pre-arrival quote.
+  citaId    String?
+  cita      cita?          @relation(fields: [citaId], references: [id], onDelete: SetNull)
+  /// Filled at intake (or immediately for the existing per-note flow). A deleted note must not
+  /// erase the commercial document that preceded it.
+  notaId    String?
+  nota      nota_servicio? @relation(fields: [notaId], references: [id], onDelete: SetNull)
+
+  /// Standalone quotes cannot borrow a nota's `/seguimiento` credential, so each new quote owns an
+  /// independent unguessable link. Nullable only for historical rows, which keep using their nota.
+  seguimientoToken String? @unique @db.VarChar(64)
 
   /// What the CUSTOMER has said: borrador | enviada | autorizada | rechazada | vencida.
   estado String @default("borrador") @db.VarChar(16)
@@ -975,6 +996,9 @@ model cotizacion {
   autorizadaAt            DateTime?
   rechazadaMotivo         String?           @db.VarChar(500)
 
+  /// The customer requested approval from the public quote page. This is only an intent: an
+  /// authenticated user still confirms the contact/medium and moves `estado` to `autorizada`.
+  autorizacionSolicitadaAt DateTime?
   /// The customer asked to reject this, from their seguimiento link — an INTENT, not the answer.
   ///
   /// Deliberately not `estado = "rechazada"`. The seguimiento token is a URL anyone holding the
@@ -995,6 +1019,9 @@ model cotizacion {
   notasVenta           nota_venta[]
   cotizacionesInternas cotizacion_interna[]
 
+  @@index([clienteId])
+  @@index([unidadId])
+  @@index([citaId])
   @@index([notaId])
   @@index([estado])
   @@map("cotizacion")

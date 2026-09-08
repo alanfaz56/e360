@@ -370,6 +370,15 @@ export async function deleteCliente(input: { actor: Actor; id: string }) {
 			"No se puede eliminar: el cliente aparece en el historial de propietarios de una unidad. Archívalo.",
 		);
 	}
+	// Pre-arrival quotes may be the only commercial history a customer owns. Surface the same
+	// recoverable archive path here instead of leaking a database FK error from the new relation.
+	const cotizaciones = await prisma.cotizacion.count({ where: { clienteId: cliente.id } });
+	if (cotizaciones > 0) {
+		throw new ClienteError(
+			409,
+			`No se puede eliminar: el cliente tiene ${cotizaciones} cotización(es). Archívalo para conservarlas.`,
+		);
+	}
 
 	await prisma.cliente.delete({ where: { id: cliente.id } });
 
@@ -457,14 +466,16 @@ export async function mergeClientes(input: {
 	const resultado = await prisma.$transaction(async (tx) => {
 		const ahora = new Date();
 
-		// `cotizacion` hangs off `notaId`, not its own `clienteId` — it moves for free once the
-		// nota does, nothing to repoint here.
-		const [unidades, propietarios, citas, notas, facturas] = await Promise.all([
+		// Commercial documents own their customer even when they have no nota. Repoint them in the
+		// same transaction as the units and notes so a merge never leaves two customer histories.
+		const [unidades, propietarios, citas, notas, cotizaciones, facturas, notasVenta] = await Promise.all([
 			tx.unidad.updateMany({ where: { clienteId: duplicado.id }, data: { clienteId: keeper.id } }),
 			tx.unidad_propietario.updateMany({ where: { clienteId: duplicado.id }, data: { clienteId: keeper.id } }),
 			tx.cita.updateMany({ where: { clienteId: duplicado.id }, data: { clienteId: keeper.id } }),
 			tx.nota_servicio.updateMany({ where: { clienteId: duplicado.id }, data: { clienteId: keeper.id } }),
+			tx.cotizacion.updateMany({ where: { clienteId: duplicado.id }, data: { clienteId: keeper.id } }),
 			tx.factura.updateMany({ where: { clienteId: duplicado.id }, data: { clienteId: keeper.id } }),
+			tx.nota_venta.updateMany({ where: { clienteId: duplicado.id }, data: { clienteId: keeper.id } }),
 		]);
 		await tx.notificacion.updateMany({ where: { clienteId: duplicado.id }, data: { clienteId: keeper.id } });
 		await tx.push_suscripcion.updateMany({ where: { clienteId: duplicado.id }, data: { clienteId: keeper.id } });
@@ -559,7 +570,9 @@ export async function mergeClientes(input: {
 					unidadPropietario: propietarios.count,
 					citas: citas.count,
 					notas: notas.count,
+					cotizaciones: cotizaciones.count,
 					facturas: facturas.count,
+					notasVenta: notasVenta.count,
 					contactosMovidos,
 					contactosArchivados: contactosArchivados.count,
 					contactoDelDuplicadoId,
