@@ -1420,7 +1420,7 @@ export async function vincularCotizacionInterna(input: { actor: Actor; id: strin
 	return publicCotizacionInterna(actualizada);
 }
 
-/** Approve or reject. Terminal both ways — a new estimate is submitted instead of reopening one. */
+/** Approve/reject a pending estimate, or annul an approved cost while preserving its record. */
 export async function resolverCotizacionInterna(input: {
 	actor: Actor;
 	id: string;
@@ -1433,7 +1433,7 @@ export async function resolverCotizacionInterna(input: {
 
 	const destino = input.estado;
 	if (!isCotizacionInternaEstado(destino) || destino === "pendiente") {
-		throw new ClienteError(400, "Decide si se aprueba o se rechaza.");
+		throw new ClienteError(400, "Decide si se aprueba, rechaza o anula.");
 	}
 	const current = await getCotizacionInterna(input.actor, input.id);
 	if (!puedeTransicionarCotizacionInterna(current.estado, destino)) {
@@ -1441,29 +1441,47 @@ export async function resolverCotizacionInterna(input: {
 	}
 
 	const motivo = trim(input.motivo, 500, "El motivo");
-	if (destino === "rechazada" && !motivo) {
-		throw new ClienteError(400, "Di por qué se rechaza; es lo que queda en el registro.");
+	if ((destino === "rechazada" || destino === "anulada") && !motivo) {
+		throw new ClienteError(
+			400,
+			destino === "anulada"
+				? "Di por qué se anula; el costo dejará de contar y el motivo quedará en el registro."
+				: "Di por qué se rechaza; es lo que queda en el registro.",
+		);
 	}
 
 	const resuelta = await prisma.$transaction(async (tx) => {
-		const fila = await tx.cotizacion_interna.update({
-			where: { id: current.id },
+		// Compare the state in the write itself. Two managers acting from stale tabs cannot both
+		// resolve or annul the same estimate and produce contradictory audit entries.
+		const aplicada = await tx.cotizacion_interna.updateMany({
+			where: { id: current.id, estado: current.estado },
 			data: {
 				estado: destino,
 				resolucionMotivo: motivo,
 				resueltaPorId: input.actor.id,
 				resueltaAt: new Date(),
 			},
+		});
+		if (aplicada.count !== 1) throw new ClienteError(409, "La estimación cambió; vuelve a cargar la nota.");
+		const fila = await tx.cotizacion_interna.findUnique({
+			where: { id: current.id },
 			include: COTIZACION_INTERNA_INCLUDE,
 		});
+		if (!fila) throw new ClienteError(404, "Estimación de costo no encontrada");
 
+		const accion =
+			destino === "aprobada"
+				? "cotizacion_interna.aprobada"
+				: destino === "anulada"
+					? "cotizacion_interna.anulada"
+					: "cotizacion_interna.rechazada";
 		await recordAudit(tx, {
-			action: destino === "aprobada" ? "cotizacion_interna.aprobada" : "cotizacion_interna.rechazada",
+			action: accion,
 			actor: input.actor,
 			entityId: fila.id,
 			entityLabel: `Estimación #${fila.folio}`,
 			summary: `Estimación de costo #${fila.folio}: ${cotizacionInternaEstadoLabel(destino)}`,
-			before: { estado: "pendiente" },
+			before: { estado: current.estado },
 			after: { estado: destino, motivo },
 		});
 
@@ -1474,7 +1492,12 @@ export async function resolverCotizacionInterna(input: {
 		await notificar({
 			evento: "cotizacion_interna_resuelta",
 			destino: { userId: resuelta.creadaPorId },
-			titulo: destino === "aprobada" ? "Estimación aprobada" : "Estimación rechazada",
+			titulo:
+				destino === "aprobada"
+					? "Estimación aprobada"
+					: destino === "anulada"
+						? "Estimación anulada"
+						: "Estimación rechazada",
 			cuerpo: `Nota #${resuelta.nota?.folio}: ${pesos(aCentavos(resuelta.total))}${motivo ? ` — ${motivo}` : ""}`,
 			url: `/panel/notas/${resuelta.notaId}`,
 			entidad: "nota",
@@ -1483,16 +1506,22 @@ export async function resolverCotizacionInterna(input: {
 		});
 	}
 
-	// The mechanic whose number this was gets told too — approval only, per how the shop works:
-	// a rejection is a conversation with whoever typed it in, not a verdict on the mechanic. No
-	// peso amount here — a mechanic never sees cost figures (`producto:read` is not theirs either),
-	// so the message confirms the decision without leaking what the job costs.
-	if (destino === "aprobada" && resuelta.mecanicoId && resuelta.mecanicoId !== resuelta.creadaPorId) {
+	// The mechanic whose number this was gets told on approval and on its later annulment. A
+	// rejection remains a conversation with whoever typed it in. No peso amount here: mechanics do
+	// not have permission to see cost figures.
+	if (
+		(destino === "aprobada" || destino === "anulada") &&
+		resuelta.mecanicoId &&
+		resuelta.mecanicoId !== resuelta.creadaPorId
+	) {
 		await notificar({
 			evento: "cotizacion_interna_resuelta",
 			destino: { userId: resuelta.mecanicoId },
-			titulo: "Tu estimación fue aprobada",
-			cuerpo: `Nota #${resuelta.nota?.folio}: tu estimación de costo fue aprobada.`,
+			titulo: destino === "aprobada" ? "Tu estimación fue aprobada" : "Tu estimación fue anulada",
+			cuerpo:
+				destino === "aprobada"
+					? `Nota #${resuelta.nota?.folio}: tu estimación de costo fue aprobada.`
+					: `Nota #${resuelta.nota?.folio}: una estimación aprobada fue anulada${motivo ? ` — ${motivo}` : "."}`,
 			url: `/panel/taller/${resuelta.notaId}`,
 			entidad: "nota",
 			entidadId: resuelta.notaId,

@@ -138,15 +138,18 @@ assert.equal(puedeTransicionarCotizacion("inventado", "enviada"), false);
 	assert.equal(puedeTransicionarCotizacion("enviada", "vencida"), false, "vencida no es un destino manual");
 }
 
-// --- Cotización interna: pendiente -> aprobada/rechazada, terminal both ways -------------------
+// --- Cotización interna: an approval may be annulled, but its record is never reopened ----------
 assert.equal(puedeTransicionarCotizacionInterna("pendiente", "aprobada"), true);
 assert.equal(puedeTransicionarCotizacionInterna("pendiente", "rechazada"), true);
-for (const terminal of ["aprobada", "rechazada"] as const) {
+assert.equal(puedeTransicionarCotizacionInterna("aprobada", "anulada"), true);
+assert.deepEqual([...COTIZACION_INTERNA_TRANSICIONES.aprobada], ["anulada"]);
+for (const terminal of ["rechazada", "anulada"] as const) {
 	assert.deepEqual([...COTIZACION_INTERNA_TRANSICIONES[terminal]], [], `${terminal} es terminal`);
 	for (const destino of COTIZACION_INTERNA_ESTADO_KEYS) {
 		assert.equal(puedeTransicionarCotizacionInterna(terminal, destino), false, `${terminal} -> ${destino}`);
 	}
 }
+assert.equal(puedeTransicionarCotizacionInterna("anulada", "aprobada"), false);
 assert.equal(puedeTransicionarCotizacionInterna("inventado", "aprobada"), false);
 
 // --- Margen, no markup ---------------------------------------------------------------------------

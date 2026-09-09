@@ -322,17 +322,20 @@ export const actions: Actions = {
 		}
 	},
 
-	/** Approve or reject a submitted cost estimate. Rejecting requires a `motivo`. */
+	/** Approve/reject a pending cost or annul an approved one. Reject/annul require a `motivo`. */
 	costoInternoEstado: async ({ locals, params, request }) => {
 		const actor = requireUser(locals);
 		const data = await request.formData();
 		try {
 			const estado = data.get("estado");
 			await resolverCotizacionInterna({ actor, id: String(data.get("id")), estado, motivo: data.get("motivo") });
-			redirect(
-				303,
-				conFlash(`/panel/notas/${params.id}`, estado === "aprobada" ? "cotizacion_interna.aprobar" : "cotizacion_interna.rechazar"),
-			);
+			const flash =
+				estado === "aprobada"
+					? "cotizacion_interna.aprobar"
+					: estado === "anulada"
+						? "cotizacion_interna.anular"
+						: "cotizacion_interna.rechazar";
+			redirect(303, conFlash(`/panel/notas/${params.id}`, flash));
 		} catch (err) {
 			return fallo(err);
 		}

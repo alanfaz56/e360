@@ -146,6 +146,7 @@ export const COTIZACION_INTERNA_ESTADOS = {
 	pendiente: { label: "Pendiente", tone: "warn", descripcion: "Esperando revisión de Admin/Gerente" },
 	aprobada: { label: "Aprobada", tone: "ok", descripcion: "Cuenta para la utilidad" },
 	rechazada: { label: "Rechazada", tone: "danger", descripcion: "No cuenta para nada" },
+	anulada: { label: "Anulada", tone: "neutral", descripcion: "Fue aprobada, pero dejó de contar como costo" },
 } as const satisfies Record<string, { label: string; tone: Tone; descripcion: string }>;
 
 export type CotizacionInternaEstado = keyof typeof COTIZACION_INTERNA_ESTADOS;
@@ -157,11 +158,12 @@ export const cotizacionInternaEstadoLabel = (v: string) =>
 export const cotizacionInternaEstadoTone = (v: string): Tone =>
 	isCotizacionInternaEstado(v) ? COTIZACION_INTERNA_ESTADOS[v].tone : "neutral";
 
-/** Terminal both ways: a decision here isn't walked back, a new estimate is submitted instead. */
+/** A pending estimate is resolved once; an approved cost can later be annulled without deleting it. */
 export const COTIZACION_INTERNA_TRANSICIONES = {
 	pendiente: ["aprobada", "rechazada"],
-	aprobada: [],
+	aprobada: ["anulada"],
 	rechazada: [],
+	anulada: [],
 } as const satisfies Record<CotizacionInternaEstado, readonly CotizacionInternaEstado[]>;
 
 export function puedeTransicionarCotizacionInterna(desde: string, hasta: string): boolean {

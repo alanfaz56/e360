@@ -2024,9 +2024,9 @@ model cotizacion_interna {
   cotizacionId String?
   cotizacion   cotizacion? @relation(fields: [cotizacionId], references: [id], onDelete: SetNull)
 
-  /// pendiente | aprobada | rechazada
+  /// pendiente | aprobada | rechazada | anulada
   estado           String  @default("pendiente") @db.VarChar(16)
-  /// Mandatory on a rejection, same reasoning as solicitud_refaccion.resolucionMotivo.
+  /// Mandatory on a rejection or annulment so a removed cost keeps an auditable explanation.
   resolucionMotivo String? @db.VarChar(500)
 
   /// Recomputed from conceptos on every write. Not a CFDI-facing figure, so unlike

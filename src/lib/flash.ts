@@ -56,6 +56,7 @@ export const FLASH: Record<string, string> = {
 	"cotizacion_interna.vincular": "Estimación de costo ligada a la cotización.",
 	"cotizacion_interna.aprobar": "Estimación de costo aprobada.",
 	"cotizacion_interna.rechazar": "Estimación de costo rechazada.",
+	"cotizacion_interna.anular": "Estimación de costo anulada; ya no cuenta en la utilidad.",
 	"factura.crear": "Factura emitida.",
 	"factura.cancelar": "Factura cancelada.",
 	"factura.timbrar": "Factura timbrada. Ya tiene folio fiscal.",

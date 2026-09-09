@@ -109,6 +109,7 @@ export const AUDIT_ACTIONS = {
 	"cotizacion_interna.vincular": "Estimación de costo ligada a una cotización",
 	"cotizacion_interna.aprobada": "Estimación de costo aprobada",
 	"cotizacion_interna.rechazada": "Estimación de costo rechazada",
+	"cotizacion_interna.anulada": "Estimación de costo anulada",
 	"factura.create": "Factura emitida",
 	"factura.cancel": "Factura cancelada",
 	"factura.timbrar": "Factura timbrada ante el SAT",

@@ -4,9 +4,9 @@ import { ClienteError } from "$lib/server/clientes";
 import { resolverCotizacionInterna } from "$lib/server/comercial";
 
 /**
- * POST /api/cotizaciones-internas/[id]/estado — approve or reject. Permission:
- * `cotizacion_interna:authorize`. Body: `{ estado: "aprobada" | "rechazada", motivo? }`.
- * `motivo` is mandatory on a rejection — it is what stays on the record.
+ * POST /api/cotizaciones-internas/[id]/estado — approve, reject or annul. Permission:
+ * `cotizacion_interna:authorize`. Body: `{ estado: "aprobada" | "rechazada" | "anulada", motivo? }`.
+ * `motivo` is mandatory on a rejection or annulment — it is what stays on the record.
  */
 export const POST: RequestHandler = async ({ locals, params, request }) => {
 	const actor = requireUser(locals);

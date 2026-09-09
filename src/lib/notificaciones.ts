@@ -144,7 +144,7 @@ export const NOTIFICACION_EVENTOS = {
 	},
 	cotizacion_interna_resuelta: {
 		label: "Resolvieron una estimación de costo",
-		descripcion: "La aprobaron o la rechazaron.",
+		descripcion: "La aprobaron, rechazaron o anularon.",
 		audiencia: "empleado",
 		alcance: "directo",
 		icon: "scroll-text",

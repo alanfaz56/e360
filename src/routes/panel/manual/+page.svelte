@@ -207,7 +207,9 @@
 				o algo que no está en el catálogo. Alguien de mostrador la captura como una estimación,
 				<Badge tone="warn">Pendiente</Badge> hasta que Admin o Gerente la revisa y la
 				<Badge tone="ok">Aprueba</Badge> o <Badge tone="danger">Rechaza</Badge> — decisión
-				final, no se reabre: si cambió algo, se manda una estimación nueva.
+				final, no se reabre: si cambió algo, se manda una estimación nueva. Una estimación aprobada
+				que se capturó por error se puede <strong>Anular</strong> con motivo; permanece en el historial,
+				pero deja de contar como costo y en la utilidad.
 			</p>
 			<p>
 				Una vez aprobada se puede <strong>ligar a una cotización</strong> del cliente. Ahí es

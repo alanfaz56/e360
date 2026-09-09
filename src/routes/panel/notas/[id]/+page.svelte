@@ -1147,7 +1147,9 @@
 							{/if}
 
 							{#if ci.resolucionMotivo}
-								<p class="mt-1 text-xs text-danger">Rechazó: {ci.resolucionMotivo}</p>
+								<p class="mt-1 text-xs text-danger"
+									>{ci.estado === "anulada" ? "Anuló" : ci.estado === "rechazada" ? "Rechazó" : "Motivo"}: {ci.resolucionMotivo}</p
+								>
 							{/if}
 
 							<div class="mt-2 flex flex-wrap items-center gap-1.5">
@@ -1188,6 +1190,16 @@
 											aria-hidden="true"
 										/>
 										Rechazar
+									</Button>
+								{/if}
+								{#if data.puede.aprobarInterna && ci.estado === "aprobada"}
+									<Button
+										href={searchHref(page.url, { drawer: "anularCosto", ci: ci.id })}
+										size="sm"
+										variant="ghost"
+									>
+										<Ban size={14} aria-hidden="true" />
+										Anular
 									</Button>
 								{/if}
 
@@ -2568,6 +2580,32 @@
 				hint="Máximo 500 caracteres."
 			/>
 			<Button full>Rechazar</Button>
+		</form>
+	</Drawer>
+{/if}
+
+{#if drawer === "anularCosto" && data.puede.aprobarInterna}
+	{@const ciId = page.url.searchParams.get("ci")}
+	<Drawer
+		title="Anular estimación de costo"
+		description="Conserva el registro, pero deja de sumar este costo a la utilidad de la nota."
+		closeHref={closeDrawer}
+	>
+		<form
+			method="POST"
+			use:enhance={sinSaltoAlRedirigir()}
+			action="?/costoInternoEstado"
+			class="space-y-4"
+		>
+			<input type="hidden" name="id" value={ciId} />
+			<input type="hidden" name="estado" value="anulada" />
+			<Field
+				label="Motivo de anulación"
+				name="motivo"
+				required
+				hint="Máximo 500 caracteres. Quedará en el historial."
+			/>
+			<Button full variant="outline">Anular estimación</Button>
 		</form>
 	</Drawer>
 {/if}
