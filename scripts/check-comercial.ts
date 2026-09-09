@@ -108,7 +108,13 @@ assert.equal(puedeTransicionarCotizacion("borrador", "enviada"), true);
 assert.equal(puedeTransicionarCotizacion("enviada", "autorizada"), true);
 assert.equal(puedeTransicionarCotizacion("enviada", "rechazada"), true);
 assert.equal(puedeTransicionarCotizacion("enviada", "borrador"), false, "no se regresa a borrador");
-for (const terminal of ["autorizada", "rechazada", "vencida"] as const) {
+// `autorizada -> rechazada` is the one staff-only reversal: a Gerente/Admin undoing an approval
+// that already happened, gated separately by `cotizacion:reject-authorized` in `cambiarEstadoCotizacion`.
+assert.equal(puedeTransicionarCotizacion("autorizada", "rechazada"), true);
+assert.equal(puedeTransicionarCotizacion("autorizada", "enviada"), false);
+assert.equal(puedeTransicionarCotizacion("autorizada", "borrador"), false);
+assert.deepEqual([...COTIZACION_TRANSICIONES.autorizada], ["rechazada"]);
+for (const terminal of ["rechazada", "vencida"] as const) {
 	assert.deepEqual([...COTIZACION_TRANSICIONES[terminal]], [], `${terminal} es terminal`);
 	for (const destino of COTIZACION_ESTADO_KEYS) {
 		assert.equal(puedeTransicionarCotizacion(terminal, destino), false, `${terminal} -> ${destino}`);

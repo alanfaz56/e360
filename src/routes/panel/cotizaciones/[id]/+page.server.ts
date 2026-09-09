@@ -34,6 +34,7 @@ export const load: ServerLoad = async ({ locals, params }) => {
 				editar: can(actor.role, "cotizacion:create"),
 				enviar: can(actor.role, "cotizacion:send"),
 				autorizar: can(actor.role, "cotizacion:authorize"),
+				rechazarAutorizada: can(actor.role, "cotizacion:reject-authorized"),
 				agendar: can(actor.role, "cita:create"),
 				verUtilidad: can(actor.role, "cotizacion:costo"),
 			},

@@ -39,6 +39,14 @@ database by `cotizacion_interno_requiere_autorizacion_check`, not only in applic
 venta — see `cobranzaDe`); `cobrada` is never set by a button, it falls out of the arithmetic over
 payments (`sincronizarCobranza`).
 
+`autorizada → rechazada` is also reachable, but only as a staff override (`cotizacion:reject-
+authorized`, Admin/Gerente), separate from the customer recording their own answer
+(`cotizacion:authorize`) — reversing an approval already made, not registering a new one. Audited
+under its own action, `cotizacion.reject-authorized`, so it reads distinctly from an
+`enviada → rechazada` in the history. Blocked once a non-cancelled factura or nota de venta already
+references the cotización — that document has to be cancelled on its own terms first, this
+transition never unlinks one out from under it.
+
 ### Nota de venta — cash sale, no IVA
 
 A customer who doesn't need a CFDI pays the cotización's **subtotal**, no tax. Its own model

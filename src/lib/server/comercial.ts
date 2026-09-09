@@ -769,15 +769,37 @@ export async function cambiarEstadoCotizacion(input: {
 	const destino = input.estado;
 	if (!isCotizacionEstado(destino)) throw new ClienteError(400, "Estado inválido");
 
-	const permiso = destino === "enviada" ? "cotizacion:send" : "cotizacion:authorize";
+	const current = await getCotizacion(input.id);
+	// Reversing a quote the customer already authorized is a staff override, not recording the
+	// customer's own answer — different permission, different audit trail from `enviada -> rechazada`.
+	const esRechazoDeAutorizada = current.estado === "autorizada" && destino === "rechazada";
+	const permiso = esRechazoDeAutorizada
+		? "cotizacion:reject-authorized"
+		: destino === "enviada"
+			? "cotizacion:send"
+			: "cotizacion:authorize";
 	if (!can(input.actor.role, permiso)) throw new ClienteError(403, `Sin permiso: ${permiso}`);
 
-	const current = await getCotizacion(input.id);
 	if (!puedeTransicionarCotizacion(current.estado, destino)) {
 		throw new ClienteError(
 			409,
 			`No se puede pasar de ${cotizacionEstadoLabel(current.estado)} a ${cotizacionEstadoLabel(destino)}.`,
 		);
+	}
+
+	if (esRechazoDeAutorizada) {
+		// Once billing exists downstream, reversing the approval would orphan a real document —
+		// that has to be cancelled on its own terms first, not silently unlinked here.
+		const facturado = await prisma.factura.findFirst({
+			where: { cotizacionId: current.id, estado: { not: "cancelada" } },
+			select: { id: true },
+		});
+		if (facturado) throw new ClienteError(409, "Ya existe una factura ligada a esta cotización.");
+		const vendida = await prisma.nota_venta.findFirst({
+			where: { cotizacionId: current.id, estado: { not: "cancelada" } },
+			select: { id: true },
+		});
+		if (vendida) throw new ClienteError(409, "Ya existe una nota de venta ligada a esta cotización.");
 	}
 
 	const body = input.body ?? {};
@@ -842,7 +864,9 @@ export async function cambiarEstadoCotizacion(input: {
 					? "cotizacion.send"
 					: destino === "autorizada"
 						? "cotizacion.authorize"
-						: "cotizacion.reject",
+						: esRechazoDeAutorizada
+							? "cotizacion.reject-authorized"
+							: "cotizacion.reject",
 			actor: input.actor,
 			entityId: actualizada.id,
 			entityLabel: `Cotización #${actualizada.folio}`,

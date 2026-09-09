@@ -41,7 +41,9 @@ export const COTIZACION_TRANSICIONES = {
 	// manual transition. A late customer response is still recordable past the deadline: the real
 	// stored `estado` stays `enviada` the whole time, only the label reads "Vencida".
 	enviada: ["autorizada", "rechazada"],
-	autorizada: [],
+	// `autorizada -> rechazada` is a staff-only reversal (admin/gerente, `cotizacion:reject-authorized`),
+	// not a customer response — see `cambiarEstadoCotizacion`. Blocked once billing exists downstream.
+	autorizada: ["rechazada"],
 	rechazada: [],
 	vencida: [],
 } as const satisfies Record<CotizacionEstado, readonly CotizacionEstado[]>;

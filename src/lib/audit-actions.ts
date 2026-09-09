@@ -103,6 +103,7 @@ export const AUDIT_ACTIONS = {
 	"cotizacion.reenviar": "Correo de cotización reenviado",
 	"cotizacion.authorize": "Cotización autorizada por el cliente",
 	"cotizacion.reject": "Cotización rechazada",
+	"cotizacion.reject-authorized": "Cotización rechazada tras haber sido autorizada",
 	"cotizacion_interna.create": "Estimación de costo creada",
 	"cotizacion_interna.update": "Estimación de costo actualizada",
 	"cotizacion_interna.vincular": "Estimación de costo ligada a una cotización",

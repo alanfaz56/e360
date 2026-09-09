@@ -217,6 +217,11 @@
 						aria-hidden="true"
 					/>Agendar servicio</Button
 				>{/if}
+			{#if c.estado === "autorizada" && data.puede.rechazarAutorizada}<Button
+					href={searchHref(page.url, { drawer: "rechazar" })}
+					variant="outline"
+					size="sm">Rechazar autorización</Button
+				>{/if}
 		</section>
 
 		{#if c.estado !== "borrador" && liga}
@@ -332,10 +337,12 @@
 	>
 {/if}
 
-{#if drawer === "rechazar" && data.puede.autorizar && c.estado === "enviada"}
+{#if drawer === "rechazar" && ((data.puede.autorizar && c.estado === "enviada") || (data.puede.rechazarAutorizada && c.estado === "autorizada"))}
 	<Drawer
 		title="Rechazar cotización"
-		description="El motivo queda en el historial comercial."
+		description={c.estado === "autorizada"
+			? "El cliente ya la había autorizado. Este rechazo se registra por separado en el historial."
+			: "El motivo queda en el historial comercial."}
 		closeHref={closeDrawer}
 		><form
 			method="POST"

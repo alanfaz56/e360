@@ -193,6 +193,9 @@ export const PERMISOS_DEFAULT = {
 	// borrador until a Gerente was free, which is the shop losing the sale to its own permissions.
 	"cotizacion:send": ["admin", "gerente", "operador"],
 	"cotizacion:authorize": ["admin", "gerente", "operador"],
+	// Reversing a quote the customer already authorized is a staff override, not recording the
+	// customer's own answer — held back from Operador on purpose.
+	"cotizacion:reject-authorized": ["admin", "gerente"],
 	// The computed utilidad (venta - costo aprobado). Admin-only on purpose: Gerente can create
 	// and approve the raw cost lines below without seeing the resulting margin figure.
 	"cotizacion:costo": ["admin"],
