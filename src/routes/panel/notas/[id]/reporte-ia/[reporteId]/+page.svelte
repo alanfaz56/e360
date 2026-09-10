@@ -9,6 +9,7 @@
 	import Button from "$lib/components/Button.svelte";
 	import Logo from "$lib/components/Logo.svelte";
 	import { page } from "$app/state";
+	import { renderNarrativaMarkdown } from "$lib/markdown-simple";
 
 	let { data } = $props();
 	const r = $derived(data.reporte);
@@ -59,7 +60,9 @@
 			</div>
 		</header>
 
-		<div class="mt-4 whitespace-pre-wrap text-sm leading-relaxed text-sand-800">{r.narrativa}</div>
+		<div class="reporte-narrativa mt-4 text-sm leading-relaxed text-sand-800">
+			{@html renderNarrativaMarkdown(r.narrativa)}
+		</div>
 
 		{#if r.cotizaciones.length > 0}
 			<div class="mt-6 border-t border-sand-200 pt-4">
@@ -90,6 +93,42 @@
 </div>
 
 <style>
+	.reporte-narrativa :global(p) {
+		margin: 0 0 0.75em;
+	}
+	.reporte-narrativa :global(h1),
+	.reporte-narrativa :global(h2),
+	.reporte-narrativa :global(h3),
+	.reporte-narrativa :global(h4) {
+		margin: 1.25em 0 0.5em;
+		font-weight: 600;
+		color: var(--color-sand-950, #1c1917);
+	}
+	.reporte-narrativa :global(h1) {
+		font-size: 1.15rem;
+	}
+	.reporte-narrativa :global(h2),
+	.reporte-narrativa :global(h3) {
+		font-size: 1rem;
+	}
+	.reporte-narrativa :global(ul) {
+		margin: 0 0 0.75em;
+		padding-left: 1.25em;
+		list-style: disc;
+	}
+	.reporte-narrativa :global(li) {
+		margin: 0.15em 0;
+	}
+	.reporte-narrativa :global(hr) {
+		margin: 1em 0;
+		border: 0;
+		border-top: 1px solid var(--color-sand-200, #e7e5e4);
+	}
+	.reporte-narrativa :global(strong) {
+		font-weight: 600;
+		color: var(--color-sand-950, #1c1917);
+	}
+
 	@media print {
 		:global(body) {
 			background: white;

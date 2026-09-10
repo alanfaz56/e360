@@ -1,5 +1,12 @@
 @import 'tailwindcss';
 
+@media print {
+	#ph-conversations-widget-container,
+	.ph-conversations-widget-container {
+		display: none !important;
+	}
+}
+
 /*
  * Estación 360 — design tokens.
  * Colors lifted from estacion360.com (Shopify Horizon theme CSS vars).
