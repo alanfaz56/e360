@@ -1,13 +1,18 @@
 import type { ServerLoad } from "@sveltejs/kit";
 import { requirePermission } from "$lib/server/guard";
-import { resumenUsoIA } from "$lib/server/ia";
+import { resumenUsoIA, porcentajeUsoGemini } from "$lib/server/ia";
 
-/** Usage visibility only — no spending cap, no billing. Same shape as /panel/auditoria. */
+/**
+ * Usage visibility only — no billing, no dollar figures. `porcentajeGemini` is an optional
+ * token-budget gauge (set via Ajustes → ia.gemini_limite_tokens); null hides it. Same shape as
+ * /panel/auditoria otherwise.
+ */
 export const load: ServerLoad = async ({ locals }) => {
 	requirePermission(locals, "ia:uso_read");
-	const { porProveedor, recientes } = await resumenUsoIA();
+	const [{ porProveedor, recientes }, porcentajeGemini] = await Promise.all([resumenUsoIA(), porcentajeUsoGemini()]);
 
 	return {
+		porcentajeGemini,
 		porProveedor: porProveedor.map((p) => ({
 			proveedor: p.proveedor,
 			llamadas: p._count._all,

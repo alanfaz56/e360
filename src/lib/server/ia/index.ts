@@ -156,6 +156,28 @@ export async function resumenUsoIA() {
 	return { porProveedor, recientes };
 }
 
+/**
+ * % of the configured monthly Gemini token budget used so far this calendar month.
+ * `null` when no limit is set (`ia.gemini_limite_tokens` empty) — caller hides the gauge then.
+ * Token count only, never a dollar figure — Gemini pricing isn't tracked in this app.
+ */
+export async function porcentajeUsoGemini(): Promise<number | null> {
+	const limiteRaw = await valorAjuste("ia.gemini_limite_tokens");
+	const limite = Number(limiteRaw);
+	if (!limiteRaw || !Number.isFinite(limite) || limite <= 0) return null;
+
+	const inicioMes = new Date();
+	inicioMes.setDate(1);
+	inicioMes.setHours(0, 0, 0, 0);
+
+	const { _sum } = await prisma.ia_uso.aggregate({
+		where: { proveedor: "gemini", createdAt: { gte: inicioMes } },
+		_sum: { tokensEntrada: true, tokensSalida: true },
+	});
+	const usados = (_sum.tokensEntrada ?? 0) + (_sum.tokensSalida ?? 0);
+	return Math.min(100, Math.round((usados / limite) * 100));
+}
+
 /** One row per call, always — usage visibility only, no billing/credits. */
 export async function registrarUsoIA(input: {
 	proveedor: string;

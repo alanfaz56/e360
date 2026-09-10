@@ -22,6 +22,19 @@
 	description="Tokens consumidos generando reportes con IA, por proveedor. Solo lectura — no hay créditos ni facturación aquí."
 />
 
+{#if data.porcentajeGemini !== null}
+	<div class="mb-6 rounded-lg border border-sand-200 bg-white p-4">
+		<p class="text-sm font-medium text-sand-700">Gemini — uso del mes vs. límite configurado</p>
+		<div class="mt-2 h-2 w-full overflow-hidden rounded-full bg-sand-100">
+			<div
+				class="h-full rounded-full {data.porcentajeGemini >= 90 ? 'bg-red-500' : data.porcentajeGemini >= 70 ? 'bg-amber-500' : 'bg-green-500'}"
+				style="width: {data.porcentajeGemini}%"
+			></div>
+		</div>
+		<p class="mt-1 text-xs text-sand-500">{data.porcentajeGemini}% del límite de tokens mensual</p>
+	</div>
+{/if}
+
 {#if data.porProveedor.length === 0}
 	<EmptyState
 		title="Sin uso todavía"

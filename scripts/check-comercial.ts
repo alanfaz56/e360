@@ -44,8 +44,29 @@ assert.equal(centavos(" 99.99 "), 9999n, "los espacios no cuentan");
 assert.equal(centavos(1234.5), 123450n);
 assert.equal(centavos(0n), 0n);
 
+// Thousands-separator commas are accepted since Intl display (formatoPesos) round-trips them back into forms.
+assert.equal(centavos("1,234.50"), 123450n, "coma de miles se acepta");
+assert.equal(centavos("1,234"), 123400n);
+assert.equal(centavos("12,345,678.90"), 1234567890n, "varios grupos de miles");
+assert.equal(centavos("999.99"), 99999n, "grupo de menos de 4 dígitos no lleva coma");
+
 // Anything that is not unambiguously an amount is refused rather than guessed at.
-for (const malo of ["", "abc", "-5", "1.234", "1,234.50", "1e3", ".5", "5.", null, undefined, {}, NaN]) {
+for (const malo of [
+	"",
+	"abc",
+	"-5",
+	"1.234",
+	"1,23.50",
+	"1,2,3.50",
+	"12,34.50",
+	"1e3",
+	".5",
+	"5.",
+	null,
+	undefined,
+	{},
+	NaN,
+]) {
 	assert.equal(centavos(malo), null, `centavos(${JSON.stringify(malo)}) debe ser null`);
 }
 assert.equal(centavos(-1n), null, "un negativo nunca es un monto válido");

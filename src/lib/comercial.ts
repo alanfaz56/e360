@@ -317,8 +317,8 @@ export const metodoPagoLabel = (v: string) => (isMetodoPago(v) ? METODOS_PAGO[v]
 export function centavos(value: unknown): bigint | null {
 	if (typeof value === "bigint") return value >= 0n ? value : null;
 	const texto = typeof value === "number" ? String(value) : typeof value === "string" ? value.trim() : "";
-	if (!/^\d+(\.\d{1,2})?$/.test(texto)) return null;
-	const [enteros, decimales = ""] = texto.split(".");
+	if (!/^(\d+|\d{1,3}(,\d{3})+)(\.\d{1,2})?$/.test(texto)) return null;
+	const [enteros, decimales = ""] = texto.replace(/,/g, "").split(".");
 	return BigInt(enteros) * 100n + BigInt(decimales.padEnd(2, "0"));
 }
 

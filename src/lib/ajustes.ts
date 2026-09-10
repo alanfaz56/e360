@@ -183,6 +183,13 @@ export const AJUSTES = {
 		grupo: "ia",
 		ayuda: "aistudio.google.com → Get API key.",
 	},
+	"ia.gemini_limite_tokens": {
+		label: "Gemini: límite de tokens mensual",
+		descripcion:
+			"Tope de tokens (entrada + salida) del mes en curso, para mostrar el % usado en Uso de IA. Vacío = no se muestra el medidor.",
+		tipo: "texto",
+		grupo: "ia",
+	},
 	"facturacion_app.monto_mensual": {
 		label: "Monto mensual",
 		descripcion: "Cuota mensual en pesos, ej. 1500.00. Se cobra el día 15 de cada mes.",
