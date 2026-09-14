@@ -4,6 +4,32 @@ Domain code: [src/lib/comercial.ts](../src/lib/comercial.ts) (browser-safe vocab
 machines, money helpers) and [src/lib/server/comercial.ts](../src/lib/server/comercial.ts)
 (everything that touches the database).
 
+## Concurrency
+
+Every money write that depends on a figure it just read re-checks that figure **inside** its
+transaction, because the first read happens before the transaction opens and two clicks can pass it
+at once:
+
+- `registrarPago` / `registrarPagoNotaVenta` recompute the saldo inside the transaction — the
+  pre-flight check above them only exists to give a good error message. `pago_monto_check` guards
+  one row's amount, never the running total, so overpayment has to be caught here.
+- `cancelarFactura` / `cancelarNotaVenta` re-count payments inside, and carry the state they read
+  in the `updateMany` `where` — a cancel that races a payment loses instead of burying it.
+- `facturarNotaVenta` claims the nota de venta (`activa → facturada`) as the FIRST statement in the
+  transaction, before creating anything: two calls would otherwise both create a factura and
+  re-point the same `pago` rows twice.
+- `cambiarEstadoCotizacion` carries the starting `estado` in its `updateMany` `where`, so two tabs
+  cannot authorize and reject the same quote at once. For the `autorizada → rechazada` override it
+  also re-counts the downstream factura / nota de venta **inside** the transaction: one created
+  while the rejection was in flight would otherwise be left hanging off a rejected quote.
+- `crearFactura` refuses a cotización that already has an `activa` nota de venta (the mirror of the
+  check `crearNotaVenta` already made in the other direction) — that case is `facturarNotaVenta`,
+  which promotes the existing document and keeps its payments, not a second document for the same
+  work. The partial unique indexes are per-table and cannot express this cross-table rule.
+- One cotización can carry at most one non-cancelled factura and one non-cancelled nota de venta —
+  enforced by the partial unique indexes `factura_cotizacion_unica_activa` and
+  `nota_venta_cotizacion_unica_activa`, so no code path can double-bill regardless of timing.
+
 ## Money representation
 
 **Never floats.** Every amount is a `Decimal(12,2)` column and a string in the API, but every
@@ -12,6 +38,13 @@ calculation happens in **integer cents as a `bigint`** — `centavos()` parses a
 only) wraps cents back into a `Prisma.Decimal` for a write. A peso that drifts by a cent because of
 binary floating point is a peso somebody argues about at the counter, so nothing here ever holds an
 amount as a JS `number`.
+
+`aCentavos()` (server) reads a money column as cents through `Decimal.toFixed(2)`, not
+`toString()`: the cost columns are `Decimal(12,4)`, `centavos()` rejects more than two decimals, and
+a real supplier cost of `150.755` used to parse as `null` and fall back to `0n` — a line that
+silently cost nothing and an overstated utilidad. `Decimal.toFixed` rounds in exact decimal;
+`Number.toFixed` would drag the binary representation (`150.755 → "150.75"`), which is the cent this
+project does not leave to a float.
 
 `totales()` computes IVA on the **rounded subtotal**, never per line — that's how a CFDI is
 expected to add up, and it's what keeps an invoice's total agreeing with the sum of its own lines.
@@ -121,8 +154,10 @@ than a number that reads as real but isn't.
 ## Crédito
 
 `condicionPago` is `contado | credito`; only `credito` consumes a customer's credit limit
-(`esCredito`). `asegurarCredito` checks the limit **inside** the write transaction, so two credit
-sales issued at the same instant can't both slip under the same headroom. Going over the limit is
+(`esCredito`). `asegurarCredito` checks the limit **inside** the write transaction, and takes a
+`SELECT ... FOR UPDATE` on the customer row first, so two credit sales issued at the same instant
+can't both slip under the same headroom — reading inside the transaction is not enough on its own,
+because under READ COMMITTED both would still see the balance from before the other's write. Going over the limit is
 refused with the overage named in the error; forcing it through requires a motive and is its own
 audit entry (`cliente.credito_override`). A nota de venta never carries credit terms — it's a cash
 sale by definition, paid in however many installments, but with no due date and no limit check.

@@ -51,9 +51,22 @@ import type { Actor } from "./guard";
 
 const dec = (cents: bigint) => new Prisma.Decimal(pesos(cents));
 
-/** Exported: `timbrado.ts` reads the same columns and must round them the same way. */
-export const aCentavos = (d: Prisma.Decimal | string | null | undefined): bigint =>
-	d === null || d === undefined ? 0n : (centavos(d.toString()) ?? 0n);
+/**
+ * A money column as CENTS. Exported: `timbrado.ts` reads the same columns and must round them the
+ * same way.
+ *
+ * Goes through `toFixed(2)`, not `toString()`: the cost columns are `Decimal(12,4)` (a supplier
+ * CFDI prices things to a tenth of a cent), and `centavos()` rejects anything past two decimals —
+ * so a real unit cost of 150.755 used to parse as `null` and fall back to `0n`, silently costing
+ * a line nothing and overstating utilidad. Rounding to the cent is the same rule the rest of the
+ * money code follows; a cost that cannot be read at all is still worth 0.
+ */
+export const aCentavos = (d: Prisma.Decimal | string | null | undefined): bigint => {
+	if (d === null || d === undefined) return 0n;
+	// `Decimal.toFixed(2)` redondea en decimal exacto; `Number.toFixed` arrastraría el binario
+	// (150.755 -> "150.75"), que es justo el centavo que este proyecto no deja al float.
+	return centavos(typeof d === "string" ? d : d.toFixed(2)) ?? 0n;
+};
 
 /**
  * A money column as it goes out over the API.
@@ -803,7 +816,9 @@ export async function cambiarEstadoCotizacion(input: {
 	}
 
 	const body = input.body ?? {};
-	const data: Prisma.cotizacionUpdateInput = { estado: destino as CotizacionEstado };
+	// `UncheckedUpdateInput` para poder asignar el FK escalar `autorizadaPorContactoId`: el write
+	// es un `updateMany`, que no acepta relaciones anidadas.
+	const data: Prisma.cotizacionUncheckedUpdateInput = { estado: destino as CotizacionEstado };
 
 	// The customer's pending request is answered now, whichever way it went — clear both mutually
 	// exclusive intents so the quote does not keep advertising an already-resolved decision.
@@ -841,7 +856,10 @@ export async function cambiarEstadoCotizacion(input: {
 					`${contacto.nombre} no tiene el rol de Autorizador. Agrégaselo en la ficha del cliente.`,
 				);
 			}
-			data.autorizadaPorContacto = { connect: { id: contactoId } };
+			// El FK escalar, no un `connect` anidado: el write de abajo es un `updateMany` (lleva el
+			// estado de partida en el `where`) y ésos no aceptan relaciones anidadas. El contacto
+			// quedó validado justo arriba, así que apuntar el id es equivalente.
+			data.autorizadaPorContactoId = contactoId;
 		} else if (current.cliente.tipo === "organizacion") {
 			throw new ClienteError(
 				400,
@@ -853,9 +871,28 @@ export async function cambiarEstadoCotizacion(input: {
 	}
 
 	const cotizacion = await prisma.$transaction(async (tx) => {
-		const actualizada = await tx.cotizacion.update({
-			where: { id: current.id },
+		// El estado leído arriba viene de fuera de la transacción: dos pestañas podrían autorizar y
+		// rechazar la misma cotización a la vez, y la segunda escribiría encima sin ver la primera.
+		// El `where` lleva el estado de partida, así que sólo pasa una.
+		const aplicada = await tx.cotizacion.updateMany({
+			where: { id: current.id, estado: current.estado },
 			data,
+		});
+		if (aplicada.count !== 1) throw new ClienteError(409, "La cotización cambió; vuelve a cargarla.");
+
+		if (esRechazoDeAutorizada) {
+			// Y el documento de cobro pudo crearse mientras esto corría: revisar de nuevo aquí adentro
+			// evita dejar una factura o nota de venta colgando de una cotización rechazada.
+			const [facturaAhora, ventaAhora] = await Promise.all([
+				tx.factura.count({ where: { cotizacionId: current.id, estado: { not: "cancelada" } } }),
+				tx.nota_venta.count({ where: { cotizacionId: current.id, estado: { not: "cancelada" } } }),
+			]);
+			if (facturaAhora > 0) throw new ClienteError(409, "Ya existe una factura ligada a esta cotización.");
+			if (ventaAhora > 0) throw new ClienteError(409, "Ya existe una nota de venta ligada a esta cotización.");
+		}
+
+		const actualizada = await tx.cotizacion.findUniqueOrThrow({
+			where: { id: current.id },
 			include: COTIZACION_INCLUDE,
 		});
 		await recordAudit(tx, {
@@ -1640,15 +1677,15 @@ function sumarFacturasYPagos(facturas: { total: Prisma.Decimal; pagos: { monto: 
  *
  * Cancelled invoices do not count, and neither do cash ones — only credit consumes the limit.
  */
-export async function saldoCliente(clienteId: string) {
-	const facturas = await prisma.factura.findMany({
+export async function saldoCliente(clienteId: string, db: Prisma.TransactionClient = prisma) {
+	const facturas = await db.factura.findMany({
 		where: { clienteId, condicionPago: "credito", estado: { in: ["emitida", "pagada"] } },
 		select: { total: true, pagos: { select: { monto: true } } },
 	});
 
 	const { facturado, pagado } = sumarFacturasYPagos(facturas);
 
-	const cliente = await prisma.cliente.findUnique({
+	const cliente = await db.cliente.findUnique({
 		where: { id: clienteId },
 		select: { limiteCredito: true, diasCredito: true },
 	});
@@ -1725,7 +1762,13 @@ async function asegurarCredito(
 	db: Prisma.TransactionClient,
 	input: { actor: Actor; clienteId: string; montoCents: bigint; forzar: boolean; motivo: string | null },
 ) {
-	const estado = await saldoCliente(input.clienteId);
+	// Serializa las ventas a crédito DEL MISMO cliente. Leer dentro de la transacción no basta:
+	// en READ COMMITTED dos transacciones simultáneas ven las dos el saldo previo, las dos caben
+	// bajo el límite y las dos emiten. El lock sobre la fila del cliente las pone en fila, así que
+	// la segunda lee el saldo que dejó la primera — que es lo que `docs/billing.md` promete.
+	// Mismo patrón que el `FOR UPDATE` de `changeUserRole` en users.ts.
+	await db.$queryRaw`SELECT id FROM "cliente" WHERE id = ${input.clienteId} FOR UPDATE`;
+	const estado = await saldoCliente(input.clienteId, db);
 
 	if (estado.limiteCents === null) {
 		throw new ClienteError(409, "Este cliente no tiene crédito autorizado. Cobra de contado o asígnale un límite.");
@@ -1983,6 +2026,18 @@ export async function crearFactura(input: { actor: Actor; body: Record<string, u
 			where: { cotizacionId, estado: { not: "cancelada" } },
 		});
 		if (yaFacturada > 0) throw new ClienteError(409, "Esa cotización ya está facturada.");
+		// Simétrico a `crearNotaVenta`, que sí mira las dos tablas: una cotización ya cobrada de
+		// contado no se factura por separado — para eso está `facturarNotaVenta`, que promueve la
+		// nota de venta y re-apunta sus pagos en vez de crear un segundo documento por lo mismo.
+		const yaVendida = await prisma.nota_venta.count({
+			where: { cotizacionId, estado: "activa" },
+		});
+		if (yaVendida > 0) {
+			throw new ClienteError(
+				409,
+				"Esa cotización ya tiene una nota de venta: factúrala desde ahí para conservar sus pagos.",
+			);
+		}
 
 		if (!notaId && cotizacion.notaId) notaId = cotizacion.notaId;
 		clienteId ??= cotizacion.clienteId;
@@ -2139,9 +2194,24 @@ export async function cancelarFactura(input: { actor: Actor; id: string; motivo:
 	}
 
 	const factura = await prisma.$transaction(async (tx) => {
-		const actualizada = await tx.factura.update({
-			where: { id: current.id },
+		// Cancelar y cobrar pueden llegar a la vez: los filtros de arriba se evaluaron fuera de la
+		// transacción, y una factura cancelada con un pago encima no se puede deshacer sola. El
+		// `where` lleva el estado leído — como en `resolverCotizacionInterna` — y el recuento de
+		// pagos se rehace aquí adentro, así que gana quien llegue primero y el otro se entera.
+		const pagosAhora = await tx.pago.count({ where: { facturaId: current.id } });
+		if (pagosAhora > 0) {
+			throw new ClienteError(
+				409,
+				`No se cancela una factura con ${pagosAhora} pago(s) registrado(s). Aplica una nota de crédito.`,
+			);
+		}
+		const aplicada = await tx.factura.updateMany({
+			where: { id: current.id, estado: current.estado, uuid: null },
 			data: { estado: "cancelada", canceladaAt: new Date(), canceladoMotivo: motivo },
+		});
+		if (aplicada.count !== 1) throw new ClienteError(409, "La factura cambió; vuelve a cargarla.");
+		const actualizada = await tx.factura.findUniqueOrThrow({
+			where: { id: current.id },
 			include: FACTURA_INCLUDE,
 		});
 		await recordAudit(tx, {
@@ -2193,6 +2263,25 @@ export async function registrarPago(input: { actor: Actor; facturaId: string; bo
 	}
 
 	const pago = await prisma.$transaction(async (tx) => {
+		// El saldo de arriba se leyó ANTES de abrir la transacción: dos cobros simultáneos (doble
+		// clic, dos pestañas, dos cajeros) pueden pasar los dos ese filtro y sobrepagar la factura.
+		// `pago_monto_check` sólo mira el monto de una fila, no la suma, así que la comprobación
+		// autoritativa se rehace aquí adentro y es la que decide.
+		const dentro = await tx.factura.findUnique({
+			where: { id: factura.id },
+			select: { estado: true, total: true, pagos: { select: { monto: true } } },
+		});
+		if (!dentro) throw new ClienteError(404, "Factura no encontrada");
+		if (dentro.estado === "cancelada") throw new ClienteError(409, "Esa factura está cancelada.");
+		if (dentro.estado === "borrador") throw new ClienteError(409, "Emite la factura antes de cobrarla.");
+		const totalReal = aCentavos(dentro.total);
+		const pagadoReal = dentro.pagos.reduce((s, p) => s + aCentavos(p.monto), 0n);
+		const saldoReal = totalReal - pagadoReal;
+		if (saldoReal <= 0n) throw new ClienteError(409, "Esa factura ya está saldada.");
+		if (monto > saldoReal) {
+			throw new ClienteError(400, `El pago pasa del saldo pendiente ($${pesos(saldoReal)}).`);
+		}
+
 		const creado = await tx.pago.create({
 			data: {
 				id: randomUUID(),
@@ -2206,8 +2295,8 @@ export async function registrarPago(input: { actor: Actor; facturaId: string; bo
 			},
 		});
 
-		// Reached by arithmetic, not by a button.
-		if (pagado + monto >= total) {
+		// Reached by arithmetic, not by a button — sobre las cifras leídas dentro de la transacción.
+		if (pagadoReal + monto >= totalReal) {
 			await tx.factura.update({ where: { id: factura.id }, data: { estado: "pagada" } });
 		}
 
@@ -2217,18 +2306,18 @@ export async function registrarPago(input: { actor: Actor; facturaId: string; bo
 			entityId: factura.id,
 			entityLabel: `Factura #${factura.folio} · ${factura.cliente?.nombreCompleto}`,
 			summary: `Pago de $${pesos(monto)} (${metodoPagoLabel(String(input.body.metodo))}) en la factura #${factura.folio}`,
-			before: { pagado: pesos(pagado), saldo: pesos(saldo) },
+			before: { pagado: pesos(pagadoReal), saldo: pesos(saldoReal) },
 			after: {
-				pagado: pesos(pagado + monto),
-				saldo: pesos(saldo - monto),
-				liquidada: pagado + monto >= total,
+				pagado: pesos(pagadoReal + monto),
+				saldo: pesos(saldoReal - monto),
+				liquidada: pagadoReal + monto >= totalReal,
 			},
 		});
 
-		return creado;
+		return { creado, saldoRestante: saldoReal - monto, liquidada: pagadoReal + monto >= totalReal };
 	});
 
-	const liquidada = pagado + monto >= total;
+	const { saldoRestante, liquidada } = pago;
 
 	// `cobrada` is arithmetic, not a button — recompute it wherever the arithmetic changes.
 	await sincronizarCobranza(factura.cotizacionId);
@@ -2250,11 +2339,11 @@ export async function registrarPago(input: { actor: Actor; facturaId: string; bo
 			titulo: "Recibimos tu pago",
 			cuerpo: liquidada
 				? `$${pesos(monto)}. La factura #${factura.folio} queda saldada. ¡Gracias!`
-				: `$${pesos(monto)} en la factura #${factura.folio}. Saldo pendiente: $${pesos(saldo - monto)}.`,
+				: `$${pesos(monto)} en la factura #${factura.folio}. Saldo pendiente: $${pesos(saldoRestante)}.`,
 		});
 	}
 
-	return pago;
+	return pago.creado;
 }
 
 // --- Nota de venta -----------------------------------------------------------------------------
@@ -2471,9 +2560,19 @@ export async function cancelarNotaVenta(input: { actor: Actor; id: string; motiv
 	}
 
 	const notaVenta = await prisma.$transaction(async (tx) => {
-		const actualizada = await tx.nota_venta.update({
-			where: { id: current.id },
+		// Mismo razonamiento que en `cancelarFactura`: el estado y el recuento de pagos se
+		// reconfirman dentro de la transacción, no en la lectura de arriba.
+		const pagosAhora = await tx.pago.count({ where: { notaVentaId: current.id } });
+		if (pagosAhora > 0) {
+			throw new ClienteError(409, `No se cancela una nota de venta con ${pagosAhora} pago(s) registrado(s).`);
+		}
+		const aplicada = await tx.nota_venta.updateMany({
+			where: { id: current.id, estado: current.estado },
 			data: { estado: "cancelada", canceladaAt: new Date(), canceladoMotivo: motivo },
+		});
+		if (aplicada.count !== 1) throw new ClienteError(409, "La nota de venta cambió; vuelve a cargarla.");
+		const actualizada = await tx.nota_venta.findUniqueOrThrow({
+			where: { id: current.id },
 			include: NOTA_VENTA_INCLUDE,
 		});
 		await recordAudit(tx, {
@@ -2516,6 +2615,25 @@ export async function registrarPagoNotaVenta(input: { actor: Actor; notaVentaId:
 	if (monto_ > saldo) throw new ClienteError(400, `El pago pasa del saldo pendiente ($${pesos(saldo)}).`);
 
 	const pago = await prisma.$transaction(async (tx) => {
+		// Mismo razonamiento que en `registrarPago`: el saldo de arriba se leyó fuera de la
+		// transacción, así que la comprobación que decide se rehace aquí adentro.
+		const dentro = await tx.nota_venta.findUnique({
+			where: { id: notaVenta.id },
+			select: { estado: true, total: true, pagos: { select: { monto: true } } },
+		});
+		if (!dentro) throw new ClienteError(404, "Nota de venta no encontrada");
+		if (dentro.estado === "cancelada") throw new ClienteError(409, "Esa nota de venta está cancelada.");
+		if (dentro.estado === "facturada") {
+			throw new ClienteError(409, "Esa nota de venta ya se facturó: registra el pago en la factura.");
+		}
+		const totalReal = aCentavos(dentro.total);
+		const pagadoReal = dentro.pagos.reduce((s, p) => s + aCentavos(p.monto), 0n);
+		const saldoReal = totalReal - pagadoReal;
+		if (saldoReal <= 0n) throw new ClienteError(409, "Esa nota de venta ya está saldada.");
+		if (monto_ > saldoReal) {
+			throw new ClienteError(400, `El pago pasa del saldo pendiente ($${pesos(saldoReal)}).`);
+		}
+
 		const creado = await tx.pago.create({
 			data: {
 				id: randomUUID(),
@@ -2535,14 +2653,14 @@ export async function registrarPagoNotaVenta(input: { actor: Actor; notaVentaId:
 			entityId: notaVenta.id,
 			entityLabel: `Nota de venta #${notaVenta.folio} · ${notaVenta.cliente?.nombreCompleto}`,
 			summary: `Pago de $${pesos(monto_)} (${metodoPagoLabel(String(input.body.metodo))}) en la nota de venta #${notaVenta.folio}`,
-			before: { pagado: pesos(pagado), saldo: pesos(saldo) },
-			after: { pagado: pesos(pagado + monto_), saldo: pesos(saldo - monto_) },
+			before: { pagado: pesos(pagadoReal), saldo: pesos(saldoReal) },
+			after: { pagado: pesos(pagadoReal + monto_), saldo: pesos(saldoReal - monto_) },
 		});
 
-		return creado;
+		return { creado, saldoRestante: saldoReal - monto_, liquidada: pagadoReal + monto_ >= totalReal };
 	});
 
-	const liquidada = pagado + monto_ >= total;
+	const { saldoRestante, liquidada } = pago;
 
 	// `cobrada` is arithmetic over BOTH factura and nota_venta payments — recompute here too.
 	await sincronizarCobranza(notaVenta.cotizacionId);
@@ -2553,11 +2671,11 @@ export async function registrarPagoNotaVenta(input: { actor: Actor; notaVentaId:
 			titulo: "Recibimos tu pago",
 			cuerpo: liquidada
 				? `$${pesos(monto_)}. La nota de venta #${notaVenta.folio} queda saldada. ¡Gracias!`
-				: `$${pesos(monto_)} en la nota de venta #${notaVenta.folio}. Saldo pendiente: $${pesos(saldo - monto_)}.`,
+				: `$${pesos(monto_)} en la nota de venta #${notaVenta.folio}. Saldo pendiente: $${pesos(saldoRestante)}.`,
 		});
 	}
 
-	return pago;
+	return pago.creado;
 }
 
 /**
@@ -2586,6 +2704,16 @@ export async function facturarNotaVenta(input: { actor: Actor; id: string; body:
 	const motivoCredito = trim(input.body.motivoCredito, 255, "El motivo");
 
 	const factura = await prisma.$transaction(async (tx) => {
+		// Reclamar la nota de venta ANTES de crear nada. Dos llamadas simultáneas (doble clic, dos
+		// pestañas) pasarían las dos los filtros de arriba y crearían dos facturas, re-apuntando los
+		// mismos pagos dos veces. El `updateMany` con el estado en el `where` deja pasar sólo a una;
+		// `facturaId` se completa abajo, cuando ya existe la factura.
+		const claimada = await tx.nota_venta.updateMany({
+			where: { id: current.id, estado: "activa" },
+			data: { estado: "facturada" },
+		});
+		if (claimada.count !== 1) throw new ClienteError(409, "Esa nota de venta ya se facturó.");
+
 		let diasCredito: number | null = null;
 		let vence: Date | null = null;
 
@@ -2645,9 +2773,10 @@ export async function facturarNotaVenta(input: { actor: Actor; id: string; body:
 			});
 		}
 
+		// El estado ya se reclamó al abrir la transacción; aquí sólo queda enlazar la factura.
 		await tx.nota_venta.update({
 			where: { id: current.id },
-			data: { estado: "facturada", facturaId: creada.id },
+			data: { facturaId: creada.id },
 		});
 
 		await recordAudit(tx, {

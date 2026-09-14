@@ -2037,6 +2037,10 @@
 {/if}
 
 {#if drawer === "entregar" && data.puede.entregar}
+	<!-- Una organización no firma por sí misma: `entregarNota` exige contacto, así que aquí no
+	     se ofrece "el cliente mismo" ni se deja enviar sin entregadores registrados. -->
+	{@const esOrganizacion = n.clienteTipo === "organizacion"}
+	{@const sinEntregadores = esOrganizacion && data.entregadores.length === 0}
 	<Drawer
 		title="Entregar unidad"
 		description="Queda registrado quién se la llevó."
@@ -2058,8 +2062,10 @@
 						{id}
 						name="contactoId"
 						class={INPUT}
+						required={esOrganizacion}
+						disabled={sinEntregadores}
 					>
-						<option value="">El cliente mismo</option>
+						<option value="">{esOrganizacion ? "Selecciona quién recibe" : "El cliente mismo"}</option>
 						{#each data.entregadores as e (e.id)}
 							<option value={e.id}>{e.nombre}{e.telefono ? ` · ${e.telefono}` : ""}</option>
 						{/each}
@@ -2067,8 +2073,10 @@
 				{/snippet}
 			</Field>
 			{#if data.entregadores.length === 0}
-				<p class="text-xs text-sand-500">
-					Este cliente no tiene entregadores registrados.
+				<p class="text-xs {esOrganizacion ? "text-red-700" : "text-sand-500"}">
+					{esOrganizacion
+						? "Una organización no firma por sí misma. Registra un contacto con rol de Entregador antes de entregar."
+						: "Este cliente no tiene entregadores registrados."}
 					<a
 						class="underline"
 						href="/panel/clientes/{n.clienteId}">Agrégalos en su ficha</a
@@ -2088,7 +2096,10 @@
 					>
 				{/snippet}
 			</Field>
-			<Button full>Marcar entregada</Button>
+			<Button
+				full
+				disabled={sinEntregadores}>Marcar entregada</Button
+			>
 		</form>
 	</Drawer>
 {/if}

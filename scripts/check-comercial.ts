@@ -6,6 +6,8 @@
  * quote or a cancelled invoice come back to life.
  */
 import assert from "node:assert/strict";
+
+import { Prisma } from "../src/generated/prisma/client.js";
 import {
 	COTIZACION_ESTADO_KEYS,
 	COTIZACION_INTERNA_ESTADO_KEYS,
@@ -216,6 +218,23 @@ for (const desde of NOTA_VENTA_ESTADO_KEYS) {
 		`${desde} debe ser terminal`,
 	);
 }
+
+// --- Costos con 4 decimales ----------------------------------------------------------------------
+// Las columnas de costo son Decimal(12,4): un CFDI de proveedor cotiza a décimas de centavo.
+// `centavos()` rechaza más de dos decimales, así que `aCentavos` (server) redondea con toFixed(2)
+// antes de parsear. Sin eso un costo real de 150.755 se leía como null -> 0n: la línea no costaba
+// nada y la utilidad salía inflada. Aquí se prueba la regla de redondeo que `aCentavos` aplica.
+// Se prueba con Prisma.Decimal, que es lo que `aCentavos` recibe en producción: su `toFixed(2)`
+// redondea medio-arriba en decimal exacto, mientras que `Number.toFixed` arrastra el binario
+// (150.755 -> "150.75"). Esa diferencia de un centavo es justo la razón por la que el dinero no
+// pasa por float en este proyecto.
+const aCents = (d: Prisma.Decimal) => centavos(d.toFixed(2)) ?? 0n;
+assert.equal(aCents(new Prisma.Decimal("150.7550")), 15076n, "un costo a 4 decimales redondea al centavo, nunca a cero");
+assert.equal(aCents(new Prisma.Decimal("12.3456")), 1235n);
+assert.equal(aCents(new Prisma.Decimal("8.1250")), 813n);
+assert.equal(aCents(new Prisma.Decimal("99.9999")), 10000n);
+assert.equal(aCents(new Prisma.Decimal("7.5000")), 750n, "dos decimales o menos pasan directo");
+assert.equal(aCents(new Prisma.Decimal("150.0000")), 15000n);
 
 // --- Vocabulary --------------------------------------------------------------------------------
 assert.equal(esCredito("credito"), true);

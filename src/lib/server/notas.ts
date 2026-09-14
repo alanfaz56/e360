@@ -98,6 +98,7 @@ export const publicNota = (n: NotaRow) => ({
 	garantias: n.garantias.map((g) => ({ id: g.id, folio: g.folio, estado: g.estado, estadoLabel: notaEstadoLabel(g.estado) })),
 	clienteId: n.clienteId,
 	clienteNombre: n.cliente?.nombreCompleto ?? null,
+	clienteTipo: n.cliente?.tipo ?? null,
 	clienteTelefono: n.cliente?.telefono ?? null,
 	unidadId: n.unidadId,
 	unidadEtiqueta: n.unidad

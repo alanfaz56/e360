@@ -1140,6 +1140,9 @@ model factura {
   /// stamped — see `nota_venta.facturaId`.
   notaVenta nota_venta?
 
+  /// `factura_cotizacion_unica_activa` (partial unique index in the migration — Prisma cannot
+  /// express a WHERE clause on an index) allows at most ONE non-cancelled factura per cotización.
+  /// Cancelled documents are excluded on purpose: cancelling and re-issuing is a valid flow.
   @@index([clienteId])
   @@index([estado])
   @@index([vence])
@@ -1255,6 +1258,10 @@ model nota_venta {
   conceptos nota_venta_concepto[]
   pagos     pago[]
 
+  /// `nota_venta_cotizacion_unica_activa` (partial unique index in the migration, Prisma cannot
+  /// express it) allows at most ONE non-cancelled nota de venta per cotización — the database
+  /// half of the "una cotización se cobra una vez" rule `crearNotaVenta` also checks. `total >= 0`
+  /// is enforced by `nota_venta_total_check`.
   @@index([notaId])
   @@index([clienteId])
   @@index([cotizacionId])
