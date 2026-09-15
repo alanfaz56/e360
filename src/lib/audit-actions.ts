@@ -139,6 +139,13 @@ export const AUDIT_ACTIONS = {
 	"canal.conversacion_regresada": "Conversación de canal regresada al bot",
 	"canal.verificacion_generada": "Código de verificación de cliente generado",
 	"canal.cliente_verificado": "Cliente verificado en un canal",
+
+	"gasto.create": "Gasto registrado",
+	"gasto.confirmar": "Gasto pendiente confirmado",
+	"gasto.archive": "Gasto archivado",
+	"gasto_plantilla.create": "Plantilla de gasto creada",
+	"gasto_plantilla.archive": "Plantilla de gasto archivada",
+	"gasto_categoria.create": "Categoría de gasto creada",
 } as const satisfies Record<string, string>;
 
 export type AuditAction = keyof typeof AUDIT_ACTIONS;

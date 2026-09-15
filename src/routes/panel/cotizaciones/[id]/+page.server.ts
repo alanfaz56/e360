@@ -44,8 +44,11 @@ export const load: ServerLoad = async ({ locals, params }) => {
 	}
 };
 
-const conceptosDe = (data: FormData) =>
-	data
+const conceptosDe = (data: FormData) => {
+	// A checkbox sends nothing when unchecked, so its value carries the ROW INDEX (see
+	// ConceptosForm.svelte) rather than relying on positional order like every other field here.
+	const incluyeIvaRows = new Set(data.getAll("incluyeIva").map(String));
+	return data
 		.getAll("tipo")
 		.map((tipo, i) => ({
 			tipo,
@@ -53,8 +56,10 @@ const conceptosDe = (data: FormData) =>
 			cantidad: data.getAll("cantidad")[i],
 			precioUnitario: data.getAll("precioUnitario")[i],
 			productoId: data.getAll("productoId")[i],
+			incluyeIva: incluyeIvaRows.has(String(i)),
 		}))
 		.filter((c) => String(c.descripcion ?? "").trim() !== "" || String(c.productoId ?? "").trim() !== "");
+};
 
 export const actions: Actions = {
 	/** Replace the draft's lines; the shared service enforces the immutable-after-send rule. */

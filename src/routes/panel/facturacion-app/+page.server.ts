@@ -1,4 +1,4 @@
-import { error, redirect, type Actions, type ServerLoad } from "@sveltejs/kit";
+import { redirect, type Actions, type ServerLoad } from "@sveltejs/kit";
 import { conFlash } from "$lib/flash";
 import { can } from "$lib/roles";
 import { esDueno, requirePermission, requireUser } from "$lib/server/guard";
@@ -22,15 +22,26 @@ import { formatoPesos } from "$lib/comercial";
  * owner, who never uploads anything here but must always be able to see who paid and when. A
  * caller needs at least one of the two, never both, to reach this screen — checked with `can`/
  * `esDueno` directly rather than `requirePermission`, which only understands the first axis.
+ *
+ * A THIRD kind of caller reaches this route too: any role with neither axis (e.g. operador,
+ * taller) that the layout's block redirect still sends here, because that redirect fires for
+ * everyone non-owner regardless of whether they can act on this screen. Answering 404 to them
+ * used to be a dead end — blocked, and the one screen they're redirected to refuses them. They
+ * get a read-only view of the same status instead, so at least the message is legible.
  */
 export const load: ServerLoad = async ({ locals }) => {
 	const actor = requireUser(locals);
 	const dueno = esDueno(actor);
-	if (!dueno && !can(actor.role, "pago_app:upload")) error(404, "No encontrado");
+	const puedeSubir = can(actor.role, "pago_app:upload");
 
 	if (dueno) {
 		const [estado, historial] = await Promise.all([estadoFacturacionApp(actor), listPagosApp(actor)]);
-		return { dueno: true, estado: estado.estado, historial };
+		return { vista: "dueno" as const, estado: estado.estado, historial };
+	}
+
+	if (!puedeSubir) {
+		const estado = await estadoFacturacionApp(actor);
+		return { vista: "soloLectura" as const, estado: estado.estado, vencimientoLabel: estado.vencimientoLabel };
 	}
 
 	const [estado, montoCentavos, pago] = await Promise.all([
@@ -39,7 +50,7 @@ export const load: ServerLoad = async ({ locals }) => {
 		pagoDelCicloActual(),
 	]);
 	return {
-		dueno: false,
+		vista: "subir" as const,
 		estado: estado.estado,
 		vencimientoLabel: estado.vencimientoLabel,
 		montoFormateado: formatoPesos(montoCentavos),

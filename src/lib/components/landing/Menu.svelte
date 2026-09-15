@@ -34,7 +34,25 @@
 			<li>
 				<a
 					class="hover:text-brand-600"
-					href="#modulos">Módulos</a
+					href="#nosotros">Nosotros</a
+				>
+			</li>
+			<li>
+				<a
+					class="hover:text-brand-600"
+					href="#fortalezas">Por qué nosotros</a
+				>
+			</li>
+			<li>
+				<a
+					class="hover:text-brand-600"
+					href="#flotillas">Flotillas</a
+				>
+			</li>
+			<li>
+				<a
+					class="hover:text-brand-600"
+					href="#bitacora">Bitácora</a
 				>
 			</li>
 			<li>
@@ -43,12 +61,6 @@
 					href="#flujo">Cómo funciona</a
 				>
 			</li>
-			<!-- <li>
-				<a
-					class="hover:text-brand-600"
-					href="#contacto">Contacto</a
-				>
-			</li> -->
 			<li>
 				<a
 					class="hover:text-brand-600"

@@ -23,6 +23,7 @@ import {
 	esCredito,
 	formatoPesos,
 	importeConcepto,
+	importeConceptoInclusivo,
 	isCondicionPago,
 	isConceptoTipo,
 	isMetodoPago,
@@ -90,6 +91,23 @@ assert.equal(importeConcepto(1.5, 45000n), 67500n);
 // A third of a peso has to land somewhere; it rounds to the cent rather than carrying a fraction.
 assert.equal(importeConcepto(3, 33n), 99n);
 assert.equal(importeConcepto(0.5, 33n), 17n, "0.165 redondea a 0.17");
+
+// --- Inclusive-price lines (Incluye IVA) --------------------------------------------------------
+// A line typed as tax-INCLUDED backs out to the exclusive amount before it ever reaches totales().
+assert.equal(importeConceptoInclusivo(1, 10000n), 8621n, "100.00 incl. IVA -> 86.21 exclusivo");
+assert.equal(importeConceptoInclusivo(2, 10000n), 17241n, "cantidad multiplica antes de repartir el IVA");
+assert.equal(importeConceptoInclusivo(1, 0n), 0n);
+
+// Mixed cotización: one inclusive line, one exclusive line — subtotal+iva+total reconcile to the
+// cent exactly like any other totales() call. The toggle only changes what a line CONTRIBUTES,
+// never how totales() itself computes IVA (still once, on the aggregate subtotal).
+{
+	const exclusiva = { cantidad: 1, precioUnitario: 50000n }; // 500.00, ya exclusivo
+	const inclusivaBackedOut = { cantidad: 1, precioUnitario: importeConceptoInclusivo(1, 10000n) }; // 86.21
+	const { subtotal, iva, total } = totales([exclusiva, inclusivaBackedOut]);
+	assert.equal(pesos(subtotal), "586.21");
+	assert.equal(total, subtotal + iva, "el invariante de siempre, sin importar como se tecleó cada línea");
+}
 
 // --- Totals and IVA ----------------------------------------------------------------------------
 {

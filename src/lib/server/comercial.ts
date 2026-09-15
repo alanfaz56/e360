@@ -13,6 +13,7 @@ import {
 	esCredito,
 	facturaEstadoLabel,
 	importeConcepto,
+	importeConceptoInclusivo,
 	isCondicionPago,
 	isConceptoTipo,
 	isCotizacionEstado,
@@ -160,6 +161,9 @@ export const publicCotizacion = (c: CotizacionRow) => {
 			cantidad: x.cantidad.toFixed(2),
 			precioUnitario: monto(x.precioUnitario),
 			importe: monto(x.importe),
+			// Redisplay-only: totales() never reads this, `precioUnitario` above is already the
+			// backed-out tax-exclusive amount either way — see docs/billing.md.
+			incluyeIva: x.incluyeIva,
 			productoId: x.productoId,
 			claveProdServ: x.claveProdServ,
 			claveUnidad: x.claveUnidad,
@@ -410,11 +414,14 @@ function leerConceptos(value: unknown) {
 			descripcion: descripcion ?? "",
 			cantidad,
 			precioUnitario,
-			importe: importeConcepto(cantidad, precioUnitario),
+			// Provisional — `resolverProductos` may still substitute `precioUnitario` when it's 0,
+			// so the real `importe` is never final until `conImportes` runs last.
+			importe: 0n,
 			orden: i,
 			// Optional: a one-off line ("mandar rectificar la cabeza con el del torno") is a real
 			// quote line that will never be a catalogue product.
 			productoId,
+			incluyeIva: Boolean(c.incluyeIva),
 		};
 	});
 }
@@ -475,9 +482,24 @@ async function exigirSinTaller(conceptos: { descripcion: string }[]) {
 	}
 }
 
-/** Recompute importe after `resolverProductos` may have substituted a price. */
-const conImportes = <T extends { cantidad: number; precioUnitario: bigint }>(conceptos: T[]) =>
-	conceptos.map((c) => ({ ...c, importe: importeConcepto(c.cantidad, c.precioUnitario) }));
+/**
+ * Recompute importe after `resolverProductos` may have substituted a price — the single point
+ * every caller must pass through before `precioUnitario`/`importe` are final. For an
+ * `incluyeIva` line, the typed price is tax-INCLUSIVE: back it out to the exclusive amount here
+ * so every line downstream (totales(), factura, nota_venta, margen) always deals in
+ * tax-exclusive cents, with no special-casing anywhere else.
+ */
+const conImportes = <T extends { cantidad: number; precioUnitario: bigint; incluyeIva?: boolean }>(
+	conceptos: T[],
+) =>
+	conceptos.map((c) => {
+		if (!c.incluyeIva) return { ...c, importe: importeConcepto(c.cantidad, c.precioUnitario) };
+		return {
+			...c,
+			precioUnitario: BigInt(Math.round((Number(c.precioUnitario) * 100) / (100 + IVA * 100))),
+			importe: importeConceptoInclusivo(c.cantidad, c.precioUnitario),
+		};
+	});
 
 export async function crearCotizacion(input: {
 	actor: Actor;
@@ -576,6 +598,7 @@ export async function crearCotizacion(input: {
 						claveProdServ: c.claveProdServ,
 						claveUnidad: c.claveUnidad,
 						entradaId: input.entradaId ?? null,
+						incluyeIva: c.incluyeIva ?? false,
 					})),
 				},
 			},
@@ -643,6 +666,7 @@ export async function actualizarCotizacion(input: { actor: Actor; id: string; bo
 						// must not rewrite what was already quoted.
 						claveProdServ: c.claveProdServ,
 						claveUnidad: c.claveUnidad,
+						incluyeIva: c.incluyeIva ?? false,
 					})),
 				},
 			},
@@ -2056,7 +2080,7 @@ export async function crearFactura(input: { actor: Actor; body: Record<string, u
 			claveUnidad: c.claveUnidad,
 		}));
 	} else {
-		lineas = await resolverProductos(leerConceptos(input.body.conceptos));
+		lineas = conImportes(await resolverProductos(leerConceptos(input.body.conceptos)));
 		({ subtotal, iva, total } = totales(lineas));
 		if (notaId && !clienteId) {
 			const nota = await prisma.nota_servicio.findUnique({
@@ -2482,7 +2506,7 @@ export async function crearNotaVenta(input: { actor: Actor; body: Record<string,
 			claveUnidad: c.claveUnidad,
 		}));
 	} else {
-		lineas = await resolverProductos(leerConceptos(input.body.conceptos));
+		lineas = conImportes(await resolverProductos(leerConceptos(input.body.conceptos)));
 		total = lineas.reduce((s, l) => s + l.importe, 0n);
 		if (notaId && !clienteId) {
 			const nota = await prisma.nota_servicio.findUnique({ where: { id: notaId }, select: { clienteId: true } });

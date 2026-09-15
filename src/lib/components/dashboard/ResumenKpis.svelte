@@ -17,7 +17,18 @@
 	<h2 class="font-display mb-2 text-lg text-sand-950">Resumen</h2>
 	<div class="grid grid-cols-2 gap-3 lg:grid-cols-4">
 		<StatCard label="Ventas" value={`$${resumen.ventas.valor}`} hint={hint(resumen.ventas.var)} tone={tono(resumen.ventas.var)} />
-		<StatCard label="Utilidad" value={`$${resumen.utilidad.valor}`} hint={hint(resumen.utilidad.var)} tone={tono(resumen.utilidad.var)} />
+		<StatCard
+				label="Utilidad antes de gastos"
+				value={`$${resumen.utilidadAntesDeGastos.valor}`}
+				hint={hint(resumen.utilidadAntesDeGastos.var)}
+				tone={tono(resumen.utilidadAntesDeGastos.var)}
+			/>
+			<StatCard
+				label="Utilidad después de gastos"
+				value={`$${resumen.utilidad.valor}`}
+				hint={hint(resumen.utilidad.var)}
+				tone={tono(resumen.utilidad.var)}
+			/>
 		<StatCard
 			label="Margen"
 			value={resumen.margen.valor !== null ? `${resumen.margen.valor}%` : "—"}

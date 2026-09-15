@@ -492,4 +492,14 @@ for (const rol of ["gerente", "operador", "taller"] as const) {
 }
 assert.ok(PERMISSION_KEYS.includes("permisos:manage"), "permisos:manage debe estar en su propio catálogo");
 
+// --- Gastos generales ---------------------------------------------------------------------------
+// Electricidad, agua, nómina... Mismo nivel que dashboard:ver/cliente:credito: visibilidad
+// financiera del taller, no trabajo diario de mostrador.
+for (const key of ["gasto:read", "gasto:create", "gasto:manage"] as const) {
+	assert.equal(can("admin", key), true, `admin debe tener ${key}`);
+	assert.equal(can("gerente", key), true, `gerente debe tener ${key}`);
+	assert.equal(can("operador", key), false, `operador no debe tener ${key}`);
+	assert.equal(can("taller", key), false, `taller no debe tener ${key}`);
+}
+
 console.log("check-roles: OK");

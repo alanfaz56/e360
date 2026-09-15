@@ -36,21 +36,24 @@ model user {
   auditLogs       audit_log[]  @relation("auditActor")
   citasAsignadas  cita[]       @relation("citaAsignada")
 
-  notasRecibidas    nota_servicio[]      @relation("notaRecibidaPor")
-  evidenciasSubidas nota_evidencia[]     @relation("evidenciaSubidaPor")
-  pagosAppSubidos   pago_app_ciclo[]     @relation("pagoAppSubidaPor")
-  comentarios       nota_comentario[]    @relation("comentarioAutor")
-  transferencias    nota_transferencia[] @relation("transferenciaEnviadaPor")
-  qaTransferencias  nota_transferencia[] @relation("transferenciaQaPor")
-  lecturasKm        unidad_kilometraje[] @relation("kilometrajeRegistradoPor")
-  cotizaciones      cotizacion[]         @relation("cotizacionCreadaPor")
-  facturas          factura[]            @relation("facturaCreadaPor")
-  notasVenta        nota_venta[]         @relation("notaVentaCreadaPor")
-  pagos             pago[]               @relation("pagoRegistradoPor")
-  ajustes           ajuste[]             @relation("ajusteActualizadoPor")
-  empresaCambios    empresa_config[]     @relation("empresaActualizadoPor")
-  cuentasBancarias  cuenta_bancaria[]    @relation("cuentaBancariaActualizadoPor")
-  permisosOtorgados permiso_rol[]        @relation("permisoOtorgadoPor")
+  notasRecibidas         nota_servicio[]      @relation("notaRecibidaPor")
+  evidenciasSubidas      nota_evidencia[]     @relation("evidenciaSubidaPor")
+  pagosAppSubidos        pago_app_ciclo[]     @relation("pagoAppSubidaPor")
+  gastosCreados          gasto[]              @relation("gastoCreadaPor")
+  gastosConfirmados      gasto[]              @relation("gastoConfirmadaPor")
+  gastoPlantillasCreadas gasto_plantilla[]    @relation("gastoPlantillaCreadaPor")
+  comentarios            nota_comentario[]    @relation("comentarioAutor")
+  transferencias         nota_transferencia[] @relation("transferenciaEnviadaPor")
+  qaTransferencias       nota_transferencia[] @relation("transferenciaQaPor")
+  lecturasKm             unidad_kilometraje[] @relation("kilometrajeRegistradoPor")
+  cotizaciones           cotizacion[]         @relation("cotizacionCreadaPor")
+  facturas               factura[]            @relation("facturaCreadaPor")
+  notasVenta             nota_venta[]         @relation("notaVentaCreadaPor")
+  pagos                  pago[]               @relation("pagoRegistradoPor")
+  ajustes                ajuste[]             @relation("ajusteActualizadoPor")
+  empresaCambios         empresa_config[]     @relation("empresaActualizadoPor")
+  cuentasBancarias       cuenta_bancaria[]    @relation("cuentaBancariaActualizadoPor")
+  permisosOtorgados      permiso_rol[]        @relation("permisoOtorgadoPor")
 
   notificaciones        notificacion[]             @relation("notificacionDestinatario")
   suscripcionesPush     push_suscripcion[]         @relation("pushSuscripcion")
@@ -801,6 +804,81 @@ model pago_app_ciclo {
   @@map("pago_app_ciclo")
 }
 
+/// A category of shop overhead not tied to any one job — electricidad, agua, nómina, renta.
+/// Distinct from `producto`/`cotizacion_interna`, both scoped to a nota_servicio by design.
+model gasto_categoria {
+  id     String  @id
+  nombre String  @unique @db.VarChar(80)
+  activa Boolean @default(true)
+
+  gastos     gasto[]
+  plantillas gasto_plantilla[]
+
+  @@map("gasto_categoria")
+}
+
+/// A recurring expense definition (e.g. "Nómina" every month on day 1). Generates a `pendiente`
+/// `gasto` draft lazily — see `asegurarDraftsDelPeriodo` — no cron job involved.
+model gasto_plantilla {
+  id           String          @id
+  categoriaId  String
+  categoria    gasto_categoria @relation(fields: [categoriaId], references: [id], onDelete: Restrict)
+  descripcion  String          @db.VarChar(255)
+  /// Snapshot default — each generated gasto can still be edited before confirming.
+  montoDefault Decimal         @db.Decimal(12, 2)
+  /// Day of month the draft targets, 1-28 (avoids month-length edge cases).
+  diaMes       Int
+  activa       Boolean         @default(true)
+
+  creadaPorId String?
+  creadaPor   user?    @relation("gastoPlantillaCreadaPor", fields: [creadaPorId], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+
+  gastos gasto[]
+
+  @@map("gasto_plantilla")
+}
+
+/// Shop overhead not attributable to a specific nota_servicio. Counts toward utilidad neta in
+/// dashboard/resumen.ts ONLY once `estado = "confirmado"` — a `pendiente` draft (generated from a
+/// plantilla) is invisible to that total until a human confirms the monto.
+model gasto {
+  id          String           @id
+  folio       Int              @unique @default(autoincrement())
+  categoriaId String
+  categoria   gasto_categoria  @relation(fields: [categoriaId], references: [id], onDelete: Restrict)
+  plantillaId String?
+  plantilla   gasto_plantilla? @relation(fields: [plantillaId], references: [id], onDelete: SetNull)
+
+  descripcion String   @db.VarChar(255)
+  monto       Decimal  @db.Decimal(12, 2)
+  fecha       DateTime @db.Date
+
+  /// "pendiente" = draft from a plantilla, not yet counted toward utilidad.
+  /// "confirmado" = counts toward utilidad (bloqueDinero).
+  estado String @default("confirmado") @db.VarChar(20)
+
+  creadaPorId     String?
+  creadaPor       user?     @relation("gastoCreadaPor", fields: [creadaPorId], references: [id], onDelete: SetNull)
+  confirmadaPorId String?
+  confirmadaPor   user?     @relation("gastoConfirmadaPor", fields: [confirmadaPorId], references: [id], onDelete: SetNull)
+  confirmadaAt    DateTime?
+
+  archivedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  /// One draft per plantilla per period — the lazy-generation check queries this, and it is the
+  /// backstop against a duplicate draft under a concurrent load of /panel/gastos.
+  @@unique([plantillaId, fecha], name: "gasto_plantilla_periodo_unique")
+  @@index([categoriaId])
+  @@index([fecha])
+  @@index([estado])
+  /// monto >= 0 — enforced by a CHECK constraint added in the migration SQL (Prisma can't
+  /// express it), same pattern as `cotizacion_montos_check`.
+  @@map("gasto")
+}
+
 /// Running commentary on the job. `interno` never leaves the shop; the rest is what gets read
 /// back to the customer, so the distinction is stored rather than remembered.
 model nota_comentario {
@@ -1005,9 +1083,9 @@ model cotizacion {
   /// link can use, so it must not be able to close a quote by itself; a staff member confirms the
   /// rejection through `cambiarEstadoCotizacion`, which is where the permission and the audit
   /// record live. Cleared when they confirm or when the customer changes their mind.
-  rechazoSolicitadoAt     DateTime?
+  rechazoSolicitadoAt      DateTime?
   /// Why, in the customer's own words. Optional — a rejection with no reason is still a rejection.
-  rechazoSolicitadoMotivo String?           @db.VarChar(500)
+  rechazoSolicitadoMotivo  String?   @db.VarChar(500)
 
   creadaPorId String?
   creadaPor   user?    @relation("cotizacionCreadaPor", fields: [creadaPorId], references: [id], onDelete: SetNull)
@@ -1067,6 +1145,13 @@ model cotizacion_concepto {
   /// Stock actually issued against this line, in product units. Reaching `cantidad` is what
   /// "surtido" means; it is a SUM of movements, never a checkbox.
   surtido Decimal @default(0) @db.Decimal(12, 3)
+
+  /// True when the price typed for this line was entered tax-INCLUDED — `conImportes`
+  /// (src/lib/server/comercial.ts) backs out the IVA once, at write time, so `precioUnitario`/
+  /// `importe` end up tax-exclusive like every other line, always. Kept only so a reopened
+  /// `borrador` redisplays the checkbox as it was typed — `totales()` never reads this column,
+  /// IVA is still computed once on the aggregate subtotal (see docs/billing.md).
+  incluyeIva Boolean @default(false)
 
   movimientos inventario_movimiento[]
 
@@ -1675,7 +1760,7 @@ model canal_conversacion {
 
   createdAt DateTime @default(now())
 
-  mensajes canal_mensaje[]
+  mensajes   canal_mensaje[]
   /// The cita this thread's booking flow produced, if it completed one. See `cita.origenConversacionId`.
   citaCreada cita?
 

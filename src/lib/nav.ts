@@ -87,6 +87,7 @@ export const NAV: readonly NavItem[] = [
 	// Named for what it answers, not for one of the two things it lists: quotes, invoices, what was
 	// collected and what is still owed, over a period.
 	{ href: "/panel/cotizaciones", label: "Dinero", icon: "receipt-text", permission: "cotizacion:read", grupo: "Finanzas" },
+	{ href: "/panel/gastos", label: "Gastos", icon: "landmark", permission: "gasto:read", grupo: "Finanzas" },
 	{
 		href: "/panel/cuentas-bancarias",
 		label: "Cuentas bancarias",

@@ -7,6 +7,7 @@ import { margenPorcentaje, pesos } from "$lib/comercial";
 import { NOTA_ESTADOS_ABIERTOS } from "$lib/notas";
 import { enZona, sumarDias } from "$lib/agenda";
 import { variacion, type Periodo } from "../dashboard-periodo";
+import { totalGastosPeriodo } from "../gastos";
 
 /** Same day-range shape as `rangoCreado`, but over `resueltaAt` — when a cost was decided, not filed. */
 const rangoResuelto = (desde: string, hasta: string) => ({
@@ -29,17 +30,23 @@ export async function costoPeriodo(desde: string, hasta: string): Promise<bigint
 }
 
 async function bloqueDinero(desde: string, hasta: string) {
-	const [dinero, costo, trabajosAbiertos, facturas] = await Promise.all([
+	const [dinero, costo, gastos, trabajosAbiertos, facturas] = await Promise.all([
 		resumenDinero(desde, hasta),
 		costoPeriodo(desde, hasta),
+		totalGastosPeriodo(desde, hasta),
 		prisma.nota_servicio.count({ where: { estado: { in: NOTA_ESTADOS_ABIERTOS } } }),
 		prisma.factura.count({ where: { estado: { not: "cancelada" }, ...rangoCreado(desde, hasta) } }),
 	]);
 	const ventas = aCentavos(dinero.facturado);
-	const utilidad = ventas - costo;
+	// Utilidad ANTES de gastos generales: ventas menos costo de lo vendido — lo que el trabajo en
+	// sí dejó, antes de contar electricidad, agua, nómina... Utilidad NETA resta esos gastos.
+	// El margen sigue siendo venta-vs-costo — los gastos generales no son parte del costo de un
+	// trabajo, así que no entran al cálculo de margen por nota (rentabilidad.ts).
+	const utilidadAntesDeGastos = ventas - costo;
+	const utilidad = utilidadAntesDeGastos - gastos;
 	const margen = margenPorcentaje(ventas, costo);
 	const ticket = facturas > 0 ? ventas / BigInt(facturas) : null;
-	return { ventas, utilidad, margen, trabajosAbiertos, ticket, dinero };
+	return { ventas, utilidad, utilidadAntesDeGastos, margen, gastos, trabajosAbiertos, ticket, dinero };
 }
 
 export async function getDashboardResumen(periodo: Periodo, anterior: { desde: string; hasta: string }) {
@@ -50,7 +57,15 @@ export async function getDashboardResumen(periodo: Periodo, anterior: { desde: s
 
 	return {
 		ventas: { valor: pesos(actual.ventas), var: variacion(Number(actual.ventas), Number(previo.ventas)) },
+		utilidadAntesDeGastos: {
+			valor: pesos(actual.utilidadAntesDeGastos),
+			var: variacion(Number(actual.utilidadAntesDeGastos), Number(previo.utilidadAntesDeGastos)),
+		},
 		utilidad: { valor: pesos(actual.utilidad), var: variacion(Number(actual.utilidad), Number(previo.utilidad)) },
+		gastos: {
+			valor: pesos(actual.gastos),
+			var: variacion(Number(actual.gastos), Number(previo.gastos), true),
+		},
 		margen: { valor: actual.margen, var: variacion(actual.margen ?? 0, previo.margen ?? 0) },
 		trabajosAbiertos: {
 			valor: actual.trabajosAbiertos,

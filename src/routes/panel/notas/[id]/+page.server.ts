@@ -270,6 +270,9 @@ export const actions: Actions = {
 		const data = await request.formData();
 
 		const tipos = data.getAll("tipo");
+		// A checkbox sends nothing when unchecked, so its value carries the ROW INDEX (see
+		// ConceptosForm.svelte) rather than relying on positional order like every other field here.
+		const incluyeIvaRows = new Set(data.getAll("incluyeIva").map(String));
 		const conceptos = tipos
 			.map((tipo, i) => ({
 				tipo,
@@ -277,6 +280,7 @@ export const actions: Actions = {
 				cantidad: data.getAll("cantidad")[i],
 				precioUnitario: data.getAll("precioUnitario")[i],
 				productoId: data.getAll("productoId")[i],
+				incluyeIva: incluyeIvaRows.has(String(i)),
 			}))
 			.filter((c) => String(c.descripcion ?? "").trim() !== "" || String(c.productoId ?? "").trim() !== "");
 

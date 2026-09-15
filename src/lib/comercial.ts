@@ -355,3 +355,24 @@ export function totales(
 export function importeConcepto(cantidad: number, precioUnitario: bigint): bigint {
 	return BigInt(Math.round(Number(precioUnitario) * cantidad));
 }
+
+/**
+ * Back out a tax-INCLUSIVE unit price into the exclusive line amount `totales()` expects.
+ * Multiplies the whole line total (precio × cantidad, cents) by 100/116 and rounds ONCE — never
+ * divide the bigint cents value directly (bigint division truncates), and never round the unit
+ * price and the line total separately (double-rounding can drift a cent on fractional cantidad).
+ */
+export function importeConceptoInclusivo(cantidad: number, precioUnitarioInclusivo: bigint): bigint {
+	const totalInclusivo = Number(precioUnitarioInclusivo) * cantidad;
+	return BigInt(Math.round((totalInclusivo * 100) / (100 + IVA * 100)));
+}
+
+/**
+ * Redisplay-only inverse of the unit-price back-out in `conImportes`: adds the IVA back onto an
+ * already-exclusive `precioUnitario` so reopening a borrador's "Incluye IVA" line shows the price
+ * as it was originally typed, not the stored exclusive amount. Never used to derive anything
+ * written to the database — the stored `precioUnitario`/`importe` stay tax-exclusive always.
+ */
+export function precioInclusivoDeExclusivo(precioUnitarioExclusivo: bigint): bigint {
+	return BigInt(Math.round(Number(precioUnitarioExclusivo) * (100 + IVA * 100) / 100));
+}

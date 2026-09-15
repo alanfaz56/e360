@@ -49,6 +49,27 @@ project does not leave to a float.
 `totales()` computes IVA on the **rounded subtotal**, never per line — that's how a CFDI is
 expected to add up, and it's what keeps an invoice's total agreeing with the sum of its own lines.
 
+## Precio con IVA incluido (por línea)
+
+A cotización line can be typed as a tax-INCLUDED price (`incluyeIva` on `cotizacion_concepto`) —
+useful when a supplier or a customer conversation only ever gives you the "con IVA" number.
+Normalization happens ONCE, at write time, in `src/lib/server/comercial.ts`'s `conImportes`: the
+typed price is backed out to its tax-exclusive equivalent (`importeConceptoInclusivo`,
+`src/lib/comercial.ts` — ×100/116, rounded once on the whole line total, never on the unit price
+and the line total separately) and THAT is what lands in `precioUnitario`/`importe` — the columns
+hold a tax-exclusive amount for every line, always, no exceptions.
+
+`totales()` never learns about `incluyeIva`: it only ever sees already-exclusive importes, which is
+why the "IVA once, on the aggregate" rule above holds unchanged. The flag survives only for
+redisplay (`precioInclusivoDeExclusivo` adds the IVA back for the UI when a `borrador` is
+reopened) — it carries no further downstream, and `factura_concepto`/`nota_venta_concepto` don't
+have the column at all: by the time either document copies a cotización's lines, normalization
+already happened, and a factura computes its own IVA on the aggregate the same way it always has.
+
+A cotización that becomes a nota de venta (no IVA, ever) charges the BACKED-OUT amount for that
+line, not the originally typed one — consistent with `importe` meaning "the amount" everywhere
+downstream of normalization, with no special-casing at any read site.
+
 ## The three documents
 
 ```
@@ -150,6 +171,40 @@ cotización:
 and markup answer different questions on the same two numbers, and confusing them is exactly the
 bug the function's own naming exists to prevent. Returns `null` for a zero-or-negative venta rather
 than a number that reads as real but isn't.
+
+## Gastos generales
+
+Shop overhead not tied to any one job — electricidad, agua, nómina, renta. Domain code:
+[src/lib/gastos.ts](../src/lib/gastos.ts) (vocabulary) and
+[src/lib/server/gastos.ts](../src/lib/server/gastos.ts) (everything that touches the database),
+same split as the rest of this document. Gated by `gasto:read` / `gasto:create` / `gasto:manage`
+(Admin/Gerente — see `src/lib/roles.ts`).
+
+Deliberately **not** an extension of `cotizacion_interna` or `inventario_movimiento`: both of
+those are scoped to a specific `nota_servicio` by design (their entire reason for existing is
+per-job margin), and overhead is not attributable to one job.
+
+**Estado**: a `gasto` is `pendiente` or `confirmado`. Only `confirmado` counts toward utilidad —
+see below. A `pendiente` row is a draft generated from a `gasto_plantilla` and is not yet a real
+gasto until a human reviews and confirms it (`confirmarGastoPendiente`).
+
+**Plantillas** (`gasto_plantilla`) are recurring definitions — categoría, monto por default, día
+del mes. `asegurarDraftsDelPeriodo` lazily creates one `pendiente` draft per active plantilla per
+calendar month, called from `/panel/gastos`'s `load` — **no cron job**. Idempotency relies on the
+`@@unique([plantillaId, fecha])` constraint as the backstop against a duplicate draft from a
+concurrent load, catching the unique-violation the same way `registrarPago`'s in-transaction
+re-check handles a race (see Concurrency, above) — this one just doesn't need a transaction
+because a duplicate draft is caught by the constraint itself, not read-then-write.
+
+**Utilidad antes / después de gastos**: `src/lib/server/dashboard/resumen.ts`'s `bloqueDinero`
+computes `utilidadAntesDeGastos = ventas − costo` (what the jobs themselves left) and
+`utilidad = utilidadAntesDeGastos − gastos` (net, after overhead), where `gastos` is
+`totalGastosPeriodo` — the ONE function that sums `confirmado`, non-archived gastos for a period
+(same "count once, in one place" rule as "Reading how much did we bill/collect correctly", above).
+Both are **shop-wide figures only**; the dashboard's Resumen KPIs show both side by side so a
+period heavy on one-off overhead (rent, a big repair) doesn't read as the jobs themselves losing
+money. Per-job `rentabilidad.ts` and the trend series in `ventas.ts` are deliberately untouched:
+overhead isn't attributable to one nota_servicio, so it never enters a per-job margin calculation.
 
 ## Crédito
 

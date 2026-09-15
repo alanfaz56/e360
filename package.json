@@ -17,6 +17,7 @@
 		"telegram:webhook": "tsx --tsconfig scripts/tsconfig.json scripts/telegram-set-webhook.ts"
 	},
 	"devDependencies": {
+		"@playwright/test": "^1.63.0",
 		"@sveltejs/adapter-auto": "^7.0.1",
 		"@sveltejs/kit": "^2.57.0",
 		"@sveltejs/vite-plugin-svelte": "^7.0.0",

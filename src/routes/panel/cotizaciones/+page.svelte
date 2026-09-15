@@ -51,6 +51,7 @@
 		descripcion: "",
 		cantidad: "1",
 		monto: "",
+		incluyeIva: false,
 	});
 	let filas = $state<ConceptoFila[]>([filaVacia(), filaVacia(), filaVacia()]);
 	const tiposConcepto = CONCEPTO_TIPO_KEYS.map((t) => ({ value: t, label: CONCEPTO_TIPOS[t].label }));
@@ -65,7 +66,14 @@
 	const previa = $derived(
 		totales(
 			filas
-				.map((f) => ({ cantidad: Number(f.cantidad), precioUnitario: centavos(f.monto) ?? 0n }))
+				.map((f) => {
+					const cantidad = Number(f.cantidad);
+					const monto = centavos(f.monto) ?? 0n;
+					// Same normalization as conImportes on the server: an inclusive line's typed
+					// price gets backed out to its tax-exclusive unit price before totales() runs.
+					const precioUnitario = f.incluyeIva ? BigInt(Math.round((Number(monto) * 100) / 116)) : monto;
+					return { cantidad, precioUnitario };
+				})
 				.filter((f) => Number.isFinite(f.cantidad) && f.cantidad > 0),
 		),
 	);
@@ -503,6 +511,7 @@
 				productos={data.productos}
 				montoName="precioUnitario"
 				montoLabel="Precio unitario"
+				mostrarIncluyeIva
 				tipos={tiposConcepto}
 				formatoOpcion={formatoOpcionProducto}
 				onProducto={alElegirProducto}

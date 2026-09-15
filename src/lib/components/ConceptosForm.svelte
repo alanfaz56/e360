@@ -23,6 +23,7 @@
 		descripcion: string;
 		cantidad: string;
 		monto: string;
+		incluyeIva: boolean;
 	};
 
 	let {
@@ -31,6 +32,7 @@
 		montoName,
 		montoLabel,
 		mostrarTipo = true,
+		mostrarIncluyeIva = false,
 		tipos = [],
 		formatoOpcion,
 		onProducto,
@@ -40,6 +42,8 @@
 		montoName: string;
 		montoLabel: string;
 		mostrarTipo?: boolean;
+		/** Only the cotización drawer sets this — cost lines are internal-only, never tax-inclusive. */
+		mostrarIncluyeIva?: boolean;
 		tipos?: { value: string; label: string }[];
 		formatoOpcion: (p: Record<string, unknown>) => string;
 		onProducto?: (i: number, producto: Record<string, unknown> | undefined) => void;
@@ -54,6 +58,7 @@
 		descripcion: "",
 		cantidad: "1",
 		monto: "",
+		incluyeIva: false,
 	});
 	const agregarFila = () => (filas = [...filas, filaVacia()]);
 
@@ -136,6 +141,17 @@
 						bind:value={fila.monto}
 					/>
 				</label>
+				{#if mostrarIncluyeIva}
+					<label class="col-span-2 flex items-center gap-2 text-xs text-sand-600">
+						<input
+							type="checkbox"
+							name="incluyeIva"
+							value={i}
+							bind:checked={fila.incluyeIva}
+						/>
+						Incluye IVA (el precio de arriba ya trae el 16%)
+					</label>
+				{/if}
 			</div>
 		</fieldset>
 	{/each}

@@ -259,6 +259,17 @@ export const PERMISOS_DEFAULT = {
 	// a wrong phone number is a mistake, a wrong CLABE redirects somebody's payment.
 	"cuenta_bancaria:manage": ["admin"],
 
+	// --- Gastos generales ----------------------------------------------------------------------
+	// Shop overhead not tied to any one nota_servicio (electricidad, agua, nómina, renta...) —
+	// subtracted from utilidad neta in dashboard/resumen.ts. Same tier as `dashboard:ver` and
+	// `cliente:credito`: shop-level financial visibility, not day-to-day counter work. `taller`
+	// and `operador` hold none of these three, same as `cliente:credito`.
+	"gasto:read": ["admin", "gerente"],
+	"gasto:create": ["admin", "gerente"],
+	// Categorías y plantillas recurrentes — reshaping how gastos are classified/generated is a
+	// step above logging one, same split as `producto:manage` vs `producto:read`.
+	"gasto:manage": ["admin", "gerente"],
+
 	// The permission registry itself. Admin cannot be removed from this one specific key — see
 	// `actualizarPermisoRol` in server/permisos.ts — or a bad edit would permanently lock
 	// everybody, including Admin, out of the one screen that could undo it.

@@ -19,6 +19,7 @@
 		cotizacionEstadoTone,
 		cotizacionInternoTone,
 		formatoPesos,
+		precioInclusivoDeExclusivo,
 		totales,
 	} from "$lib/comercial";
 	import { page } from "$app/state";
@@ -38,7 +39,12 @@
 				tipo: x.tipo,
 				descripcion: x.descripcion,
 				cantidad: String(Number(x.cantidad)),
-				monto: x.precioUnitario,
+				// Stored precioUnitario is always tax-exclusive. For an inclusive line, show the
+				// price as it was originally typed (IVA added back), not the stored amount.
+				monto: x.incluyeIva
+					? (Number(precioInclusivoDeExclusivo(centavos(x.precioUnitario) ?? 0n)) / 100).toFixed(2)
+					: x.precioUnitario,
+				incluyeIva: x.incluyeIva,
 			})),
 		),
 	);
@@ -54,7 +60,14 @@
 	const previa = $derived(
 		totales(
 			filas
-				.map((f) => ({ cantidad: Number(f.cantidad), precioUnitario: centavos(f.monto) ?? 0n }))
+				.map((f) => {
+					const cantidad = Number(f.cantidad);
+					const monto = centavos(f.monto) ?? 0n;
+					// Same normalization as conImportes on the server: an inclusive line's typed
+					// price gets backed out to its tax-exclusive unit price before totales() runs.
+					const precioUnitario = f.incluyeIva ? BigInt(Math.round((Number(monto) * 100) / 116)) : monto;
+					return { cantidad, precioUnitario };
+				})
 				.filter((f) => Number.isFinite(f.cantidad) && f.cantidad > 0),
 		),
 	);
@@ -264,6 +277,7 @@
 				productos={data.productos}
 				montoName="precioUnitario"
 				montoLabel="Precio unitario"
+				mostrarIncluyeIva
 				tipos={tiposConcepto}
 				formatoOpcion={formatoOpcionProducto}
 				onProducto={alElegirProducto}

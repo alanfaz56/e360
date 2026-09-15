@@ -69,7 +69,7 @@
 
 <svelte:head><title>Facturación de la app — Estación 360</title></svelte:head>
 
-{#if data.dueno}
+{#if data.vista === "dueno"}
 	<!-- The owner's ledger: who paid, when, and the comprobante itself — never an upload form, the
 	     owner is never the one paying here. -->
 	<div class="mx-auto max-w-2xl">
@@ -105,6 +105,24 @@
 					</li>
 				{/each}
 			</ul>
+		{/if}
+	</div>
+{:else if data.vista === "soloLectura"}
+	<!-- Roles with neither esDueno nor pago_app:upload (operador, taller) land here when the shop
+	     is blocked — they can't upload, so no form; just the status, so the block isn't a silent
+	     dead end. -->
+	<div class="mx-auto max-w-lg">
+		<h1 class="font-display text-2xl text-sand-950">Facturación de la app</h1>
+		{#if data.estado === "bloqueado"}
+			<div class="mt-4 rounded-lg border border-danger/40 bg-danger/5 p-4 text-sm text-danger">
+				El sistema está bloqueado por falta de pago. Pide a un Admin o Gerente que suba el
+				comprobante para reactivarlo.
+			</div>
+		{:else}
+			<p class="mt-1 text-sm text-sand-600">
+				Estado actual: <strong>{data.estado === "al_corriente" ? "Al corriente" : "Por vencer"}</strong>
+				· vence el {data.vencimientoLabel}.
+			</p>
 		{/if}
 	</div>
 {:else}

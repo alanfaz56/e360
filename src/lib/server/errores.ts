@@ -14,6 +14,7 @@ import { conReferencia } from "$lib/errores";
 import { ClienteError } from "./clientes";
 import { InviteError } from "./invitations";
 import { UserError } from "./users";
+import { GastoError } from "./gastos";
 
 export { MENSAJE_INTERNO } from "$lib/errores";
 
@@ -23,7 +24,7 @@ export { MENSAJE_INTERNO } from "$lib/errores";
  * with a `.status` can never smuggle its own text onto the screen.
  */
 export function esErrorDeUsuario(err: unknown): err is { status: number; message: string } {
-	return err instanceof ClienteError || err instanceof InviteError || err instanceof UserError;
+	return err instanceof ClienteError || err instanceof InviteError || err instanceof UserError || err instanceof GastoError;
 }
 
 /**
