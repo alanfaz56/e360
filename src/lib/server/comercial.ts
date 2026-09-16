@@ -97,6 +97,19 @@ const COTIZACION_INCLUDE = {
 	nota: { select: { folio: true, clienteId: true } },
 	autorizadaPorContacto: { select: { nombre: true } },
 	creadaPor: { select: { name: true } },
+	// At most one non-cancelled row each (partial unique index) — the document this quote became,
+	// for a direct link forward. Cancelled ones excluded: a cancelled nota_venta/factura is not
+	// "where this quote ended up", the shop is expected to re-issue.
+	facturas: {
+		where: { estado: { not: "cancelada" } },
+		select: { id: true, folio: true, estado: true },
+		take: 1,
+	},
+	notasVenta: {
+		where: { estado: { not: "cancelada" } },
+		select: { id: true, folio: true, estado: true },
+		take: 1,
+	},
 } satisfies Prisma.cotizacionInclude;
 
 type CotizacionRow = Prisma.cotizacionGetPayload<{ include: typeof COTIZACION_INCLUDE }>;
@@ -153,6 +166,14 @@ export const publicCotizacion = (c: CotizacionRow) => {
 		rechazoSolicitadoAt: c.rechazoSolicitadoAt?.toISOString() ?? null,
 		rechazoSolicitadoMotivo: c.rechazoSolicitadoMotivo,
 		creadaPor: c.creadaPor?.name ?? null,
+		// The document this quote was processed into, if any — one link forward so staff never have
+		// to go search a nota de venta or factura by cliente/fecha to find what this became.
+		notaVenta: c.notasVenta[0]
+			? { id: c.notasVenta[0].id, folio: c.notasVenta[0].folio, estado: c.notasVenta[0].estado }
+			: null,
+		factura: c.facturas[0]
+			? { id: c.facturas[0].id, folio: c.facturas[0].folio, estado: c.facturas[0].estado }
+			: null,
 		conceptos: c.conceptos.map((x) => ({
 			id: x.id,
 			tipo: x.tipo,

@@ -22,6 +22,13 @@
 
 	const INPUT =
 		"mt-1 w-full rounded-md border border-sand-300 bg-white px-3 py-2 text-sm focus:border-brand-600 focus:outline-none";
+
+	// Progressive enhancement: sin JS, "Filtrar" sigue funcionando (form GET real).
+	// Con JS, cambiar rango a "personalizado" auto-envía para revelar Desde/Hasta sin doble clic.
+	function autoSubmitEnPersonalizado(e: Event) {
+		const select = e.currentTarget as HTMLSelectElement;
+		if (select.value === "personalizado") select.form?.requestSubmit();
+	}
 </script>
 
 <svelte:head><title>Dashboard gerencial — Estación 360</title></svelte:head>
@@ -46,6 +53,7 @@
 					{id}
 					name="rango"
 					class={INPUT}
+					onchange={autoSubmitEnPersonalizado}
 				>
 					{#each data.rangoOpciones as r (r.value)}
 						<option
@@ -122,19 +130,25 @@
 
 	<ResumenKpis resumen={data.resumen} />
 	<AlertasPanel alertas={data.alertas} />
-	<OperacionEstado
-		operacion={data.operacion}
-		tiempos={data.tiempos}
-	/>
+
+	<h2 class="mb-3 mt-8 text-lg font-semibold text-sand-900">Dinero</h2>
 	<VentasChart puntos={data.ventas} />
 	<CobranzaAging cobranza={data.cobranza} />
 	<CotizacionesFunnel data={data.cotizaciones} />
 	<RentabilidadTablas rentabilidad={data.rentabilidad} />
+
+	<h2 class="mb-3 mt-8 text-lg font-semibold text-sand-900">Operación</h2>
+	<OperacionEstado
+		operacion={data.operacion}
+		tiempos={data.tiempos}
+	/>
+	<CitasChart citas={data.citas} />
+	<GarantiasResumen garantias={data.garantias} />
 	<InventarioResumen inventario={data.inventario} />
+
+	<h2 class="mb-3 mt-8 text-lg font-semibold text-sand-900">Gente</h2>
 	<MecanicosTabla mecanicos={data.mecanicos} />
 	<TalleresRanking talleres={data.talleres} />
 	<ClientesTablas clientes={data.clientes} />
 	<VehiculosResumen vehiculos={data.vehiculos} />
-	<CitasChart citas={data.citas} />
-	<GarantiasResumen garantias={data.garantias} />
 </div>

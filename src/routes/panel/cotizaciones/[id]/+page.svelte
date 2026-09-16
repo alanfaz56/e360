@@ -114,6 +114,28 @@
 				tone={cotizacionInternoTone(c.estadoInterno)}>{c.estadoInternoLabel}</Badge
 			><span class="ml-auto text-xl font-bold">{formatoPesos(Number(c.total))}</span>
 		</div>
+		<!-- Where this quote ended up, once processed — one click instead of hunting for the
+		     resulting document by cliente/fecha. At most one of each (partial unique index), and
+		     only shown once it exists. -->
+		{#if c.factura || c.notaVenta}
+			<p class="mt-2 text-sm text-sand-600">
+				Procesada como
+				{#if c.factura}
+					<a
+						class="text-brand-700 hover:underline"
+						href="/panel/facturas/{c.factura.id}">factura #{c.factura.folio}</a
+					>
+				{/if}
+				{#if c.factura && c.notaVenta}y{/if}
+				{#if c.notaVenta}
+					<a
+						class="text-brand-700 hover:underline"
+						href="/panel/notas-venta/{c.notaVenta.id}">nota de venta #{c.notaVenta.folio}</a
+					>
+				{/if}
+				.
+			</p>
+		{/if}
 		<div class="mt-4 overflow-x-auto">
 			<table class="w-full min-w-[30rem] text-sm">
 				<thead
